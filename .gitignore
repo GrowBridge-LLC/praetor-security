@@ -1,0 +1,20 @@
+# PRAETOR -- open-source hygiene
+
+# Python build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PRAETOR's own report outputs
+praetor-report.txt
+praetor-report.json
+praetor-out/
+
+# Generated test corpus.
+# The vulnerable fixtures contain realistic secret-SHAPED tokens and injection
+# payloads (all fake -- see references/test-corpus/README.md). Committing them
+# would trip other teams' secret scanners / GitHub push-protection and pollute
+# history. We ship ONLY the generator; regenerate locally with:
+#     python references/test-corpus/_generate_corpus.py
+references/test-corpus/vulnerable/
+references/test-corpus/clean/

@@ -1,0 +1,209 @@
+# PRAETOR bundled Semgrep ruleset.
+#
+# High-signal, low-false-positive rules that run OFFLINE (no registry needed),
+# giving PRAETOR a guaranteed security baseline plus a few agent/AI-specific
+# code patterns that the public registry packs do not cover. When the network is
+# available, these run ALONGSIDE p/owasp-top-ten and p/security-audit.
+#
+# License: MIT (same as PRAETOR). Rules authored for PRAETOR; where a pattern is
+# a well-known idiom it is expressed independently here.
+rules:
+  # ----------------------------- Python -----------------------------------
+  - id: praetor-py-os-system-concat
+    languages: [python]
+    severity: ERROR
+    message: >
+      OS command built from a non-literal and passed to os.system(); attacker-
+      controlled input can inject shell commands (CWE-78). Use subprocess with an
+      argument list and shell=False.
+    metadata:
+      cwe: "CWE-78"
+      owasp: "A03:2021 Injection"
+      references: ["https://cwe.mitre.org/data/definitions/78.html"]
+    patterns:
+      - pattern: os.system(...)
+      - pattern-not: os.system("...")
+
+  - id: praetor-py-subprocess-shell-true
+    languages: [python]
+    severity: ERROR
+    message: >
+      subprocess called with shell=True; if any argument is untrusted this is a
+      command-injection vector (CWE-78). Pass an argument list and shell=False.
+    metadata:
+      cwe: "CWE-78"
+      owasp: "A03:2021 Injection"
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.$F(..., shell=True, ...)
+
+  - id: praetor-py-eval-exec
+    languages: [python]
+    severity: ERROR
+    message: >
+      Dynamic code execution via eval()/exec(); if the argument is not a literal
+      this is remote code execution (CWE-95). Avoid eval/exec on runtime data.
+    metadata:
+      cwe: "CWE-95"
+      owasp: "A03:2021 Injection"
+    patterns:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: exec(...)
+      - pattern-not: eval("...")
+      - pattern-not: exec("...")
+
+  - id: praetor-py-yaml-load-unsafe
+    languages: [python]
+    severity: ERROR
+    message: >
+      yaml.load() without SafeLoader can instantiate arbitrary Python objects
+      (CWE-502 deserialization). Use yaml.safe_load().
+    metadata:
+      cwe: "CWE-502"
+      owasp: "A08:2021 Software and Data Integrity Failures"
+    patterns:
+      - pattern: yaml.load($X)
+
+  - id: praetor-py-pickle-loads
+    languages: [python]
+    severity: WARNING
+    message: >
+      pickle deserialization of untrusted data allows arbitrary code execution
+      (CWE-502). Use a safe format (JSON) for external data.
+    metadata:
+      cwe: "CWE-502"
+      owasp: "A08:2021 Software and Data Integrity Failures"
+    patterns:
+      - pattern-either:
+          - pattern: pickle.loads(...)
+          - pattern: pickle.load(...)
+
+  - id: praetor-py-requests-verify-false
+    languages: [python]
+    severity: WARNING
+    message: >
+      TLS certificate verification disabled (verify=False); this enables
+      man-in-the-middle attacks (CWE-295).
+    metadata:
+      cwe: "CWE-295"
+      owasp: "A02:2021 Cryptographic Failures"
+    patterns:
+      - pattern: requests.$M(..., verify=False, ...)
+
+  - id: praetor-py-flask-debug-true
+    languages: [python]
+    severity: WARNING
+    message: >
+      Flask running with debug=True exposes the Werkzeug interactive debugger
+      (arbitrary code execution) if reachable (CWE-489).
+    metadata:
+      cwe: "CWE-489"
+      owasp: "A05:2021 Security Misconfiguration"
+    patterns:
+      - pattern: $APP.run(..., debug=True, ...)
+
+  - id: praetor-py-sql-fstring
+    languages: [python]
+    severity: ERROR
+    message: >
+      SQL statement built with an f-string / string concatenation and executed;
+      this is SQL injection (CWE-89). Use parameterized queries.
+    metadata:
+      cwe: "CWE-89"
+      owasp: "A03:2021 Injection"
+    patterns:
+      - pattern-either:
+          - pattern: $CUR.execute(f"...{$X}...", ...)
+          - pattern: $CUR.execute("..." + $X, ...)
+          - pattern: $CUR.execute("..." % $X, ...)
+
+  - id: praetor-py-weak-hash
+    languages: [python]
+    severity: WARNING
+    message: >
+      Weak cryptographic hash (MD5/SHA1) used; not collision-resistant (CWE-327).
+      Use SHA-256+ for security-relevant hashing.
+    metadata:
+      cwe: "CWE-327"
+      owasp: "A02:2021 Cryptographic Failures"
+    patterns:
+      - pattern-either:
+          - pattern: hashlib.md5(...)
+          - pattern: hashlib.sha1(...)
+
+  # --------------------------- JavaScript/TS ------------------------------
+  - id: praetor-js-child-process-exec-concat
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >
+      child_process.exec() with a non-literal command string is command
+      injection (CWE-78). Use execFile()/spawn() with an argument array.
+    metadata:
+      cwe: "CWE-78"
+      owasp: "A03:2021 Injection"
+    patterns:
+      - pattern-either:
+          - pattern: (require("child_process")).exec($X, ...)
+          - pattern: cp.exec($X + $Y, ...)
+          - pattern: exec($X + $Y, ...)
+      - pattern-not: exec("...", ...)
+
+  - id: praetor-js-eval
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >
+      eval() / new Function() executes dynamic code; with untrusted input this is
+      RCE / XSS (CWE-95).
+    metadata:
+      cwe: "CWE-95"
+      owasp: "A03:2021 Injection"
+    patterns:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: new Function(...)
+      - pattern-not: eval("...")
+
+  - id: praetor-js-innerhtml
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >
+      Assignment to innerHTML from a non-literal can introduce DOM XSS (CWE-79).
+      Use textContent or a sanitizer.
+    metadata:
+      cwe: "CWE-79"
+      owasp: "A03:2021 Injection"
+    patterns:
+      - pattern: $EL.innerHTML = $X
+      - pattern-not: $EL.innerHTML = "..."
+
+  # ------------------------- AI / agent specific --------------------------
+  - id: praetor-ai-llm-output-to-shell
+    languages: [python]
+    severity: ERROR
+    message: >
+      LLM/model output flows into a shell/eval sink. Treat model output as
+      untrusted; never execute it directly (OWASP LLM02 Insecure Output Handling,
+      CWE-78/CWE-95).
+    metadata:
+      cwe: "CWE-78"
+      owasp: "LLM02: Insecure Output Handling"
+      references: ["https://owasp.org/www-project-top-10-for-large-language-model-applications/"]
+    patterns:
+      - pattern-either:
+          - pattern: os.system($RESP.$FIELD)
+          - pattern: subprocess.$F($RESP.choices[0].message.content, ...)
+          - pattern: eval($RESP.$FIELD)
+          - pattern: exec($COMPLETION)
+
+  - id: praetor-ai-hardcoded-system-prompt-secret
+    languages: [python, javascript, typescript]
+    severity: WARNING
+    message: >
+      A prompt/message string appears to embed a credential-like token. Secrets in
+      prompts leak to the model provider and logs (CWE-522).
+    metadata:
+      cwe: "CWE-522"
+      owasp: "LLM06: Sensitive Information Disclosure"
+    patterns:
+      - pattern-regex: '(?i)(system|prompt|content)\s*[:=]\s*["'']?[^"''\n]*(sk-[A-Za-z0-9]{20}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36})'
