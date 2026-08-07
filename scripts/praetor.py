@@ -42,6 +42,8 @@ import engine_aisec             # noqa: E402
 import engine_sast              # noqa: E402
 import engine_sca               # noqa: E402
 import interpret                # noqa: E402
+import lexctx                   # noqa: E402
+import taint                    # noqa: E402
 import report                   # noqa: E402
 
 VERSION = "1.0.0"
@@ -119,6 +121,81 @@ def _apply_inline_ignores(findings, target, read_text):
             if any(m in low for m in IGNORE_MARKERS):
                 f.filtered = True
                 f.filter_reason = "suppressed by inline ignore marker on the flagged line"
+
+
+# Engines whose findings may be suppressed by lexical context.
+#
+# 🔴 `secrets` IS DELIBERATELY ABSENT AND MUST STAY ABSENT.
+# A behavioural pattern in a comment is inert -- the comment cannot exec anything.
+# A SECRET in a comment is still a leaked credential; it is disclosed by being
+# written down, not by being executed. Adding "secrets" here would make PRAETOR
+# blind to `# password = "hunter2"`.
+# Held by tests/test_lexctx_and_suppression_policy.py.
+_LEXCTX_ENGINES = ("aisec",)
+
+_LEXCTX_REASONS = {
+    lexctx.COMMENT: "behavioural pattern appears in a code comment, which cannot execute",
+    lexctx.DOCSTRING: "behavioural pattern appears in a docstring describing the threat, which cannot execute",
+}
+
+
+# Engines whose findings may be suppressed by REACHABILITY (A1).
+#
+# 🔴 `secrets` IS DELIBERATELY ABSENT, and the reason is NOT the same as intuition
+# suggests. Reachability cannot protect a credential: a key declared in a config
+# module and used elsewhere never reaches a sink in that file, so it is "provably
+# inert" -- byte-identical to a regex pattern. Measured, after the opposite was
+# claimed publicly. The safety comes from THIS SCOPE, never from the analysis.
+# Held by tests/test_taint_reachability.py.
+_REACHABILITY_ENGINES = ("aisec",)
+
+
+def _apply_reachability(findings, target, read_text):
+    """
+    Suppress behavioural findings whose matched string provably never reaches a
+    dangerous sink (A1). Fails SAFE: anything unproven is KEPT.
+    """
+    cache: dict = {}
+    for f in findings:
+        if getattr(f, "filtered", False) or f.engine not in _REACHABILITY_ENGINES:
+            continue
+        if not f.file or f.line <= 0 or not f.file.endswith(".py"):
+            continue
+        ap = os.path.join(target, f.file.replace("/", os.sep))
+        if ap not in cache:
+            cache[ap] = read_text(ap) or ""
+        if taint.is_provably_inert(cache[ap], f.line):
+            f.filtered = True
+            f.filter_reason = (
+                "matched string provably never reaches a dangerous sink "
+                "(rule definition / inert data, not behaviour)"
+            )
+
+
+def _apply_lexical_context(findings, target, read_text):
+    """
+    Suppress behavioural findings whose match is in text that never executes.
+
+    Measured motivation: every one of PRAETOR's 47 self-scan findings was
+    pattern-presence in inert text (references/SELF-SCAN-BASELINE.json).
+
+    Suppression is recorded with a rationale, never deleted, and it fails SAFE --
+    an unreadable file or an unclear line resolves to CODE and the finding is KEPT.
+    """
+    cache: dict = {}
+    for f in findings:
+        if getattr(f, "filtered", False) or f.engine not in _LEXCTX_ENGINES:
+            continue
+        if not f.file or f.line <= 0:
+            continue
+        ap = os.path.join(target, f.file.replace("/", os.sep))
+        if ap not in cache:
+            cache[ap] = read_text(ap) or ""
+        ctx = lexctx.context_of(cache[ap], f.line)
+        reason = _LEXCTX_REASONS.get(ctx)
+        if reason:
+            f.filtered = True
+            f.filter_reason = reason
 
 
 def main(argv=None):
@@ -208,6 +285,8 @@ def main(argv=None):
     # (# nosec / # nosemgrep / # praetor:ignore, and // variants). Suppressed
     # findings are marked filtered WITH a reason -- never silently dropped.
     _apply_inline_ignores(all_findings, target, read_text)
+    _apply_lexical_context(all_findings, target, read_text)
+    _apply_reachability(all_findings, target, read_text)
 
     # -- interpretation -------------------------------------------------------
     _log(args.quiet, "  interpreting (dedup + rank + FP filter)...")
