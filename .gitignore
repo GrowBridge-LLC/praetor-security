@@ -23,3 +23,8 @@ references/test-corpus/clean/
 # Kept out deliberately: a blind `git add -A` would otherwise commit session state
 # into this repo.
 .claude/
+
+# Python build artifacts
+build/
+dist/
+*.egg-info/

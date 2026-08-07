@@ -43,6 +43,26 @@ engine reports itself **skipped** and the scan continues.
 
 ## Install
 
+```bash
+pip install praetor-security        # or: pipx install praetor-security
+praetor --version
+```
+
+PRAETOR has **no runtime dependencies** — deliberately. A tool that vets other
+people's dependencies should not arrive with a large dependency tree of its own.
+The secrets and AI-security engines are pure standard library and work
+immediately; the SAST and SCA engines shell out to external binaries *only if you
+install them*, and report themselves `unavailable` rather than silently returning
+zero findings if you do not.
+
+You can also run it straight from a clone with no install at all:
+
+```bash
+python scripts/praetor.py <target>
+```
+
+### Optional engines
+
 Only **Python 3.8+** is strictly required. Install the optional engines for full
 coverage:
 
@@ -125,19 +145,42 @@ python scripts/praetor.py references/test-corpus/clean        # expect ~none (fr
 All "secrets" in the corpus are fake, generated from harmless parts - see
 `references/test-corpus/README.md`.
 
-### On false positives
+### On false positives, and what gets suppressed
 
-The "clean corpus produces no findings from the code engines" result is measured
-on a **clean** codebase. PRAETOR deliberately **does not self-exempt** or exempt
-security tooling, so scanning code that legitimately *contains* security patterns
-- a scanner's own detection rules and regex strings, security documentation, or
-example payloads - will surface expected matches on those strings. That is correct
-behavior, not a bug: a tool that silently ignored files "because they look like
-rules" could be blinded by an attacker who dressed a payload up as one. Low-
-confidence matches in documentation land in the **FILTERED** bucket with a reason;
-higher-confidence matches on pattern strings remain active for a human to judge.
-"Low false positives" therefore describes ordinary application code, not files
-whose job is to describe attacks.
+Scanning code that legitimately *contains* security patterns — a scanner's own
+rules, security documentation, example payloads — will match on those strings.
+PRAETOR reduces that noise by asking whether the matched text can actually *do*
+anything:
+
+| Pass | Suppresses when… |
+|---|---|
+| **inline ignore** | the flagged line carries `praetor:ignore` / `nosec` / `nosemgrep` |
+| **lexical context** | the match is inside a comment or docstring — text that cannot execute |
+| **reachability** | the matched string provably never reaches a dangerous sink (`exec`, shell, filesystem, network). Python, intra-file |
+| **heuristics** | example/template env files, integrity hashes in lockfiles, low-confidence phrasing in docs |
+
+Nothing is deleted. Suppressed findings move to the **FILTERED** bucket carrying
+the reason, so you can audit every suppression rather than trust it.
+
+**Two properties worth knowing before you rely on this:**
+
+🔴 **Secrets are never suppressed by context or reachability.** A dangerous
+*command* in a comment is inert — a comment cannot execute. A *credential* in a
+comment is still leaked, because a secret is disclosed by being written down, not
+by being executed. Reachability does not change that: a key declared in one module
+and used in another never reaches a sink in the file that declares it. Both passes
+therefore apply to the AI-security engine only, and that carve-out is enforced by
+tests, not by convention.
+
+🟢 **Suppression fails safe.** Anything PRAETOR cannot *prove* inert is kept —
+unparseable source, an unfamiliar construct, a non-Python file, a value that
+escapes single-file analysis. A classifier that failed toward suppression would be
+a scanner that goes quiet under exactly the conditions an attacker creates.
+
+PRAETOR also **does not self-exempt**: there is no rule excusing files "because
+they look like detection rules", and none excusing `tests/` — such a rule would
+also excuse a real credential committed in a test file, which is a common real
+leak. What remains after suppression is a short list a human can actually read.
 
 ## Honest limits
 

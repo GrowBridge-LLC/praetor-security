@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "praetor-security"
+version = "1.0.0"
+description = "Multi-engine static security analysis (SAST, secrets, SCA, AI-security) for code, repos, and AI-agent skills/plugins/MCP servers. Reads, never runs."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+keywords = [
+    "security", "sast", "secrets", "sca", "static-analysis",
+    "prompt-injection", "ai-security", "supply-chain",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+]
+
+# No runtime dependencies, deliberately.
+#
+# PRAETOR vets other people's dependencies. A tool that pulled a large dependency
+# tree to do that would become its own supply-chain risk -- the thing it exists to
+# check. The secrets and AI-security engines are pure stdlib; the SAST and SCA
+# engines shell out to external binaries (semgrep, osv-scanner / pip-audit / npm)
+# only if they are already installed, and degrade honestly when they are not.
+dependencies = []
+
+[project.optional-dependencies]
+# The external engines. Installing these is optional -- PRAETOR reports an engine
+# as `unavailable` rather than silently reporting zero findings.
+sast = ["semgrep"]
+sca = ["pip-audit"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+praetor = "praetor:main"
+
+[project.urls]
+Repository = "https://github.com/GrowDev1/praetor-security"
+Issues = "https://github.com/GrowDev1/praetor-security/issues"
+
+[tool.setuptools]
+package-dir = { "" = "scripts" }
+py-modules = [
+    "praetor", "core", "interpret", "report", "lexctx", "taint",
+    "engine_sast", "engine_secrets", "engine_sca", "engine_aisec",
+]
+
+[tool.setuptools.package-data]
+"*" = ["../rules/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
