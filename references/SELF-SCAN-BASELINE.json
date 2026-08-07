@@ -1,0 +1,504 @@
+{
+  "baseline_version": 1,
+  "generated_against": {
+    "praetor_version": "1.0.0",
+    "engines": {
+      "secrets": "ok",
+      "aisec": "ok",
+      "sast": "ok",
+      "sca": "unavailable"
+    },
+    "file_count": 19
+  },
+  "predicate_definitions": {
+    "P1-DETECTOR-SELF-MATCH": "SUPPRESS",
+    "P2-COMMENT": "SUPPRESS",
+    "P3-DOCSTRING": "SUPPRESS",
+    "P4-FIXTURE-CORPUS": "SUPPRESS",
+    "P5-DOC-PROSE": "SUPPRESS",
+    "P6-TAXONOMY-LABEL": "SUPPRESS",
+    "P7-REVIEW": "KEEP"
+  },
+  "counts": {
+    "P1-DETECTOR-SELF-MATCH": 14,
+    "P4-FIXTURE-CORPUS": 19,
+    "P5-DOC-PROSE": 3,
+    "P3-DOCSTRING": 7,
+    "P6-TAXONOMY-LABEL": 1,
+    "P2-COMMENT": 3
+  },
+  "total_active": 47,
+  "kept_for_review": 0,
+  "findings": [
+    {
+      "rule_id": "sensitive-file-read",
+      "engine": "aisec",
+      "severity": "MEDIUM",
+      "file": "scripts/core.py",
+      "line": 183,
+      "predicate": "P1-DETECTOR-SELF-MATCH",
+      "disposition": "SUPPRESS",
+      "why": "match is inside PRAETOR's own detection machinery -- a string inside a pattern collection or a Finding(...) display template. It is data the tool compares or prints, never executed and never read as a path. NOTE: being under scripts/ is NOT sufficient; the match must be inside a collection/call, or a real secret in live code would be suppressed here"
+    },
+    {
+      "rule_id": "sensitive-file-read",
+      "engine": "aisec",
+      "severity": "MEDIUM",
+      "file": "scripts/core.py",
+      "line": 192,
+      "predicate": "P1-DETECTOR-SELF-MATCH",
+      "disposition": "SUPPRESS",
+      "why": "match is inside PRAETOR's own detection machinery -- a string inside a pattern collection or a Finding(...) display template. It is data the tool compares or prints, never executed and never read as a path. NOTE: being under scripts/ is NOT sufficient; the match must be inside a collection/call, or a real secret in live code would be suppressed here"
+    },
+    {
+      "rule_id": "sensitive-file-read",
+      "engine": "aisec",
+      "severity": "MEDIUM",
+      "file": "scripts/core.py",
+      "line": 196,
+      "predicate": "P1-DETECTOR-SELF-MATCH",
+      "disposition": "SUPPRESS",
+      "why": "match is inside PRAETOR's own detection machinery -- a string inside a pattern collection or a Finding(...) display template. It is data the tool compares or prints, never executed and never read as a path. NOTE: being under scripts/ is NOT sufficient; the match must be inside a collection/call, or a real secret in live code would be suppressed here"
+    },
+    {
+      "rule_id": "safety-bypass-instruction",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "scripts/engine_aisec.py",
+      "line": 157,
+      "predicate": "P1-DETECTOR-SELF-MATCH",
+      "disposition": "SUPPRESS",
+      "why": "match is inside PRAETOR's own detection machinery -- a string inside a pattern collection or a Finding(...) display template. It is data the tool compares or prints, never executed and never read as a path. NOTE: being under scripts/ is NOT sufficient; the match must be inside a collection/call, or a real secret in live code would be suppressed here"
+    },
+    {
+      "rule_id": "safety-bypass-instruction",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "scripts/engine_aisec.py",
+      "line": 163,
+      "predicate": "P1-DETECTOR-SELF-MATCH",
+      "disposition": "SUPPRESS",
+      "why": "match is inside PRAETOR's own detection machinery -- a string inside a pattern collection or a Finding(...) display template. It is data the tool compares or prints, never executed and never read as a path. NOTE: being under scripts/ is NOT sufficient; the match must be inside a collection/call, or a real secret in live code would be suppressed here"
+    },
+    {
+      "rule_id": "dangerous-permission-flag",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "scripts/engine_aisec.py",
+      "line": 163,
+      "predicate": "P1-DETECTOR-SELF-MATCH",
+      "disposition": "SUPPRESS",
+      "why": "match is inside PRAETOR's own detection machinery -- a string inside a pattern collection or a Finding(...) display template. It is data the tool compares or prints, never executed and never read as a path. NOTE: being under scripts/ is NOT sufficient; the match must be inside a collection/call, or a real secret in live code would be suppressed here"
+    },
+    {
+      "rule_id": "safety-bypass-instruction",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "scripts/engine_aisec.py",
+      "line": 165,
+      "predicate": "P1-DETECTOR-SELF-MATCH",
+      "disposition": "SUPPRESS",
+      "why": "match is inside PRAETOR's own detection machinery -- a string inside a pattern collection or a Finding(...) display template. It is data the tool compares or prints, never executed and never read as a path. NOTE: being under scripts/ is NOT sufficient; the match must be inside a collection/call, or a real secret in live code would be suppressed here"
+    },
+    {
+      "rule_id": "privilege-escalation",
+      "engine": "aisec",
+      "severity": "MEDIUM",
+      "file": "scripts/engine_aisec.py",
+      "line": 168,
+      "predicate": "P1-DETECTOR-SELF-MATCH",
+      "disposition": "SUPPRESS",
+      "why": "match is inside PRAETOR's own detection machinery -- a string inside a pattern collection or a Finding(...) display template. It is data the tool compares or prints, never executed and never read as a path. NOTE: being under scripts/ is NOT sufficient; the match must be inside a collection/call, or a real secret in live code would be suppressed here"
+    },
+    {
+      "rule_id": "remote-code-pipe",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "scripts/engine_aisec.py",
+      "line": 178,
+      "predicate": "P1-DETECTOR-SELF-MATCH",
+      "disposition": "SUPPRESS",
+      "why": "match is inside PRAETOR's own detection machinery -- a string inside a pattern collection or a Finding(...) display template. It is data the tool compares or prints, never executed and never read as a path. NOTE: being under scripts/ is NOT sufficient; the match must be inside a collection/call, or a real secret in live code would be suppressed here"
+    },
+    {
+      "rule_id": "powershell-download-exec",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "scripts/engine_aisec.py",
+      "line": 184,
+      "predicate": "P1-DETECTOR-SELF-MATCH",
+      "disposition": "SUPPRESS",
+      "why": "match is inside PRAETOR's own detection machinery -- a string inside a pattern collection or a Finding(...) display template. It is data the tool compares or prints, never executed and never read as a path. NOTE: being under scripts/ is NOT sufficient; the match must be inside a collection/call, or a real secret in live code would be suppressed here"
+    },
+    {
+      "rule_id": "sensitive-file-read",
+      "engine": "aisec",
+      "severity": "MEDIUM",
+      "file": "scripts/engine_aisec.py",
+      "line": 189,
+      "predicate": "P1-DETECTOR-SELF-MATCH",
+      "disposition": "SUPPRESS",
+      "why": "match is inside PRAETOR's own detection machinery -- a string inside a pattern collection or a Finding(...) display template. It is data the tool compares or prints, never executed and never read as a path. NOTE: being under scripts/ is NOT sufficient; the match must be inside a collection/call, or a real secret in live code would be suppressed here"
+    },
+    {
+      "rule_id": "env-exfil",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "scripts/engine_aisec.py",
+      "line": 194,
+      "predicate": "P1-DETECTOR-SELF-MATCH",
+      "disposition": "SUPPRESS",
+      "why": "match is inside PRAETOR's own detection machinery -- a string inside a pattern collection or a Finding(...) display template. It is data the tool compares or prints, never executed and never read as a path. NOTE: being under scripts/ is NOT sufficient; the match must be inside a collection/call, or a real secret in live code would be suppressed here"
+    },
+    {
+      "rule_id": "remote-code-pipe",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "scripts/engine_aisec.py",
+      "line": 265,
+      "predicate": "P1-DETECTOR-SELF-MATCH",
+      "disposition": "SUPPRESS",
+      "why": "match is inside PRAETOR's own detection machinery -- a string inside a pattern collection or a Finding(...) display template. It is data the tool compares or prints, never executed and never read as a path. NOTE: being under scripts/ is NOT sufficient; the match must be inside a collection/call, or a real secret in live code would be suppressed here"
+    },
+    {
+      "rule_id": "gcp-service-account-key",
+      "engine": "secrets",
+      "severity": "CRITICAL",
+      "file": "scripts/engine_secrets.py",
+      "line": 311,
+      "predicate": "P1-DETECTOR-SELF-MATCH",
+      "disposition": "SUPPRESS",
+      "why": "match is inside PRAETOR's own detection machinery -- a string inside a pattern collection or a Finding(...) display template. It is data the tool compares or prints, never executed and never read as a path. NOTE: being under scripts/ is NOT sufficient; the match must be inside a collection/call, or a real secret in live code would be suppressed here"
+    },
+    {
+      "rule_id": "sensitive-file-read",
+      "engine": "aisec",
+      "severity": "MEDIUM",
+      "file": "scripts/engine_sca.py",
+      "line": 348,
+      "predicate": "P2-COMMENT",
+      "disposition": "SUPPRESS",
+      "why": "match is inside a `#` comment; deleting comments removes it"
+    },
+    {
+      "rule_id": "sensitive-file-read",
+      "engine": "aisec",
+      "severity": "MEDIUM",
+      "file": "scripts/engine_sca.py",
+      "line": 350,
+      "predicate": "P2-COMMENT",
+      "disposition": "SUPPRESS",
+      "why": "match is inside a `#` comment; deleting comments removes it"
+    },
+    {
+      "rule_id": "sensitive-file-read",
+      "engine": "aisec",
+      "severity": "MEDIUM",
+      "file": "scripts/engine_sca.py",
+      "line": 351,
+      "predicate": "P2-COMMENT",
+      "disposition": "SUPPRESS",
+      "why": "match is inside a `#` comment; deleting comments removes it"
+    },
+    {
+      "rule_id": "remote-code-pipe",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "scripts/engine_aisec.py",
+      "line": 13,
+      "predicate": "P3-DOCSTRING",
+      "disposition": "SUPPRESS",
+      "why": "match is inside a docstring explaining the threat being guarded"
+    },
+    {
+      "rule_id": "env-exfil",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "scripts/engine_aisec.py",
+      "line": 14,
+      "predicate": "P3-DOCSTRING",
+      "disposition": "SUPPRESS",
+      "why": "match is inside a docstring explaining the threat being guarded"
+    },
+    {
+      "rule_id": "safety-bypass-instruction",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "scripts/engine_aisec.py",
+      "line": 18,
+      "predicate": "P3-DOCSTRING",
+      "disposition": "SUPPRESS",
+      "why": "match is inside a docstring explaining the threat being guarded"
+    },
+    {
+      "rule_id": "safety-bypass-instruction",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "scripts/engine_aisec.py",
+      "line": 19,
+      "predicate": "P3-DOCSTRING",
+      "disposition": "SUPPRESS",
+      "why": "match is inside a docstring explaining the threat being guarded"
+    },
+    {
+      "rule_id": "sensitive-file-read",
+      "engine": "aisec",
+      "severity": "MEDIUM",
+      "file": "scripts/engine_sca.py",
+      "line": 25,
+      "predicate": "P3-DOCSTRING",
+      "disposition": "SUPPRESS",
+      "why": "match is inside a docstring explaining the threat being guarded"
+    },
+    {
+      "rule_id": "sensitive-file-read",
+      "engine": "aisec",
+      "severity": "MEDIUM",
+      "file": "tests/test_invariant_never_executes_target.py",
+      "line": 104,
+      "predicate": "P3-DOCSTRING",
+      "disposition": "SUPPRESS",
+      "why": "match is inside a docstring explaining the threat being guarded"
+    },
+    {
+      "rule_id": "sensitive-file-read",
+      "engine": "aisec",
+      "severity": "MEDIUM",
+      "file": "tests/test_invariant_never_executes_target.py",
+      "line": 107,
+      "predicate": "P3-DOCSTRING",
+      "disposition": "SUPPRESS",
+      "why": "match is inside a docstring explaining the threat being guarded"
+    },
+    {
+      "rule_id": "remote-code-pipe",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "references/test-corpus/README.md",
+      "line": 44,
+      "predicate": "P4-FIXTURE-CORPUS",
+      "disposition": "SUPPRESS",
+      "why": "file's declared purpose is emitting malicious samples; a match here is the fixture working, not a defect"
+    },
+    {
+      "rule_id": "high-entropy-string",
+      "engine": "secrets",
+      "severity": "LOW",
+      "file": "references/test-corpus/_generate_corpus.py",
+      "line": 37,
+      "predicate": "P4-FIXTURE-CORPUS",
+      "disposition": "SUPPRESS",
+      "why": "file's declared purpose is emitting malicious samples; a match here is the fixture working, not a defect"
+    },
+    {
+      "rule_id": "remote-code-pipe",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "references/test-corpus/_generate_corpus.py",
+      "line": 152,
+      "predicate": "P4-FIXTURE-CORPUS",
+      "disposition": "SUPPRESS",
+      "why": "file's declared purpose is emitting malicious samples; a match here is the fixture working, not a defect"
+    },
+    {
+      "rule_id": "db-connection-string-password",
+      "engine": "secrets",
+      "severity": "HIGH",
+      "file": "references/test-corpus/_generate_corpus.py",
+      "line": 162,
+      "predicate": "P4-FIXTURE-CORPUS",
+      "disposition": "SUPPRESS",
+      "why": "file's declared purpose is emitting malicious samples; a match here is the fixture working, not a defect"
+    },
+    {
+      "rule_id": "remote-code-pipe",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "references/test-corpus/_generate_corpus.py",
+      "line": 179,
+      "predicate": "P4-FIXTURE-CORPUS",
+      "disposition": "SUPPRESS",
+      "why": "file's declared purpose is emitting malicious samples; a match here is the fixture working, not a defect"
+    },
+    {
+      "rule_id": "sensitive-file-read",
+      "engine": "aisec",
+      "severity": "MEDIUM",
+      "file": "references/test-corpus/_generate_corpus.py",
+      "line": 180,
+      "predicate": "P4-FIXTURE-CORPUS",
+      "disposition": "SUPPRESS",
+      "why": "file's declared purpose is emitting malicious samples; a match here is the fixture working, not a defect"
+    },
+    {
+      "rule_id": "sensitive-file-read",
+      "engine": "aisec",
+      "severity": "MEDIUM",
+      "file": "references/test-corpus/_generate_corpus.py",
+      "line": 181,
+      "predicate": "P4-FIXTURE-CORPUS",
+      "disposition": "SUPPRESS",
+      "why": "file's declared purpose is emitting malicious samples; a match here is the fixture working, not a defect"
+    },
+    {
+      "rule_id": "env-exfil",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "references/test-corpus/_generate_corpus.py",
+      "line": 182,
+      "predicate": "P4-FIXTURE-CORPUS",
+      "disposition": "SUPPRESS",
+      "why": "file's declared purpose is emitting malicious samples; a match here is the fixture working, not a defect"
+    },
+    {
+      "rule_id": "prompt-injection-override",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "references/test-corpus/_generate_corpus.py",
+      "line": 196,
+      "predicate": "P4-FIXTURE-CORPUS",
+      "disposition": "SUPPRESS",
+      "why": "file's declared purpose is emitting malicious samples; a match here is the fixture working, not a defect"
+    },
+    {
+      "rule_id": "remote-code-pipe",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "references/test-corpus/_generate_corpus.py",
+      "line": 198,
+      "predicate": "P4-FIXTURE-CORPUS",
+      "disposition": "SUPPRESS",
+      "why": "file's declared purpose is emitting malicious samples; a match here is the fixture working, not a defect"
+    },
+    {
+      "rule_id": "agent-directed-imperative",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "references/test-corpus/_generate_corpus.py",
+      "line": 198,
+      "predicate": "P4-FIXTURE-CORPUS",
+      "disposition": "SUPPRESS",
+      "why": "file's declared purpose is emitting malicious samples; a match here is the fixture working, not a defect"
+    },
+    {
+      "rule_id": "safety-bypass-instruction",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "references/test-corpus/_generate_corpus.py",
+      "line": 200,
+      "predicate": "P4-FIXTURE-CORPUS",
+      "disposition": "SUPPRESS",
+      "why": "file's declared purpose is emitting malicious samples; a match here is the fixture working, not a defect"
+    },
+    {
+      "rule_id": "dangerous-permission-flag",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "references/test-corpus/_generate_corpus.py",
+      "line": 201,
+      "predicate": "P4-FIXTURE-CORPUS",
+      "disposition": "SUPPRESS",
+      "why": "file's declared purpose is emitting malicious samples; a match here is the fixture working, not a defect"
+    },
+    {
+      "rule_id": "agent-directed-imperative",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "references/test-corpus/_generate_corpus.py",
+      "line": 203,
+      "predicate": "P4-FIXTURE-CORPUS",
+      "disposition": "SUPPRESS",
+      "why": "file's declared purpose is emitting malicious samples; a match here is the fixture working, not a defect"
+    },
+    {
+      "rule_id": "sensitive-file-read",
+      "engine": "aisec",
+      "severity": "MEDIUM",
+      "file": "references/test-corpus/_generate_corpus.py",
+      "line": 203,
+      "predicate": "P4-FIXTURE-CORPUS",
+      "disposition": "SUPPRESS",
+      "why": "file's declared purpose is emitting malicious samples; a match here is the fixture working, not a defect"
+    },
+    {
+      "rule_id": "remote-code-pipe",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "references/test-corpus/_generate_corpus.py",
+      "line": 213,
+      "predicate": "P4-FIXTURE-CORPUS",
+      "disposition": "SUPPRESS",
+      "why": "file's declared purpose is emitting malicious samples; a match here is the fixture working, not a defect"
+    },
+    {
+      "rule_id": "prompt-injection-override",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "references/test-corpus/_generate_corpus.py",
+      "line": 222,
+      "predicate": "P4-FIXTURE-CORPUS",
+      "disposition": "SUPPRESS",
+      "why": "file's declared purpose is emitting malicious samples; a match here is the fixture working, not a defect"
+    },
+    {
+      "rule_id": "invisible-unicode",
+      "engine": "aisec",
+      "severity": "MEDIUM",
+      "file": "references/test-corpus/_generate_corpus.py",
+      "line": 223,
+      "predicate": "P4-FIXTURE-CORPUS",
+      "disposition": "SUPPRESS",
+      "why": "file's declared purpose is emitting malicious samples; a match here is the fixture working, not a defect"
+    },
+    {
+      "rule_id": "bidi-control-trojan-source",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "references/test-corpus/_generate_corpus.py",
+      "line": 227,
+      "predicate": "P4-FIXTURE-CORPUS",
+      "disposition": "SUPPRESS",
+      "why": "file's declared purpose is emitting malicious samples; a match here is the fixture working, not a defect"
+    },
+    {
+      "rule_id": "sensitive-file-read",
+      "engine": "aisec",
+      "severity": "MEDIUM",
+      "file": "SKILL.md",
+      "line": 118,
+      "predicate": "P5-DOC-PROSE",
+      "disposition": "SUPPRESS",
+      "why": "documentation describing an attack pattern in prose"
+    },
+    {
+      "rule_id": "remote-code-pipe",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "references/ARCHITECTURE.md",
+      "line": 86,
+      "predicate": "P5-DOC-PROSE",
+      "disposition": "SUPPRESS",
+      "why": "documentation describing an attack pattern in prose"
+    },
+    {
+      "rule_id": "safety-bypass-instruction",
+      "engine": "aisec",
+      "severity": "HIGH",
+      "file": "references/ARCHITECTURE.md",
+      "line": 91,
+      "predicate": "P5-DOC-PROSE",
+      "disposition": "SUPPRESS",
+      "why": "documentation describing an attack pattern in prose"
+    },
+    {
+      "rule_id": "hardcoded-secret-assignment",
+      "engine": "secrets",
+      "severity": "MEDIUM",
+      "file": "scripts/engine_secrets.py",
+      "line": 27,
+      "predicate": "P6-TAXONOMY-LABEL",
+      "disposition": "SUPPRESS",
+      "why": "value is a published OWASP/CWE identifier misread as a credential by the entropy/assignment heuristic"
+    }
+  ]
+}
