@@ -18,3 +18,8 @@ praetor-out/
 #     python references/test-corpus/_generate_corpus.py
 references/test-corpus/vulnerable/
 references/test-corpus/clean/
+
+# Claude Code harness state (session locks, scheduled-task bookkeeping). Not source.
+# Kept out deliberately: a blind `git add -A` would otherwise commit session state
+# into this repo.
+.claude/
