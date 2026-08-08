@@ -97,11 +97,8 @@ python scripts/praetor.py /path/to/skill --engines aisec,secrets
 
 # Fully offline (bundled Semgrep rules only, no registry fetch)
 python scripts/praetor.py /path/to/target --no-registry --engines sast,secrets,aisec
-# ^ KNOWN LIMITATION: run --no-registry from a CLONE, not a pip install. The
-#   bundled rules in rules/ are not currently shipped in the wheel, so an
-#   installed praetor reports "[skipped] sast: no rules available" instead of
-#   using them. It skips honestly rather than reporting a false 0 -- but the
-#   offline SAST path only works from a checkout today. See Honest limits.
+# Works from a clone and from a pip install alike; set PRAETOR_RULES_DIR to
+# point at a different ruleset location.
 
 # CI gate: non-zero exit if anything HIGH or worse is found
 python scripts/praetor.py /path/to/target --fail-on HIGH --format json
@@ -118,7 +115,7 @@ python scripts/praetor.py /path/to/target --fail-on HIGH --format json
 | `--fail-on` | Exit 1 if any active finding is at/above this level |
 | `--sca-backend` | `auto` (default), `osv`, `pip-audit`, `npm` |
 | `--semgrep-runtime` | `auto` (default), `native`, `wsl`, `docker` |
-| `--no-registry` | Bundled Semgrep rules only; no network fetch. ⚠️ Works from a clone; the bundled rules are not yet packaged into the wheel |
+| `--no-registry` | Bundled Semgrep rules only; no network fetch |
 | `--semgrep-config` | Extra Semgrep `--config` (repeatable) |
 | `--exclude REGEX` | Exclude matching relative paths (repeatable) |
 | `--max-file-size` | Skip files larger than N bytes (default 3 MB) |

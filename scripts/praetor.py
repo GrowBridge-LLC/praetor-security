@@ -47,8 +47,40 @@ import taint                    # noqa: E402
 import report                   # noqa: E402
 
 VERSION = "1.0.0"
-RULES_DIR = os.path.normpath(os.path.join(HERE, "..", "rules"))
-BUNDLED_SEMGREP = os.path.join(RULES_DIR, "semgrep-praetor.yaml")
+def _find_bundled_rules():
+    """
+    Locate the bundled offline Semgrep rules, which live in different places
+    depending on how PRAETOR was obtained.
+
+    From a clone, praetor.py sits in scripts/ and the rules are a sibling
+    directory. Installed from a wheel, praetor.py is a top-level module in
+    site-packages and `../rules` resolves to the environment's lib dir, where
+    nothing exists -- which silently cost the `--no-registry` path its rules.
+
+    Ordered so a checkout always wins: a developer editing rules/ should see
+    their edits, not a stale copy installed in the same environment.
+
+    Returns (rules_dir, rules_file). The file may not exist; the SAST engine
+    already reports honestly when it is absent, and PRAETOR_RULES_DIR lets a
+    packager point at a location this list does not anticipate.
+    """
+    candidates = []
+    env = os.environ.get("PRAETOR_RULES_DIR")
+    if env:
+        candidates.append(env)
+    candidates.append(os.path.normpath(os.path.join(HERE, "..", "rules")))   # clone
+    candidates.append(os.path.join(sys.prefix, "share", "praetor", "rules"))  # wheel
+    candidates.append(os.path.join(os.path.dirname(sys.prefix), "share", "praetor", "rules"))  # venv edge
+
+    for d in candidates:
+        if os.path.isfile(os.path.join(d, "semgrep-praetor.yaml")):
+            return d, os.path.join(d, "semgrep-praetor.yaml")
+    # Nothing found: return the clone-relative path so error text stays familiar.
+    fallback = os.path.normpath(os.path.join(HERE, "..", "rules"))
+    return fallback, os.path.join(fallback, "semgrep-praetor.yaml")
+
+
+RULES_DIR, BUNDLED_SEMGREP = _find_bundled_rules()
 
 ALL_ENGINES = ["sast", "secrets", "sca", "aisec"]
 

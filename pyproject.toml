@@ -53,8 +53,14 @@ py-modules = [
     "engine_sast", "engine_secrets", "engine_sca", "engine_aisec",
 ]
 
-[tool.setuptools.package-data]
-"*" = ["../rules/*.yaml"]
+# The bundled offline Semgrep rules.
+#
+# NOT package-data: that only attaches to a real package, and this project ships
+# flat py-modules. Declaring it there built a wheel with no rules in it, so an
+# installed `--no-registry` run found nothing. data-files installs relative to
+# sys.prefix, which _find_bundled_rules() in praetor.py searches.
+[tool.setuptools.data-files]
+"share/praetor/rules" = ["rules/semgrep-praetor.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
