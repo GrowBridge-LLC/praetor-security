@@ -39,7 +39,11 @@ def test_reachability_CANNOT_distinguish_an_unused_credential_from_a_pattern():
     reachability has changed behaviour and the carve-out reasoning must be
     re-derived -- do NOT simply delete the carve-out.
     """
-    secret_src = 'API_KEYS = ["' + _KEYPFX + "a" * 24 + '"]\n'
+    # praetor:ignore -- the fixture MUST look like a credential assignment; that is
+    # the scenario under test. Assembling the token from parts defeats value-based
+    # detection but not the name-shaped `API_KEYS = [...]` rule, so this needs the
+    # explicit marker rather than a cleverer fixture.
+    secret_src = 'API_KEYS = ["' + _KEYPFX + "a" * 24 + '"]\n'  # praetor:ignore
     regex_src = 'import re\nPAT = re.compile("some-pattern")\n'
 
     assert taint.is_provably_inert(secret_src, 1) is True
@@ -60,7 +64,7 @@ class _F:
 # A credential declared here and used in another module: never reaches a sink in
 # THIS file, so reachability calls it inert. Assembled from parts so the file
 # carries no whole token.
-_UNUSED_CREDENTIAL_SRC = 'API_KEYS = ["' + "sk-" + "ant-" + "a" * 24 + '"]\n'
+_UNUSED_CREDENTIAL_SRC = 'API_KEYS = ["' + "sk-" + "ant-" + "a" * 24 + '"]\n'  # praetor:ignore
 
 
 def test_secrets_finding_is_NOT_suppressed_BY_THE_REAL_PIPELINE(monkeypatch):
