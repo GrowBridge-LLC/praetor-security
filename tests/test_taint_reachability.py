@@ -49,13 +49,51 @@ def test_reachability_CANNOT_distinguish_an_unused_credential_from_a_pattern():
     )
 
 
-def test_secrets_engine_is_excluded_from_reachability_suppression():
-    """THE LOAD-BEARING ASSERTION, the same shape as the lexctx carve-out."""
-    assert "secrets" not in praetor._REACHABILITY_ENGINES, (
-        "DISCLOSURE REGRESSION: the secrets engine is subject to reachability "
-        "suppression. An unused hardcoded credential is 'provably inert' and would "
-        "be silently dropped. A secret is leaked by being written down."
+class _F:
+    """Minimal stand-in for core.Finding -- only the fields the policy reads."""
+
+    def __init__(self, engine, line, file="cfg.py"):
+        self.engine, self.line, self.file = engine, line, file
+        self.filtered, self.filter_reason = False, ""
+
+
+# A credential declared here and used in another module: never reaches a sink in
+# THIS file, so reachability calls it inert. Assembled from parts so the file
+# carries no whole token.
+_UNUSED_CREDENTIAL_SRC = 'API_KEYS = ["' + "sk-" + "ant-" + "a" * 24 + '"]\n'
+
+
+def test_secrets_finding_is_NOT_suppressed_BY_THE_REAL_PIPELINE(monkeypatch):
+    """
+    THE LOAD-BEARING ASSERTION -- and it must exercise the ENFORCEMENT PATH.
+
+    🔴 The previous version of this test asserted only
+    `"secrets" not in praetor._REACHABILITY_ENGINES` -- a static tuple membership
+    check that never called `_apply_reachability`. An independent audit deleted the
+    engine-scope check from that function, left the tuple intact, and ALL 30 TESTS
+    STILL PASSED while a real credential was silently suppressed.
+
+    A test that asserts the CONFIG a guard reads, instead of the guard's BEHAVIOUR,
+    cannot detect the guard being removed. Call the real function.
+    """
+    f = _F("secrets", 1)
+    praetor._apply_reachability([f], "/t", lambda p: _UNUSED_CREDENTIAL_SRC)
+
+    assert not f.filtered, (
+        "DISCLOSURE REGRESSION: a secrets finding was suppressed by reachability. "
+        "An unused hardcoded credential is 'provably inert' and would be silently "
+        f"dropped. A secret is leaked by being written down. reason={f.filter_reason!r}"
     )
+
+
+def test_reachability_DOES_still_suppress_a_behavioural_finding(monkeypatch):
+    """The other direction: proves the carve-out narrowed the pass, not disabled it."""
+    f = _F("aisec", 1)
+    praetor._apply_reachability([f], "/t", lambda p: 'import re\nPAT = re.compile("x")\n')
+    # line 1 is `import re`; use the pattern line instead
+    g = _F("aisec", 2)
+    praetor._apply_reachability([g], "/t", lambda p: 'import re\nPAT = re.compile("x")\n')
+    assert g.filtered, "reachability no longer suppresses an inert behavioural match"
 
 
 # --------------------------------------------------------------------------- #

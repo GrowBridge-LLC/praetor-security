@@ -97,6 +97,11 @@ python scripts/praetor.py /path/to/skill --engines aisec,secrets
 
 # Fully offline (bundled Semgrep rules only, no registry fetch)
 python scripts/praetor.py /path/to/target --no-registry --engines sast,secrets,aisec
+# ^ KNOWN LIMITATION: run --no-registry from a CLONE, not a pip install. The
+#   bundled rules in rules/ are not currently shipped in the wheel, so an
+#   installed praetor reports "[skipped] sast: no rules available" instead of
+#   using them. It skips honestly rather than reporting a false 0 -- but the
+#   offline SAST path only works from a checkout today. See Honest limits.
 
 # CI gate: non-zero exit if anything HIGH or worse is found
 python scripts/praetor.py /path/to/target --fail-on HIGH --format json
@@ -113,7 +118,7 @@ python scripts/praetor.py /path/to/target --fail-on HIGH --format json
 | `--fail-on` | Exit 1 if any active finding is at/above this level |
 | `--sca-backend` | `auto` (default), `osv`, `pip-audit`, `npm` |
 | `--semgrep-runtime` | `auto` (default), `native`, `wsl`, `docker` |
-| `--no-registry` | Bundled Semgrep rules only; no network fetch |
+| `--no-registry` | Bundled Semgrep rules only; no network fetch. ⚠️ Works from a clone; the bundled rules are not yet packaged into the wheel |
 | `--semgrep-config` | Extra Semgrep `--config` (repeatable) |
 | `--exclude REGEX` | Exclude matching relative paths (repeatable) |
 | `--max-file-size` | Skip files larger than N bytes (default 3 MB) |
@@ -170,7 +175,15 @@ comment is still leaked, because a secret is disclosed by being written down, no
 by being executed. Reachability does not change that: a key declared in one module
 and used in another never reaches a sink in the file that declares it. Both passes
 therefore apply to the AI-security engine only, and that carve-out is enforced by
-tests, not by convention.
+tests that call the real suppression functions — not by a convention, and not by a
+test that merely inspects the config those functions read.
+
+⚠️ **Scope of that promise, stated exactly.** It covers the two passes above. Two
+older heuristics *can* still move a secret to FILTERED, in narrow cases: a secret in
+an `.env.example`/`.env.template`-style file, and a low-confidence, low-entropy value
+assigned to a secret-named variable. Both are visible in the FILTERED bucket with a
+reason. So the accurate claim is *"context and reachability never suppress a secret"*,
+not *"nothing ever does"* — **read the FILTERED bucket, do not assume it is all noise.**
 
 🟢 **Suppression fails safe.** Anything PRAETOR cannot *prove* inert is kept —
 unparseable source, an unfamiliar construct, a non-Python file, a value that

@@ -3,9 +3,16 @@ A1 -- reachability: does a matched string ever reach a DANGEROUS SINK?
 
 WHY THIS IS THE RIGHT MECHANISM, measured
 -----------------------------------------
-15 of PRAETOR's 24 remaining self-scan findings are strings inside its own regex
+Most of PRAETOR's remaining self-scan findings are strings inside its own regex
 tables, filename allowlists and finding templates. They are compared against
 text; they are never executed, shelled, or opened.
+
+Measured on the tree where this module landed: 25 findings remained after the
+lexical pass, and reachability suppressed 12 of them.
+⚠️ Re-derive rather than trusting that pair -- both numbers move whenever a file
+is added, and an earlier draft of this docstring shipped a superseded count:
+    cd scripts && python praetor.py .. --no-registry --format json --out <dir> --quiet
+    # then compare `findings` with _REACHABILITY_ENGINES set to () vs ("aisec",)
 
 S3 declined to suppress them with the STRUCTURAL rule "the match is inside a
 collection literal", because that is equally true of `API_KEYS = ["sk-ant-…"]`
@@ -17,7 +24,7 @@ This module uses the SEMANTIC rule instead:
     semantic   : "does it reach a dangerous sink?"  -> what the value is USED FOR
 
 For BEHAVIOURAL findings that is the better question, and it is what suppresses
-the 15: a regex literal is compared against text and reaches nothing.
+those: a regex literal is compared against text and reaches nothing.
 
 ⚠️ It does NOT, however, make the analysis self-sufficient -- see immediately
 below, because the opposite was claimed first.
