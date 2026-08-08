@@ -143,7 +143,21 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
 
     mode = rt["mode"]
     common = ["--json", "--quiet", "--metrics", "off", "--disable-version-check",
-              "--timeout", "60", "--max-target-bytes", "3000000"]
+              "--timeout", "60", "--max-target-bytes", "3000000",
+              # 🔴 Semgrep honours .gitignore by default. PRAETOR's own walker already
+              # decides scope (--exclude, size limits), so letting semgrep apply a
+              # SECOND, invisible filter made the engines disagree about what was
+              # scanned -- and the report presented that as one result.
+              #
+              # Measured: pointed at the repo's own deliberately-vulnerable corpus,
+              # which is gitignored, secrets+aisec returned 27 findings (6 CRITICAL)
+              # while sast reported "ran ... 0 findings". Not a skip -- a successful
+              # clean scan of a directory full of vulnerabilities. That is the exact
+              # false-clean this tool exists to prevent, and it broke the README's own
+              # "Verifying it works" procedure.
+              #
+              # If you scan it, scan it. Exclusion is the caller's call, not git's.
+              "--no-git-ignore"]
     # Semgrep --exclude takes a path/glob pattern; pass each exclude through so
     # the SAST engine honors the same exclusions as the built-in engines.
     for pat in (excludes or []):
