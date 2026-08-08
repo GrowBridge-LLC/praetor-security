@@ -23,6 +23,7 @@ Mapped to the OWASP Top 10 for LLM Applications and to CWE where applicable.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import unicodedata
@@ -321,6 +322,108 @@ def _scan_html_comments(text: str, rel: str) -> list:
 
 
 # --------------------------------------------------------------------------- #
+# E. MCP server manifests
+#
+# An MCP server is a process the agent STARTS AUTOMATICALLY at load and then
+# trusts for the whole session -- the same load-time execution risk as an auto-run
+# hook, with a longer lifetime and a broader tool surface.
+#
+# 🔴 Keyed on PARSED JSON STRUCTURE, never on the string "mcpServers".
+# Documentation about MCP contains that string constantly; a substring match would
+# flag every doc discussing the feature -- the self-noise class this scanner has
+# repeatedly demonstrated on its own tree. Requiring a real object with real server
+# entries costs nothing and cannot match prose.
+# --------------------------------------------------------------------------- #
+
+MCP_MANIFEST_NAMES = {".mcp.json", "mcp.json", "claude_desktop_config.json"}
+
+# Env var names that carry a credential into a third-party server process.
+MCP_CRED_ENV = re.compile(r"(?i)(token|secret|passwd|password|credential|api[_-]?key|_key$|auth)")
+
+# Command shapes that fetch and execute code at server start.
+MCP_REMOTE_EXEC = re.compile(
+    r"(?i)(https?://|\bcurl\b|\bwget\b|Invoke-WebRequest|\biwr\b|\bbash\s+-c|\bsh\s+-c|\beval\b|@latest\b|@\*)"
+)
+
+
+def _mcp_line_of(text: str, name: str) -> int:
+    m = re.search(r'"' + re.escape(name) + r'"\s*:', text)
+    return text.count("\n", 0, m.start()) + 1 if m else 1
+
+
+def _scan_mcp(text: str, rel: str) -> list:
+    """Flag MCP servers a manifest would auto-start, and credentials handed to them."""
+    base = os.path.basename(rel.lower())
+    if base not in MCP_MANIFEST_NAMES and '"mcpServers"' not in text:
+        return []
+    try:
+        data = json.loads(text)
+    except (ValueError, RecursionError):
+        return []  # fail safe: unparseable is not evidence of anything
+    if not isinstance(data, dict):
+        return []
+
+    servers = data.get("mcpServers")
+    if not isinstance(servers, dict):
+        return []
+
+    out: list = []
+    for name, cfg in servers.items():
+        if not isinstance(cfg, dict):
+            continue
+        ln = _mcp_line_of(text, str(name))
+        command = str(cfg.get("command", ""))
+        args = cfg.get("args") if isinstance(cfg.get("args"), list) else []
+        invocation = " ".join([command] + [str(a) for a in args]).strip()
+        if not invocation:
+            continue
+
+        remote = bool(MCP_REMOTE_EXEC.search(invocation))
+        out.append(Finding(
+            engine="aisec",
+            rule_id="mcp-server-autostart-remote" if remote else "mcp-server-autostart",
+            title=("MCP server auto-starts from a remote/unpinned source" if remote
+                   else "MCP server auto-starts a local command"),
+            severity=Severity.HIGH if remote else Severity.MEDIUM,
+            confidence=Confidence.MEDIUM,
+            file=rel, line=ln, category="DANGEROUS_HOOK",
+            description=(
+                f"The MCP server '{name}' is started automatically when the agent loads this "
+                "config, and is then trusted to serve tools for the whole session. "
+                + ("Its invocation fetches or executes code from a remote or unpinned source, so "
+                   "what runs can change without the config changing."
+                   if remote else
+                   "Review what the command does before trusting this config.")
+            ),
+            snippet=invocation[:160] + ("..." if len(invocation) > 160 else ""),
+            fix=("Pin the server to an exact version from a source you control, and audit it before "
+                 "adoption; never accept MCP config from an untrusted repo."),
+            cwe="CWE-829", owasp="LLM05: Supply Chain", references=[REF_LLM],
+        ))
+
+        env = cfg.get("env")
+        if isinstance(env, dict):
+            leaked = sorted(k for k in env if MCP_CRED_ENV.search(str(k)))
+            if leaked:
+                out.append(Finding(
+                    engine="aisec", rule_id="mcp-server-credential-env",
+                    title="Credential passed into an MCP server process",
+                    severity=Severity.HIGH, confidence=Confidence.MEDIUM,
+                    file=rel, line=ln, category="EXFIL",
+                    description=(
+                        f"The MCP server '{name}' receives credential-shaped environment variables "
+                        f"({', '.join(leaked[:5])}). Whatever that server does with them is outside "
+                        "this repo, and it holds them for the whole session."
+                    ),
+                    snippet=", ".join(leaked[:5])[:160],
+                    fix=("Scope the credential to the minimum the server needs, prefer a short-lived "
+                         "token, and confirm the server is one you have audited."),
+                    cwe="CWE-522", owasp="LLM06: Sensitive Information Disclosure", references=[REF_LLM],
+                ))
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # Engine entry
 # --------------------------------------------------------------------------- #
 
@@ -335,6 +438,7 @@ def scan(scan_files, read_text) -> list:
         findings.extend(_scan_unicode(text, rel))
         findings.extend(_scan_html_comments(text, rel))
         findings.extend(_scan_hooks(text, rel))
+        findings.extend(_scan_mcp(text, rel))
 
         lines = text.splitlines()
         for i, line in enumerate(lines, start=1):
