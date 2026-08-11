@@ -190,7 +190,16 @@ TEXT_NAMES = {
     "dockerfile", "makefile", "procfile", "jenkinsfile", "vagrantfile",
     ".env", ".env.local", ".env.production", ".env.development", ".env.example",
     ".npmrc", ".netrc", ".pypirc", ".dockercfg", ".gitconfig",
+    # Agent instruction files. Vendor-neutral by intent: a hostile `.cursorrules`
+    # is the identical attack to a hostile `CLAUDE.md`, and an instruction file the
+    # walker never reaches is invisible to every engine downstream.
+    # ⚠️ The ones that MATTER here are the extensionless dotfiles. Anything ending
+    # in .md / .mdc / .yml is already reached via TEXT_EXTS -- `.cursor/rules/*.mdc`
+    # and `.github/copilot-instructions.md` were never the gap.
     "claude.md", "agents.md", "skill.md", "readme", "readme.md",
+    ".cursorrules", ".clinerules", ".windsurfrules", ".roorules", ".aiderrules",
+    ".goosehints", ".continuerules", "copilot-instructions.md",
+    "gemini.md", "qwen.md", "cline_instructions.md",
     "pre-commit", "post-commit", "pre-push", "post-checkout", "post-merge",
     "gemfile", "rakefile", "berksfile",
     "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "id_rsa.pub",

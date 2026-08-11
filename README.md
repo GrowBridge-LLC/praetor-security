@@ -35,7 +35,7 @@ dangerous auto-run hooks.
 | **sast** | OWASP Top 10, injection, unsafe deserialization, weak crypto, XSS, SSRF, disabled TLS, across ~30 languages | [Semgrep](https://semgrep.dev) (OSS) + bundled offline rules | `semgrep` (native / WSL / Docker) |
 | **secrets** | Hardcoded API keys & tokens (AWS, GCP, GitHub, Slack, Stripe, OpenAI, Anthropic, Google, Twilio, SendGrid, npm, JWT), PEM private keys, DB connection-string passwords, base64-wrapped secrets, high-entropy strings | built-in (stdlib) | nothing |
 | **sca** | Known-vulnerable dependencies with CVE/GHSA IDs, severity, and upgrade path | [osv-scanner](https://github.com/google/osv-scanner) -> [pip-audit](https://github.com/pypa/pip-audit) -> `npm audit` | one of those (optional) |
-| **aisec** | Prompt-injection payloads, invisible-Unicode / [Trojan Source](https://trojansource.codes/) smuggling, data exfiltration, dangerous auto-run hooks (Claude Code / git / npm lifecycle), safety-bypass instructions | built-in (stdlib) | nothing |
+| **aisec** | Prompt-injection payloads, invisible-Unicode / [Trojan Source](https://trojansource.codes/) smuggling, data exfiltration, dangerous auto-run hooks (Claude Code, Cursor, Windsurf, Cline / git / npm lifecycle), safety-bypass instructions | built-in (stdlib) | nothing |
 
 The `secrets` and `aisec` engines are pure Python standard library and always
 run. `sast` and `sca` degrade gracefully: if their backend is missing, that
@@ -67,9 +67,14 @@ Only **Python 3.8+** is strictly required. Install the optional engines for full
 coverage:
 
 ```bash
-# SAST engine (Semgrep). Works natively on Windows, macOS, Linux with recent
-# versions. Prefer an isolated environment (pipx / venv) to avoid disturbing
-# other packages:
+# SAST engine (Semgrep). Runs natively on macOS and Linux. Prefer an isolated
+# environment (pipx / venv) to avoid disturbing other packages:
+#
+# ⚠️ WINDOWS: a native `pip install semgrep` installs a launcher that exits 1
+# with no output -- semgrep-core is not built for native Windows. Use WSL or
+# Docker (see below). PRAETOR reports this honestly as [error] or [skipped]
+# rather than as a clean scan, but the sast engine WILL be unavailable until
+# you provide one of those runtimes.
 pipx install semgrep            # or:  pip install semgrep
 
 # SCA engine (osv-scanner - preferred, language-agnostic):
@@ -133,6 +138,19 @@ section with a stated reason (never dropped silently). Detected secrets are
 
 The JSON report is a stable schema (`schema_version`) suitable for a CI job, an
 apply-gate, or another agent to consume.
+
+### schema_version 2.0 — breaking change to two `rule_id`s
+
+If you match on `rule_id`, update these:
+
+| 1.0 | 2.0 |
+|---|---|
+| `claude-hook-autorun` | `agent-hook-autorun` |
+| `claude-hook-autorun-dangerous` | `agent-hook-autorun-dangerous` |
+
+The auto-run hook detector is no longer Claude-specific — it recognises Cursor,
+Windsurf, Cline and Roo hook configurations too, so a vendor-named id had become
+misleading. Nothing else in the schema changed.
 
 ## Verifying it works
 

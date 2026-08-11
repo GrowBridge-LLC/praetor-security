@@ -2,9 +2,15 @@
 """
 PRAETOR -- multi-engine security analysis.
 
-A best-in-class, open-source Claude Code skill that runs four complementary
-security engines over a target path and fuses their output into one prioritized,
-deduplicated, false-positive-filtered report (human-readable + JSON):
+A best-in-class, open-source security scanner. It runs four complementary engines
+over a target path and fuses their output into one prioritized, deduplicated,
+false-positive-filtered report (human-readable + JSON).
+
+It is distributed as a Claude Code skill (see SKILL.md) but this file is a
+standalone Python CLI with no assistant in the loop -- and the `aisec` engine is
+deliberately vendor-neutral: a hostile `.cursorrules` or `.cursor/hooks.json` is
+the same attack as a hostile `CLAUDE.md`, and PRAETOR must not see only one
+vendor's spelling of it.
 
   sast     Semgrep (OSS)                 OWASP Top 10, injection, auth, many langs
   secrets  built-in                      provider patterns + entropy + base64 unwrap

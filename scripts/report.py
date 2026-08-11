@@ -13,7 +13,14 @@ import json
 
 from core import Severity
 
-SCHEMA_VERSION = "1.0"
+# 2.0 (2026-08-10): BREAKING for consumers that match on `rule_id`.
+#   `claude-hook-autorun`  -> `agent-hook-autorun`
+#   `claude-hook-autorun-dangerous` -> `agent-hook-autorun-dangerous`
+# The detector stopped being Claude-specific (it now recognises Cursor, Windsurf,
+# Cline and Roo hook configs), so a vendor-named id was actively misleading.
+# Both ids are emitted from ONE ternary; they were renamed together, because
+# renaming the bare id alone would have orphaned the HIGH-severity variant.
+SCHEMA_VERSION = "2.0"
 
 _SEV_ORDER = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO]
 

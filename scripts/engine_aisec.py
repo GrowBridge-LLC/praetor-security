@@ -12,9 +12,11 @@ and secret scanners do not model:
                            Source" controls, instruction-bearing HTML comments.
   C. DATA EXFILTRATION     curl|sh install pipes, reads of ~/.aws /~/.ssh/.env,
                            env dumps POSTed to external hosts, base64|curl.
-  D. DANGEROUS HOOKS       auto-run Claude Code hooks (SessionStart/PostToolUse/
-                           ...), git hooks, and npm/pip lifecycle scripts that
-                           execute on load or install.
+  D. DANGEROUS HOOKS       auto-run agent hooks -- Claude Code
+                           (SessionStart/PostToolUse/...), Cursor
+                           (beforeShellExecution/afterFileEdit/...), Windsurf,
+                           Cline/Roo -- plus git hooks and npm/pip lifecycle
+                           scripts that execute on load or install.
   E. SAFETY BYPASS         instructions telling an agent to disable safety,
                            auto-approve, skip review, or escalate privileges.
 
@@ -125,6 +127,102 @@ def _scan_unicode(text: str, rel: str) -> list:
 
 
 # --------------------------------------------------------------------------- #
+# B (cont). Homoglyphs / confusables -- MIXED SCRIPT WITHIN ONE TOKEN
+# --------------------------------------------------------------------------- #
+# The sibling detectors above catch characters that are INVISIBLE. This one
+# catches characters that are VISIBLE and look like something they are not:
+# Cyrillic U+0430 renders identically to Latin "a", so "p<U+0430>ypal" and "paypal"
+# are indistinguishable to a human reviewer and different strings to every machine.
+#
+# 📌 Note the notation. This comment SPELLS OUT the code point instead of pasting
+# the character, and that is not fussiness: an earlier draft pasted it, and this
+# detector then flagged its own explanation -- correctly. A literal lookalike in
+# prose about lookalikes is unreviewable by construction.
+#
+# 🔴 THE SCOPE DECISION IS THE WHOLE DETECTOR, and getting it wrong in the
+# obvious direction would make this unusable:
+#
+#   FIRE on   a token that mixes Latin WITH a confusable script  -- "p<U+0430>ypal"
+#   NEVER on  a token written wholly in another script           -- `Привет`
+#
+# A Russian README is not an attack. "Contains non-ASCII" would flag every
+# non-English document in the world, and a detector that cries wolf on ordinary
+# prose gets disabled, which is a worse outcome than not shipping it. The attack
+# signature is the MIXTURE inside a single word -- nobody writes one word half in
+# Latin and half in Cyrillic by accident.
+#
+# ⚠️ This is necessarily incomplete: a wholly-Cyrillic string that mimics a Latin
+# one (`расс` for `pacc`) has no mixture to detect and is NOT caught here. Stated
+# rather than implied -- absence of this finding is not evidence of authenticity.
+
+# Scripts with characters visually confusable with Latin. Deliberately short:
+# every entry here is a script whose lookalikes are used in real attacks.
+_CONFUSABLE_SCRIPTS = frozenset({"CYRILLIC", "GREEK", "ARMENIAN", "CHEROKEE"})
+
+# Unicode letters only -- \W with re.UNICODE excludes digits and underscore.
+_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+
+def _script_of(ch: str) -> str:
+    """Derive a character's script from its Unicode name prefix.
+
+    Uses `unicodedata` rather than a bundled confusables table so this stays
+    stdlib-only, which the whole aisec engine depends on.
+    """
+    if ch.isascii():
+        return "LATIN"
+    try:
+        return unicodedata.name(ch).split(" ", 1)[0]
+    except ValueError:      # unnamed / private-use code point
+        return "UNKNOWN"
+
+
+def _scan_homoglyphs(text: str, rel: str) -> list:
+    out: list = []
+    for ln, line in enumerate(text.splitlines(), start=1):
+        # Fast path AND a correctness statement: a mixed-script token requires at
+        # least one non-ASCII character, so an all-ASCII line cannot contain one.
+        if line.isascii() or len(line) > 6000:
+            continue
+        for tok in _WORD_RE.findall(line):
+            if tok.isascii():
+                continue
+            scripts = {_script_of(c) for c in tok}
+            if "LATIN" not in scripts:
+                continue            # wholly non-Latin: ordinary foreign text
+            confusable = sorted(scripts & _CONFUSABLE_SCRIPTS)
+            if not confusable:
+                continue            # e.g. Latin + accents, or Latin + CJK: not a lookalike
+            # Name the offending code points explicitly -- the whole problem is
+            # that a reviewer CANNOT see them by looking.
+            odd = ", ".join(
+                f"U+{ord(c):04X} {unicodedata.name(c, '?')}"
+                for c in dict.fromkeys(c for c in tok if _script_of(c) in _CONFUSABLE_SCRIPTS)
+            )
+            out.append(Finding(
+                engine="aisec", rule_id="homoglyph-mixed-script",
+                title="Mixed-script token (homoglyph / confusable characters)",
+                severity=Severity.HIGH, confidence=Confidence.MEDIUM,
+                file=rel, line=ln, category="HIDDEN_CONTENT",
+                description=(
+                    f"The token '{tok}' mixes Latin with {', '.join(confusable)} characters that "
+                    "render identically to Latin letters. A human reviewer cannot distinguish it "
+                    "from the legitimate spelling, while every string comparison, allowlist and "
+                    "URL resolver treats it as a different value. Offending code point(s): "
+                    + odd + "."
+                ),
+                snippet=f"{tok}  [{odd}]",
+                fix=("Normalise model-facing and security-relevant text to a single script; reject "
+                     "mixed-script identifiers, domains and package names outright."),
+                cwe="CWE-1007", owasp="LLM01: Prompt Injection",
+                references=[REF_LLM, "https://www.unicode.org/reports/tr39/"],
+            ))
+            if len(out) >= 20:
+                return out
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # A. Prompt injection  /  E. Safety bypass   (regex, per line)
 # --------------------------------------------------------------------------- #
 # (rule_id, title, regex, severity, confidence, category, cwe, owasp, fix)
@@ -211,9 +309,43 @@ EXFIL = [
 # D. Dangerous hooks & supply-chain lifecycle scripts
 # --------------------------------------------------------------------------- #
 
-CC_HOOK_EVENTS = re.compile(
-    r"(?i)\b(SessionStart|SessionEnd|PostToolUse|PreToolUse|UserPromptSubmit|Stop|SubagentStop|PreCompact|Notification)\b"
+# Agent hook-event names across vendors. A hostile hook config is the same attack
+# whichever assistant loads it, so this must not be one vendor's vocabulary.
+#
+# ⚠️ The case-insensitive flag is doing less work than it looks like it is. It
+# makes Cursor's `preToolUse` / `postToolUse` match Claude's spellings for free,
+# which is why a path-only fix appeared to work -- but `beforeShellExecution`,
+# `afterFileEdit` and `beforeSubmitPrompt` are Cursor-native names with no Claude
+# counterpart, so a config using only those stayed invisible. Measured against a
+# real `~/.cursor/hooks.json` wiring six auto-run commands: zero findings.
+AGENT_HOOK_EVENTS = re.compile(
+    r"(?i)\b("
+    # Claude Code
+    r"SessionStart|SessionEnd|PostToolUse|PreToolUse|UserPromptSubmit|Stop|SubagentStop|PreCompact|Notification"
+    # Cursor
+    r"|beforeShellExecution|beforeReadFile|afterFileEdit|beforeSubmitPrompt|beforeMCPExecution|stop"
+    # Windsurf / Codeium, Cline / Roo
+    r"|onFileEdit|onCommandRun|preCommand|postCommand"
+    r")\b"
 )
+# Retained under the old name: this module is imported by tests and tools that
+# reference it. Renaming without an alias is a silent break for any consumer.
+CC_HOOK_EVENTS = AGENT_HOOK_EVENTS
+
+# Directory prefixes and filenames that indicate an AGENT hook/settings config.
+# 🔴 Every Claude-specific entry STAYS. Detecting Claude formats was never the
+# defect -- detecting ONLY them was.
+AGENT_CONFIG_DIRS = (".claude/", ".cursor/", ".windsurf/", ".codeium/", ".roo/", ".cline/", ".gemini/")
+AGENT_CONFIG_NAMES = ("settings.json", "settings.local.json", "hooks.json",
+                      "cline_settings.json", "windsurf_settings.json")
+
+
+def _is_agent_hook_config(low_rel: str, base: str) -> bool:
+    """True when this path is an agent's hook/settings config, for ANY vendor."""
+    if base in AGENT_CONFIG_NAMES:
+        return True
+    padded = "/" + low_rel
+    return any(d in padded or low_rel.startswith(d) for d in AGENT_CONFIG_DIRS)
 GIT_HOOK_NAMES = {
     "pre-commit", "post-commit", "pre-push", "post-checkout", "post-merge",
     "pre-rebase", "post-rewrite", "prepare-commit-msg", "post-applypatch",
@@ -227,22 +359,24 @@ def _scan_hooks(text: str, rel: str) -> list:
     low_rel = rel.lower()
     base = os.path.basename(low_rel)
 
-    # --- Claude Code hook config (settings.json / .claude/*) ---
-    is_cc_settings = base in ("settings.json", "settings.local.json") or "/.claude/" in ("/" + low_rel) or low_rel.startswith(".claude/")
-    if is_cc_settings and CC_HOOK_EVENTS.search(text) and '"command"' in text.lower():
+    # --- agent hook config (Claude .claude/*, Cursor .cursor/hooks.json, ...) ---
+    if _is_agent_hook_config(low_rel, base) and AGENT_HOOK_EVENTS.search(text) and '"command"' in text.lower():
         for m in re.finditer(r"(?i)\"command\"\s*:\s*\"([^\"]+)\"", text):
             cmd = m.group(1)
             ln = text.count("\n", 0, m.start()) + 1
             dangerous = bool(EXEC_IN_HOOK.search(cmd))
             out.append(Finding(
                 engine="aisec",
-                rule_id="claude-hook-autorun-dangerous" if dangerous else "claude-hook-autorun",
+                # ⚠️ BOTH ids renamed together. Renaming only the bare id would have
+                # left `claude-hook-autorun-dangerous` behind -- orphaning the HIGH
+                # severity variant while the MEDIUM one moved. One ternary, two ids.
+                rule_id="agent-hook-autorun-dangerous" if dangerous else "agent-hook-autorun",
                 title="Auto-run agent hook executes a shell command"
                       + (" (network/exec)" if dangerous else ""),
                 severity=Severity.HIGH if dangerous else Severity.MEDIUM,
                 confidence=Confidence.MEDIUM,
                 file=rel, line=ln, category="DANGEROUS_HOOK",
-                description=("A Claude Code hook runs a command automatically on an agent event. "
+                description=("An agent hook runs a command automatically on an assistant event. "
                              + ("It performs network/exec/encoding operations -- a strong load-time "
                                 "code-execution / exfiltration risk." if dangerous
                                 else "Review what it does before trusting this config.")),
@@ -335,7 +469,8 @@ def _scan_html_comments(text: str, rel: str) -> list:
 # entries costs nothing and cannot match prose.
 # --------------------------------------------------------------------------- #
 
-MCP_MANIFEST_NAMES = {".mcp.json", "mcp.json", "claude_desktop_config.json"}
+MCP_MANIFEST_NAMES = {".mcp.json", "mcp.json", "claude_desktop_config.json",
+                      "mcp_settings.json", "cline_mcp_settings.json"}
 
 # Env var names that carry a credential into a third-party server process.
 MCP_CRED_ENV = re.compile(r"(?i)(token|secret|passwd|password|credential|api[_-]?key|_key$|auth)")
@@ -436,6 +571,7 @@ def scan(scan_files, read_text) -> list:
         rel = sf.relpath
 
         findings.extend(_scan_unicode(text, rel))
+        findings.extend(_scan_homoglyphs(text, rel))
         findings.extend(_scan_html_comments(text, rel))
         findings.extend(_scan_hooks(text, rel))
         findings.extend(_scan_mcp(text, rel))
