@@ -147,8 +147,31 @@ def _run_osv(target: str) -> dict:
         return {"ok": True, "status": "error", "detail": f"osv-scanner launch error: {e}", "findings": []}
     out = r.stdout.strip()
     if not out:
-        # exit 128 = no packages found; treat as clean-but-ran
-        return {"ok": True, "status": "ok", "detail": f"osv-scanner (no lockfile packages / exit {r.returncode})", "findings": []}
+        # No output => osv-scanner analysed NOTHING. This must NEVER be reported as
+        # a successful scan. An earlier version returned status "ok" here, commented
+        # "treat as clean-but-ran", and that was a FALSE CLEAN in the machine-readable
+        # contract: `"status": "ok"` with zero findings is read by every consumer --
+        # including a CI gate -- as "SCA ran and the target is clean", when in fact
+        # nothing was examined. `status` is the ONLY signal telling a consumer whether
+        # a zero means anything.
+        #
+        # `_run_pip_audit` and `_run_npm_audit` already treat this exact condition as
+        # not-ok; osv was the sole outlier. The two cases are distinguished because
+        # they call for different action from the reader:
+        #   exit 128  -> osv's documented "no packages found": nothing to scan here.
+        #                UNAVAILABLE -- a property of the TARGET, no action needed.
+        #   otherwise -> the scanner exited abnormally with no output.
+        #                ERROR -- a property of the ENVIRONMENT, needs investigation.
+        # The old comment claimed "exit 128" while the code checked no return code at
+        # all, so a crashing scanner was laundered into a clean result too.
+        if r.returncode == 128:
+            return {"ok": True, "status": "unavailable",
+                    "detail": "osv-scanner found no lockfile packages to analyse (exit 128); nothing was scanned",
+                    "findings": []}
+        return {"ok": True, "status": "error",
+                "detail": (f"osv-scanner produced no output (exit {r.returncode}); "
+                           "the scan did NOT complete and this is not a clean result"),
+                "findings": []}
     try:
         data = json.loads(out)
     except json.JSONDecodeError:
