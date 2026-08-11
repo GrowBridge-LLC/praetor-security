@@ -88,6 +88,55 @@ the truth; its corpus is the only place truth enters.
   `$HOME/.cargo/bin` (or verify with `where.exe cargo`) before concluding a
   Windows tool is absent.
 
+## Amendment 1 (2026-08-10): `praetor-core` takes the `regex` crate
+
+**Superseding the "zero dependencies" property of `praetor-core`, with the bar it
+must clear stated first**, because a dependency budget nobody wrote down is a
+budget that only ever loosens.
+
+> **The bar:** a dependency is justified only when writing it ourselves would be
+> *worse for security*, not merely slower to build. Convenience is not a reason.
+
+**Why this one clears it.** The remaining engines are regex-driven — `aisec`
+carries 22 compiled patterns and `secrets` 25 — and Rust's standard library has
+no regex. The alternatives were:
+
+| Option | Verdict |
+|---|---|
+| Hand-write a matcher | **Worse for security.** A bespoke regex engine inside a scanner is new, unaudited parsing code running against attacker-controlled input. This is exactly the case the bar exists to catch. |
+| Restructure 47 patterns into non-regex matching | Changes matching behaviour, so it breaks differential parity **by construction** — the one property that makes the port checkable. |
+| Take `regex` | Adopted. |
+
+**Measured cost, not asserted (2026-08-10):**
+
+- **5 crates total**: `regex`, `regex-automata`, `regex-syntax`, `aho-corasick`,
+  `memchr`. All from the same maintainer lineage as `ripgrep`, and among the most
+  widely deployed Rust code in existence.
+- 🔴 **No `build.rs` anywhere in the tree** — nothing executes at build time. For
+  a tool whose central invariant is *never execute the code it scans*, a
+  dependency that runs arbitrary build scripts would be a contradiction, so this
+  was checked rather than assumed.
+- No C/system libraries, no network, no transitive tree beyond those five.
+- Workspace builds clean and the existing tests stay green with it present.
+
+**Compatibility, checked before committing to it:** Rust's `regex` is a
+finite-automata engine and does **not** support backreferences or lookaround.
+All 47 Python patterns were swept for `(?=`, `(?!`, `(?<=`, `(?<!` and `\1`-`\9`:
+**none use any of them.** Every pattern is therefore truly regular and expressible
+without rewriting its semantics.
+
+⚠️ **A benefit worth naming, and a claim deliberately NOT made.** Rust's engine
+guarantees linear-time matching; Python's `re` backtracks and can blow up on
+hostile input, which matters because PRAETOR runs these patterns over
+attacker-controlled files. **This has not been tested against PRAETOR's actual
+patterns, so no live ReDoS is claimed here** — it is a property of the engine,
+recorded as a reason the port may end up *safer* than the reference, and left as
+an open question against the Python side.
+
+📌 The dependency is **not yet in `Cargo.toml`**. It was added to measure the
+above, then reverted, so it lands in the same change as the code that uses it
+rather than sitting unused in the manifest.
+
 ## What this decision does NOT authorise
 
 It authorises the **port**. Nothing else. In particular it says nothing about any
