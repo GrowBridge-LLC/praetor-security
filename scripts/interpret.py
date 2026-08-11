@@ -24,6 +24,11 @@ def _sort_key(f: Finding):
         -int(f.severity),
         -int(f.confidence),
         -_ENGINE_RANK.get(f.engine, 0),
+        # Specificity ranks BELOW engine rank on purpose: it must only ever break
+        # a tie between rules from the same engine describing the same token, and
+        # must not reorder anything across engines. Without it the survivor of a
+        # merge was decided by list order -- see Finding.specificity in core.py.
+        -int(getattr(f, "specificity", 0)),
         f.file,
         f.line,
     )
@@ -55,6 +60,18 @@ def dedup(findings: list) -> list:
             primary.description += (
                 f"  [Corroborated by {len(engines)} engines: {', '.join(engines)} "
                 f"({', '.join(rule_ids)})]"
+            )
+        elif len(rule_ids) > 1:
+            # ONE engine, but distinct rules claimed the same thing and all but one
+            # are about to disappear. Say which. This branch did not exist, so a
+            # collapsed `anthropic-key` left no trace anywhere -- not in `active`,
+            # not in `filtered`, not in the description -- and the reader had no
+            # way to learn a second rule had ever matched. Suppression without a
+            # stated reason is not triage; it is a silent drop.
+            others = [r for r in rule_ids if r != primary.rule_id]
+            primary.description += (
+                f"  [Also matched by: {', '.join(others)} -- reported as "
+                f"{primary.rule_id} (most specific match)]"
             )
         merged.append(primary)
     return merged

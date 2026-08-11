@@ -87,6 +87,18 @@ class Finding:
     references: list = field(default_factory=list)
     # dedup / correlation
     corroborated_by: list = field(default_factory=list)
+    # How SPECIFIC the rule that produced this finding is, as a tie-break when a
+    # merge collapses two findings that describe the same token at the same spot.
+    # Higher wins. 0 = "no opinion", which is every engine that does not set it.
+    #
+    # 🔴 This exists because a broad rule silently ATE a narrower one. `openai-key`
+    # (`sk-`) and `anthropic-key` (`sk-ant-`) both match an Anthropic key, produce
+    # the identical SECRET dedup key, and tied on every other sort term -- so the
+    # survivor was decided by list order, and the operator was told to revoke the
+    # key "in the OpenAI dashboard". They visit the wrong vendor and the live key
+    # is never rotated. A scanner that finds a real leak and routes the human away
+    # from it is worse than one that missed it.
+    specificity: int = 0
     # false-positive handling (set by the interpretation layer)
     filtered: bool = False
     filter_reason: str = ""

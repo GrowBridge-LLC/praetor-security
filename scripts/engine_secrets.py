@@ -120,6 +120,50 @@ PROVIDERS = [
      "If this JWT carries secrets or is a long-lived credential, rotate the signing key and invalidate it."),
 ]
 
+# --------------------------------------------------------------------------- #
+# Rule specificity -- DERIVED, never hand-listed
+# --------------------------------------------------------------------------- #
+# Two provider patterns can legitimately match the same token: an Anthropic key
+# `sk-ant-...` satisfies `anthropic-key` AND the broader `openai-key` (`sk-` plus
+# 20+ token characters). Both findings land on the same line with the same
+# redacted snippet, so they collapse to one in interpret.dedup(). Something has
+# to decide which survives, and "whichever the list happened to define first" is
+# not a decision -- it is how every Anthropic key came to be reported as an
+# OpenAI key, with a fix telling the operator to revoke it in the wrong vendor's
+# dashboard.
+#
+# Specificity = the length of the pattern's leading LITERAL prefix. `sk-ant-` (7)
+# beats `sk-` (3). It is computed from the regex itself, so a new provider rule
+# gets a correct value with nobody remembering to add one -- the failure mode of
+# every hand-maintained list in this repo so far.
+#
+# ⚠️ What this deliberately does NOT do: it does not rank patterns that share no
+# literal prefix (an alternation like the AWS one scores 0). That is correct --
+# specificity only ever breaks a tie between rules matching the SAME token, and
+# it is a tie-break, never a filter. Nothing is dropped on the strength of it.
+_PREFIX_STOP = set("[](){}|*+?.^$\\")
+
+
+def _literal_prefix_len(pattern: str) -> int:
+    """Length of the leading literal run of a provider regex, after its wrapper."""
+    p = pattern
+    for lead in ("(?i)", "\\b", "(?P<secret>", "("):
+        while p.startswith(lead):
+            p = p[len(lead):]
+    n = 0
+    for ch in p:
+        if ch in _PREFIX_STOP:
+            break
+        n += 1
+    return n
+
+
+# rule_id -> specificity, derived once at import.
+PROVIDER_SPECIFICITY = {
+    rule_id: _literal_prefix_len(rx.pattern) for rule_id, _t, rx, _s, _c, _f in PROVIDERS
+}
+
+
 # Connection strings with an embedded password. group 'secret' == the password.
 CONNSTR = re.compile(
     r"(?P<scheme>postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis(?:s)?|amqp(?:s)?|"
@@ -330,6 +374,7 @@ def scan(scan_files, read_text) -> list:
                     f = Finding(
                         engine="secrets", rule_id=rule_id, title=title,
                         severity=sev, confidence=c, file=rel, line=i, category="SECRET",
+                        specificity=PROVIDER_SPECIFICITY.get(rule_id, 0),
                         description=f"Hard-coded credential detected: {title}.",
                         snippet=redact_line(line, secret),
                         fix=fix, cwe=CWE_SECRET, owasp=OWASP_SECRET, references=REF_SECRET,
