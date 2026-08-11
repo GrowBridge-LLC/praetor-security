@@ -20,9 +20,17 @@
 //! ```
 //!
 //! It reported *"suppressed by inline ignore marker on the flagged line"* for a
-//! line that had none. That bug was found **by writing this port** — nothing in
-//! 64 passing Python tests, the self-scan, or review had surfaced it, because a
+//! line that had none. That bug was found **by writing this port** — a green
+//! suite, the self-scan and review had all passed straight over it, because a
 //! single implementation never has to say out loud which definition it means.
+//!
+//! ⚠️ An earlier draft of this comment cited "64 passing tests". That was the
+//! working tree's count at the moment of discovery, but the work was split into
+//! separate commits afterwards, so no commit in history ever shows 64 — a reader
+//! re-deriving it would find a different number and reasonably conclude the
+//! comment was invented. The number is dropped rather than corrected: it was
+//! never the point, and a figure that cannot be reconciled against the repo is
+//! worse than no figure.
 //!
 //! `scripts/core.py::split_lines` is the same function. They are checked against
 //! each other on a shared corpus, not merely written to look alike.

@@ -320,8 +320,16 @@ def test_no_line_number_site_uses_str_splitlines():
             # a detector's fixtures rather than exempting its own source.
             if line.lstrip().startswith("#"):
                 continue
-            # core.split_lines' own docstring names it; so does this guard's list.
-            if rel == "scripts/core.py":
+            # 🔴 NOT a blanket exemption for core.py. An earlier version skipped
+            # the whole file "because its docstring names it", and an independent
+            # audit proved that hole by adding a real `.splitlines()` call to
+            # `redact_line` -- the guard stayed green. core.py is the file that
+            # OWNS line semantics, so it is the last place that should be exempt.
+            #
+            # Only the prose references survive, and they are identifiable: the
+            # docstring writes `str.splitlines()` (the thing being warned about),
+            # while an accidental call reads `text.splitlines()` / `line.splitlines()`.
+            if rel == "scripts/core.py" and "str.splitlines" in line:
                 continue
             if any(rel == a_rel and frag in line for a_rel, frag in allowed):
                 continue

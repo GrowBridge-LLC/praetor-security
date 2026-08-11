@@ -21,9 +21,19 @@
 //!
 //! ## Status
 //!
-//! Scaffold only. No engine logic has been ported yet. Port order is fixed by
-//! ADR-001: `aisec` first (pure pattern matching, no external tool dependencies),
-//! with `sast`/`sca` last because they own the subprocess boundary above.
+//! **No DETECTOR has been ported yet** — nothing here scans, and the binary
+//! refuses to pretend otherwise.
+//!
+//! ⚠️ "Scaffold only" was the earlier wording and it undersold this: `text.rs`
+//! (the shared line definition), `sca.rs` (argv construction plus the
+//! never-execute guard) and `unicode_tables.rs` (a generated script table) are
+//! real, tested, load-bearing code, not stubs. What is absent is any `scan()`
+//! entry point. Corrected after an audit noted a reader skimming the summary
+//! would take the crate for inert.
+//!
+//! Port order is fixed by ADR-001: `aisec` first (pure pattern matching, no
+//! external tool dependencies), with `sast`/`sca` last because they own the
+//! subprocess boundary above.
 //!
 //! ## Acceptance
 //!

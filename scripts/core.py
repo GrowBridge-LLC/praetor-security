@@ -166,6 +166,12 @@ def split_lines(text: str) -> list:
 
     Note the return shape matches `splitlines()`: a trailing newline does NOT
     produce a final empty element, so `len()` is the number of lines.
+
+    📌 One edge case stated rather than left to be discovered: a final line ending
+    in a bare `\r` with no `\n` after it (`"a\r"` as a whole file) also has that
+    `\r` stripped, even though the rule above is framed around CRLF. This affects
+    snippet text only, never a line NUMBER -- which is the property the security
+    boundary rests on -- and the Rust port matches it deliberately.
     """
     if not text:
         return []

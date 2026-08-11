@@ -106,14 +106,21 @@ mod tests {
         );
     }
 
-    #[test]
-    fn no_sca_argv_can_resolve_build_or_install() {
-        // Covers EVERY backend at once, so a newly added one is caught by an
-        // existing test rather than by remembering to write a new one.
-        let argvs = [
+    /// Every argv builder in this module, for the invariant sweep below.
+    ///
+    /// ⚠️ Hand-maintained, and therefore NOT self-extending — which is why
+    /// `every_argv_builder_in_this_file_is_swept` exists to fail when this list
+    /// falls behind the module.
+    fn all_argvs() -> Vec<Vec<String>> {
+        vec![
             pip_audit_argv("pip-audit", "requirements.txt"),
             osv_scanner_argv("osv-scanner", "/tmp/target"),
-        ];
+        ]
+    }
+
+    #[test]
+    fn no_sca_argv_can_resolve_build_or_install() {
+        let argvs = all_argvs();
         for argv in &argvs {
             for forbidden in FORBIDDEN_RESOLVING_FLAGS {
                 assert!(
@@ -124,6 +131,52 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// 🔴 THE ANTI-VACUITY GUARD, and it exists because the claim it now enforces
+    /// was previously only a COMMENT.
+    ///
+    /// `no_sca_argv_can_resolve_build_or_install` used to assert that it "covers
+    /// EVERY backend at once, so a newly added one is caught by an existing test".
+    /// That was false: the list is hand-written, so a new backend added to this
+    /// module and simply *not added to the list* was swept by nothing and passed
+    /// silently. An independent audit proved it by adding an `npm_audit_argv`
+    /// containing `"install"` — all three tests stayed green.
+    ///
+    /// A safety property is not a property of the mechanism; it is a scope
+    /// decision made next to it. This test IS that scope decision, made checkable:
+    /// it counts the argv builders the module actually defines and fails if the
+    /// swept list has fallen behind, so the never-execute invariant cannot be
+    /// widened by omission.
+    #[test]
+    fn every_argv_builder_in_this_file_is_swept() {
+        // Reading our own source is crude, and it is the only mechanism available
+        // without a build script or a proc macro — both of which would run code at
+        // build time, which this crate deliberately refuses.
+        const SRC: &str = include_str!("sca.rs");
+
+        let defined: Vec<&str> = SRC
+            .lines()
+            .map(str::trim_start)
+            .filter(|l| l.starts_with("pub fn ") && l.contains("_argv("))
+            .collect();
+
+        assert!(
+            !defined.is_empty(),
+            "found no `pub fn *_argv(` definitions -- this guard has gone vacuous, \
+             fix the detection rather than deleting the test"
+        );
+        assert_eq!(
+            defined.len(),
+            all_argvs().len(),
+            "UNSWEPT BACKEND: this module defines {} argv builder(s) but only {} are \
+             passed through the never-execute invariant sweep. Add the new one to \
+             `all_argvs()`. An SCA backend whose argv nobody checks is exactly how \
+             the pip-audit RCE got in. Defined: {:?}",
+            defined.len(),
+            all_argvs().len(),
+            defined
+        );
     }
 
     #[test]
