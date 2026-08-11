@@ -131,15 +131,27 @@ case "$REMOTE" in git@github.com-growbridge:*) : ;; *) fail "remote is '$REMOTE'
 [ "$BRANCH" = "main" ] || note "on branch '$BRANCH' (not main) -- confirm this is intended"
 [ "$OK7" = 1 ] && pass "account $ACCT / SSH-alias remote / branch $BRANCH"
 
-# ---- 8. Differential runner (blocking, once it exists) ---------------------
-if [ -f tests/differential/run_differential.py ]; then
-  if py -3.14 tests/differential/run_differential.py >/dev/null 2>&1; then
-    pass "differential Python<->Rust contract holds"
-  else
-    fail "differential contract DIVERGED -- run: py -3.14 tests/differential/run_differential.py"
-  fi
+# ---- 8. Differential runner (BLOCKING, and required to exist) --------------
+#
+# 🔴 The absence of the runner is a FAILURE, not a skip. This gate was written
+# with an `else note "... not present yet -- skipped"` branch while the runner was
+# being built, and that branch had to go the moment it existed: a gate that
+# reports "skipped" when its check is missing means deleting the check turns the
+# gate green. That is this repo's recorded `a-check-that-reports-does-not-gate`
+# trap, which has already been hit twice.
+#
+# The runner itself never skips either -- an unreachable cargo or an unbuildable
+# emitter is a failure inside it, because a harness that goes quiet when it cannot
+# reach the other implementation reports success at the moment it stopped
+# comparing anything.
+DIFF_RUNNER=tests/differential/run_differential.py
+if [ ! -f "$DIFF_RUNNER" ]; then
+  fail "differential runner MISSING ($DIFF_RUNNER) -- the Python<->Rust line-definition contract is ungated"
+elif DIFFOUT="$(py -3.14 "$DIFF_RUNNER" 2>&1)"; then
+  pass "differential Python<->Rust contract holds"
 else
-  note "differential runner not present yet (tests/differential/run_differential.py) -- skipped"
+  fail "differential contract DIVERGED -- run: py -3.14 $DIFF_RUNNER"
+  printf '%s\n' "$DIFFOUT" | sed 's/^/      /'
 fi
 
 echo "== $([ "$FAILED" = 0 ] && echo 'ALL GATES PASSED' || echo 'GATE(S) FAILED') =="

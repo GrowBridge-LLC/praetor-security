@@ -59,24 +59,73 @@ pub fn split_lines(text: &str) -> Vec<&str> {
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The shared differential corpus. Compiled in, so a missing or renamed file
-    /// is a build error rather than a silently skipped test.
-    const CORPUS: &str = include_str!("../../../references/differential/line-splitting.txt");
-
-    /// The committed expectation the Python implementation is held to as well.
-    const EXPECTED: &str = include_str!("../../../references/differential/line-splitting.expected");
-
-    /// Pull a `key value` line out of the expectation file.
-    fn expected(key: &str) -> String {
-        EXPECTED
+/// The cross-language differential contract, as callable code.
+///
+/// ⚠️ Deliberately **not** `#[cfg(test)]`, and that is the point of the module.
+/// These helpers used to be test-private, which made this crate's verdict
+/// unobservable from outside: the only way to learn whether it agreed with the
+/// contract was to run the test and believe the exit code. A test that is
+/// renamed, `#[ignore]`d or `#[cfg]`-ed away still leaves `cargo test` exiting
+/// 0 — so "both suites pass" silently stops meaning "both suites checked". That
+/// was demonstrated, not assumed: diverging `split_lines` and marking these two
+/// tests `#[ignore]` left `cargo test` reporting "ok. 6 passed; 2 ignored".
+///
+/// `tests/differential/run_differential.py` compares the two implementations
+/// against **each other**, which requires this crate to *emit* its signature
+/// rather than merely assert one. The test below and
+/// `examples/emit_line_signature.rs` call exactly these functions, so the
+/// emitted answer cannot drift from the asserted one.
+///
+/// The corpus is not embedded here on purpose: both callers `include_str!` it
+/// themselves, so a missing or renamed corpus stays a build error on both paths.
+pub mod differential {
+    /// Pull a `key value` line out of the committed expectation file.
+    pub fn expected(expectation: &str, key: &str) -> String {
+        expectation
             .split('\n')
             .map(|l| l.trim())
             .find_map(|l| l.strip_prefix(key).map(|v| v.trim().to_string()))
             .unwrap_or_else(|| panic!("expectation file has no {key:?} line"))
+    }
+
+    /// The corpus's cases, decoded, in file order.
+    ///
+    /// ⚠️ Returns an ITERATOR, not `Vec<String>`, and that is load-bearing rather
+    /// than a style choice. `tests/test_rust_sca_argv_sweep.py` forbids any
+    /// production `fn ... -> Vec<String>` outside `sca.rs`: argv construction is
+    /// confined to one module so the never-execute sweep can see all of it. The
+    /// rule's whole value is that it needs no allowlist and cannot be evaded by
+    /// naming, so this complies with it instead of asking for an exception. This
+    /// function was `-> Vec<String>` when it was test-private and stripped by the
+    /// `#[cfg(test)]` carve-out; promoting it to production code made it visible
+    /// to the sweep, correctly.
+    ///
+    /// Do not "simplify" this back to `Vec<String>` -- the sweep will fail, and it
+    /// will be right to.
+    pub fn cases(corpus: &str) -> impl Iterator<Item = String> + '_ {
+        corpus
+            .split('\n')
+            .map(|l| l.strip_suffix('\r').unwrap_or(l))
+            .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
+            .map(unescape)
+    }
+
+    /// This crate's answer: `N:line;line;...` per case, cases space-separated.
+    ///
+    /// The runner compares this string to the Python implementation's and to the
+    /// committed expectation. All three must agree.
+    ///
+    /// ⚠️ Do not recover the cases by splitting the result on `' '` — `escape`
+    /// passes a literal space through, and one corpus case contains one.
+    pub fn signature(corpus: &str) -> String {
+        cases(corpus)
+            .map(|c| {
+                let lines = super::split_lines(&c);
+                let body: Vec<String> = lines.iter().map(|l| escape(l)).collect();
+                format!("{}:{}", lines.len(), body.join(";"))
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     /// Decode the corpus escape format: `\n` `\r` `\t` `\\` `\u{XXXX}`.
@@ -84,7 +133,7 @@ mod tests {
     /// Deliberately strict — an unknown escape panics rather than being passed
     /// through. A corpus line that quietly means something other than intended
     /// is worse than one that fails to load.
-    fn unescape(s: &str) -> String {
+    pub fn unescape(s: &str) -> String {
         let mut out = String::new();
         let mut it = s.chars();
         while let Some(c) = it.next() {
@@ -119,7 +168,7 @@ mod tests {
     /// `["a\r"]` -- same count, different text -- and the cross-language contract
     /// passed the mutant while only a local unit test caught it. The contract is
     /// meant to be the authority; an authority blind to content is not one.
-    fn escape(s: &str) -> String {
+    pub fn escape(s: &str) -> String {
         let mut out = String::new();
         for c in s.chars() {
             match c {
@@ -133,15 +182,19 @@ mod tests {
         }
         out
     }
+}
 
-    fn cases() -> Vec<String> {
-        CORPUS
-            .split('\n')
-            .map(|l| l.strip_suffix('\r').unwrap_or(l))
-            .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
-            .map(unescape)
-            .collect()
-    }
+#[cfg(test)]
+mod tests {
+    use super::differential::{cases, expected, signature};
+    use super::*;
+
+    /// The shared differential corpus. Compiled in, so a missing or renamed file
+    /// is a build error rather than a silently skipped test.
+    const CORPUS: &str = include_str!("../../../references/differential/line-splitting.txt");
+
+    /// The committed expectation the Python implementation is held to as well.
+    const EXPECTED: &str = include_str!("../../../references/differential/line-splitting.expected");
 
     /// 🔴 The load-bearing one. Computes the line COUNT for every corpus case and
     /// checks it against the COMMITTED expectation that
@@ -150,11 +203,11 @@ mod tests {
     /// sides, rather than misaligning every ported detector in silence.
     #[test]
     fn signature_matches_the_committed_cross_language_expectation() {
-        let cases = cases();
+        let cases: Vec<String> = cases(CORPUS).collect();
 
         // Anti-vacuity: an empty or truncated corpus would otherwise "agree"
         // with anything. The count is itself part of the committed contract.
-        let want_cases: usize = expected("cases").parse().expect("bad cases count");
+        let want_cases: usize = expected(EXPECTED, "cases").parse().expect("bad cases count");
         assert_eq!(
             cases.len(),
             want_cases,
@@ -164,18 +217,12 @@ mod tests {
             cases.len()
         );
 
-        // count AND content, per case: `N:line;line;...`
-        let signature: Vec<String> = cases
-            .iter()
-            .map(|c| {
-                let lines = split_lines(c);
-                let body: Vec<String> = lines.iter().map(|l| escape(l)).collect();
-                format!("{}:{}", lines.len(), body.join(";"))
-            })
-            .collect();
+        // count AND content, per case: `N:line;line;...` -- computed by the same
+        // `differential::signature` the emitter calls, so the answer the runner
+        // reads is the answer this test asserts.
         assert_eq!(
-            signature.join(" "),
-            expected("signature"),
+            signature(CORPUS),
+            expected(EXPECTED, "signature"),
             "LINE-DEFINITION DIVERGENCE. This crate's split_lines disagrees with the \
              committed expectation that scripts/core.py::split_lines is also held to. \
              A line number is part of every finding's identity, so this misaligns every \

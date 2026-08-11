@@ -164,79 +164,12 @@ def test_lexical_labels_line_up_with_newline_based_line_numbers():
 # CROSS-LANGUAGE: the Rust port must agree, and be MADE to agree
 # --------------------------------------------------------------------------- #
 
-def _corpus_dir():
-    import pathlib
-    return pathlib.Path(__file__).resolve().parent.parent / "references" / "differential"
-
-
-def _unescape(s):
-    r"""Decode the shared corpus format: \n \r \t \\ and \u{XXXX}.
-
-    Strict on purpose -- an unknown escape raises. A corpus line that quietly
-    means something other than intended is worse than one that fails to load.
-    Mirrors `unescape` in rust/praetor-core/src/text.rs.
-    """
-    out, i, bs = [], 0, chr(92)
-    while i < len(s):
-        if s[i] != bs:
-            out.append(s[i])
-            i += 1
-            continue
-        nxt = s[i + 1]
-        i += 2
-        if nxt == "n":
-            out.append(_NL)
-        elif nxt == "r":
-            out.append(chr(0x0D))
-        elif nxt == "t":
-            out.append(chr(0x09))
-        elif nxt == bs:
-            out.append(bs)
-        elif nxt == "u":
-            assert s[i] == "{", "corpus: backslash-u must be followed by {"
-            j = s.index("}", i)
-            out.append(chr(int(s[i + 1:j], 16)))
-            i = j + 1
-        else:
-            raise AssertionError(f"corpus: unknown escape {bs}{nxt}")
-    return "".join(out)
-
-
-def _escape(s):
-    r"""Re-escape a produced line into the corpus's ASCII format.
-
-    🔴 The signature carries CONTENT, not just line counts. A counts-only
-    signature was tried first and a mutation exposed it: `str::lines()` in the
-    Rust port turns "a\r" into ["a\r"] instead of ["a"] -- same count, different
-    text -- and the cross-language contract passed the mutant. An authority
-    blind to content is not an authority. Mirrors `escape` in
-    rust/praetor-core/src/text.rs.
-    """
-    bs = chr(92)
-    out = []
-    for c in s:
-        if c == bs:
-            out.append(bs * 2)
-        elif c == _NL:
-            out.append(bs + "n")
-        elif c == chr(0x0D):
-            out.append(bs + "r")
-        elif c == chr(0x09):
-            out.append(bs + "t")
-        elif " " <= c <= "~":
-            out.append(c)
-        else:
-            out.append(f"{bs}u{{{ord(c):04X}}}")
-    return "".join(out)
-
-
-def _expected(key):
-    text = (_corpus_dir() / "line-splitting.expected").read_text(encoding="utf-8")
-    for raw in core.split_lines(text):
-        line = raw.strip()
-        if line.startswith(key):
-            return line[len(key):].strip()
-    raise AssertionError(f"expectation file has no {key!r} line")
+# The Python side of the cross-language signature lives in the differential
+# runner, and is imported rather than copied. A second copy of escape/unescape
+# here would be this file's own subject matter turned against it: two definitions
+# of the corpus format, drifting apart exactly as the two definitions of a line
+# once did. conftest.py puts tests/differential on sys.path.
+import run_differential
 
 
 def test_signature_matches_the_committed_cross_language_expectation():
@@ -246,27 +179,27 @@ def test_signature_matches_the_committed_cross_language_expectation():
     (`rust/praetor-core/src/text.rs`). Two suites that each check "does my
     implementation match my own expectation" prove nothing about each other.
 
+    ⚠️ AND THAT IS WHY THIS TEST IS NOT THE GATE. Two assertions against one file
+    only compare the implementations while BOTH actually run, and nothing here can
+    observe whether the Rust one did. Diverging the Rust `split_lines` and marking
+    its two tests `#[ignore]` leaves `cargo test` reporting "ok. 6 passed;
+    2 ignored" -- green, with the ports disagreeing. `tests/differential/
+    run_differential.py` makes the Rust crate EMIT its signature and compares the
+    two directly; `tests/precommit.sh` runs it. This test remains the fast,
+    toolchain-free half.
+
     ⚠️ Do NOT regenerate the expectation to make this pass -- that is the same
     move as regenerating SELF-SCAN-BASELINE.json to reflect an improvement.
     """
-    raw = (_corpus_dir() / "line-splitting.txt").read_text(encoding="utf-8")
-    cases = [_unescape(l) for l in core.split_lines(raw)
-             if l.strip() and not l.lstrip().startswith("#")]
+    cases = run_differential.corpus_cases()
 
-    want_cases = int(_expected("cases"))
+    want_cases = int(run_differential.expected("cases"))
     assert len(cases) == want_cases, (
         f"corpus has {len(cases)} cases, expectation says {want_cases}. Either the corpus "
         f"changed deliberately, or the loader is dropping cases and this test is vacuous."
     )
 
-    # count AND content, per case: `N:line;line;...`
-    parts = []
-    for c in cases:
-        lines = core.split_lines(c)
-        parts.append(f"{len(lines)}:" + ";".join(_escape(l) for l in lines))
-    signature = " ".join(parts)
-
-    assert signature == _expected("signature"), (
+    assert run_differential.python_signature() == run_differential.expected("signature"), (
         "LINE-DEFINITION DIVERGENCE between scripts/core.py and the committed "
         "expectation the Rust port is also held to. A line number is part of every "
         "finding's identity, so this misaligns every ported detector at once."
