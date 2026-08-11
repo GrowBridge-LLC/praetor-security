@@ -1,0 +1,36 @@
+# COMMITTED EXPECTATION for references/differential/line-splitting.txt
+#
+# The number of lines each corpus case splits into, in file order.
+#
+# 🔴 THIS FILE IS THE CONTRACT, NOT A CACHE. Both implementations compute the
+# signature themselves and assert it equals what is written here:
+#
+#   Python -> tests/test_line_numbering_consistency.py
+#   Rust   -> rust/praetor-core/src/text.rs
+#
+# Two suites that each check "does my implementation match my own expectation"
+# prove nothing about each other. A single committed expectation makes any
+# divergence fail on BOTH sides, loudly, at the exact case that moved.
+#
+# ⚠️ DO NOT REGENERATE THIS TO MAKE A TEST PASS. That is the same move as
+# regenerating SELF-SCAN-BASELINE.json to reflect an improvement: it destroys the
+# only artifact that made the claim checkable. If a change to the line definition
+# is genuinely intended, change it deliberately, state why, and update the corpus
+# and this file in the same commit as the reasoning.
+#
+# FORMAT: `N:line;line;...` per case, cases separated by spaces. Lines are
+# re-escaped into the corpus's ASCII format, so this file stays reviewable and
+# carries no invisible characters of its own.
+#
+# 🔴 THE SIGNATURE CARRIES CONTENT, NOT JUST COUNTS -- and that is a correction,
+# not a flourish. The first version recorded counts alone. Mutating the Rust
+# `split_lines` to `str::lines()` (which leaves a trailing lone `\r` in place)
+# changed the CONTENT of one case but not its line count, and this contract
+# passed the mutant while only a local unit test caught it. A cross-language
+# authority that cannot see content is not an authority.
+#
+# Derived independently on 2026-08-10 by both implementations, which agreed on
+# first run: 23 cases, identical signatures.
+
+cases 23
+signature 2:a;b 2:a;b 1:solo 3:a;;b 1: 2:; 2:alpha;beta 2:alpha;beta 1: 1:alpha\rbeta 1:alpha 1:a\u{2028}b 1:a\u{2029}b 1:a\u{0085}b 1:a\u{000B}b 1:a\u{000C}b 1:a\u{001C}b 1:a\u{001D}b 1:a\u{001E}b 2:a\u{2028}b MARKER;payload\u{200B} 2:a\u{2028}b;c\u{2029}d 2:\u{2028};\u{2029} 1:\t

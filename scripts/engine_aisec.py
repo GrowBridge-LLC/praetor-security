@@ -30,7 +30,7 @@ import os
 import re
 import unicodedata
 
-from core import Finding, Severity, Confidence
+from core import Finding, Severity, Confidence, split_lines
 
 REF_LLM = "https://owasp.org/www-project-top-10-for-large-language-model-applications/"
 REF_TROJAN = "https://trojansource.codes/"
@@ -179,7 +179,9 @@ def _script_of(ch: str) -> str:
 
 def _scan_homoglyphs(text: str, rel: str) -> list:
     out: list = []
-    for ln, line in enumerate(text.splitlines(), start=1):
+    # split_lines, not str.splitlines: `_scan_unicode` counts \n, and two
+    # detectors in one engine must not disagree about what a line is.
+    for ln, line in enumerate(split_lines(text), start=1):
         # Fast path AND a correctness statement: a mixed-script token requires at
         # least one non-ASCII character, so an all-ASCII line cannot contain one.
         if line.isascii() or len(line) > 6000:
@@ -396,7 +398,7 @@ def _scan_hooks(text: str, rel: str) -> list:
                     severity=Severity.HIGH, confidence=Confidence.LOW,
                     file=rel, line=ln, category="DANGEROUS_HOOK",
                     description="A git hook script runs network/exec commands automatically on git operations.",
-                    snippet=text.splitlines()[ln - 1].strip()[:160] if ln - 1 < len(text.splitlines()) else "",
+                    snippet=split_lines(text)[ln - 1].strip()[:160] if ln - 1 < len(split_lines(text)) else "",
                     fix="Review committed git hooks; a repo should not ship hooks that curl|sh or eval.",
                     cwe="CWE-829", owasp="LLM05: Supply Chain", references=[REF_LLM],
                 ))
@@ -576,7 +578,7 @@ def scan(scan_files, read_text) -> list:
         findings.extend(_scan_hooks(text, rel))
         findings.extend(_scan_mcp(text, rel))
 
-        lines = text.splitlines()
+        lines = split_lines(text)
         for i, line in enumerate(lines, start=1):
             if len(line) > 6000:
                 continue

@@ -127,6 +127,55 @@ class Finding:
 
 
 # --------------------------------------------------------------------------- #
+# Line numbering -- ONE definition, used everywhere
+# --------------------------------------------------------------------------- #
+
+
+def split_lines(text: str) -> list:
+    r"""
+    Split `text` into lines the way EVERY OTHER TOOL DOES: on `\n` only.
+
+    🔴 THIS IS A SECURITY BOUNDARY, NOT A STYLE CHOICE. Use this instead of
+    `str.splitlines()` anywhere a line number is produced from, or resolved
+    against, scanned text.
+
+    Python's `str.splitlines()` also breaks on `\v`, `\f`, `\x1c`-`\x1e`, `\x85`,
+    `U+2028` and `U+2029`. Nothing else in the toolchain agrees with it --
+    Semgrep, `grep -n`, `sed -n`, git, GitHub and every editor count `\n`. So a
+    line number that came from one definition and is resolved against the other
+    silently points at a DIFFERENT line, and the disagreement is triggered by a
+    character the reader cannot see.
+
+    ⚠️ That was not hypothetical. `_apply_inline_ignores` resolved a finding's
+    `\n`-based line number against a `splitlines()` list, so a file containing
+    `U+2028` shifted the indexing and a finding was suppressed by an ignore
+    marker sitting on a line the reviewer would never connect to it:
+
+        a<U+2028>b nosec        <- \n-line 1: holds the marker
+        payload<ZWSP>           <- \n-line 2: FLAGGED, and carries no marker
+
+    PRAETOR reported *"suppressed by inline ignore marker on the flagged line"*
+    for a flagged line that had none. An attacker controls the scanned file, so
+    they control that shift -- a silent suppression primitive against exactly the
+    mechanism whose stated virtue is being auditable in the source.
+
+    ⚠️ A `\n`-only split leaves the `\r` of a CRLF file at the end of each line,
+    which would corrupt snippets and end-anchored matching, so one trailing `\r`
+    is removed. Line *count* is unaffected: CRLF files have one `\n` per line,
+    which is what Semgrep and every editor count too.
+
+    Note the return shape matches `splitlines()`: a trailing newline does NOT
+    produce a final empty element, so `len()` is the number of lines.
+    """
+    if not text:
+        return []
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return [ln[:-1] if ln.endswith("\r") else ln for ln in lines]
+
+
+# --------------------------------------------------------------------------- #
 # Redaction (never emit a full secret into a report)
 # --------------------------------------------------------------------------- #
 

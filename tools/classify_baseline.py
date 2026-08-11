@@ -30,6 +30,13 @@ import re
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(REPO, "scripts"))
+
+# The toolchain's single definition of a line. This tool resolves a finding's
+# line number against source text, so it must use the same one the engines do --
+# `str.splitlines()` also breaks on U+2028/U+2029/NEL/VT, which would slide every
+# predicate onto the wrong line and misclassify the baseline. See core.split_lines.
+from core import split_lines  # noqa: E402
 
 # Taxonomy labels that the secrets engine's entropy/assignment heuristics misread
 # as credentials. These are published identifiers, not secrets.
@@ -41,7 +48,7 @@ def _line_of(rel_path, lineno):
     path = os.path.join(REPO, rel_path.replace("/", os.sep))
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            lines = fh.read().splitlines()
+            lines = split_lines(fh.read())
     except OSError:
         return None
     if not (1 <= lineno <= len(lines)):
@@ -71,7 +78,7 @@ def _inside_open_bracket(rel_path, lineno):
     path = os.path.join(REPO, rel_path.replace("/", os.sep))
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            head = fh.read().splitlines()[: lineno - 1]
+            head = split_lines(fh.read())[: lineno - 1]
     except OSError:
         return False
     depth = 0
@@ -92,7 +99,7 @@ def _in_docstring(rel_path, lineno):
     path = os.path.join(REPO, rel_path.replace("/", os.sep))
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            head = fh.read().splitlines()[: lineno - 1]
+            head = split_lines(fh.read())[: lineno - 1]
     except OSError:
         return False
     return (sum(l.count('"""') + l.count("'''") for l in head) % 2) == 1

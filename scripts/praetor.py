@@ -152,7 +152,11 @@ def _apply_inline_ignores(findings, target, read_text):
         ap = os.path.join(target, f.file.replace("/", os.sep))
         if ap not in cache:
             txt = read_text(ap)
-            cache[ap] = txt.splitlines() if txt else []
+            # core.split_lines, NEVER str.splitlines: `f.line` is \n-based, and
+            # resolving it against a splitlines() list lets a U+2028 in the
+            # scanned file shift the index onto an unrelated line. That is a
+            # suppression primitive -- see core.split_lines.
+            cache[ap] = core.split_lines(txt) if txt else []
         lines = cache[ap]
         if 1 <= f.line <= len(lines):
             low = lines[f.line - 1].lower()

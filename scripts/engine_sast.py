@@ -25,7 +25,7 @@ import os
 import shutil
 import subprocess
 
-from core import Finding, Severity, Confidence
+from core import Finding, Severity, Confidence, split_lines
 
 DEFAULT_REGISTRY_CONFIGS = ["p/owasp-top-ten", "p/security-audit"]
 _SEMGREP_TIMEOUT = 900  # seconds, overall
@@ -109,7 +109,10 @@ def _source_line(path: str, line_no: int, cache: dict) -> str:
     if path not in cache:
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                cache[path] = fh.read().splitlines()
+                # Semgrep's line numbers are \n-based; resolving them against a
+                # splitlines() list would show the wrong source line. See
+                # core.split_lines.
+                cache[path] = split_lines(fh.read())
         except OSError:
             cache[path] = []
     lines = cache[path]

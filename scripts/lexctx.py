@@ -36,6 +36,11 @@ in tools/classify_baseline.py and does not come here.
 
 from __future__ import annotations
 
+# The ONLY import, and it is deliberate: `split_lines` is the toolchain's single
+# definition of a line. This module stays pure -- text in, label out, no I/O and
+# no policy -- and importing a pure helper does not change that.
+from core import split_lines
+
 CODE = "code"
 COMMENT = "comment"
 DOCSTRING = "docstring"
@@ -79,7 +84,11 @@ def classify_lines(text: str, comment_prefixes=("#",)) -> list:
     """
     labels, in_triple, delim = [], False, None
 
-    for raw in text.splitlines():
+    # 🔴 split_lines, never str.splitlines. This list is indexed BY LINE NUMBER
+    # by the caller, so a disagreement about what a line is relabels live code as
+    # a comment or docstring -- and callers suppress on that label. See
+    # core.split_lines for the concrete bypass.
+    for raw in split_lines(text):
         if in_triple:
             labels.append(DOCSTRING)
             if delim in raw:

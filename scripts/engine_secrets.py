@@ -22,7 +22,7 @@ import base64
 import math
 import re
 
-from core import Finding, Severity, Confidence, redact, redact_line
+from core import Finding, Severity, Confidence, redact, redact_line, split_lines
 
 OWASP_SECRET = "A07:2021 Identification and Authentication Failures"
 CWE_SECRET = "CWE-798"  # Use of Hard-coded Credentials
@@ -284,7 +284,7 @@ def scan(scan_files, read_text) -> list:
         if not text:
             continue
         rel = sf.relpath
-        lines = text.splitlines()
+        lines = split_lines(text)
 
         # ---- multi-line: PEM private keys ----
         for m in PEM.finditer(text):

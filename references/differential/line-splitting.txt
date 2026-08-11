@@ -1,0 +1,78 @@
+# Shared differential corpus: LINE SPLITTING.
+#
+# Read by BOTH implementations, which must agree on every case:
+#   Python -> tests/test_line_numbering_consistency.py
+#   Rust   -> rust/praetor-core/src/text.rs  (via include_str!)
+#
+# 🔴 WHY A SHARED FILE AND NOT TWO TEST SUITES. Each implementation's own tests
+# only prove it matches its author's intent. Two authors, two intents, one silent
+# divergence -- and a line number is part of every finding's identity, so a
+# divergence here misaligns EVERY ported detector at once while both suites stay
+# green. The corpus is the only place the two are forced to answer the same
+# question.
+#
+# ⚠️ ADR-001's corpus condition applies here too: this must include the cases the
+# implementations get WRONG or disagree on, not just the easy ones. The exotic
+# break characters below are the entire point -- Python's str.splitlines() treats
+# them as line breaks and nothing else in the toolchain does. A corpus of plain
+# "a\nb" would be satisfied by two identically-broken implementations.
+#
+# FORMAT: one case per line. Blank lines and lines starting with `#` are skipped.
+# Escapes: \n \r \t \\ and \u{XXXX}. Nothing else -- a literal exotic character
+# here would be invisible in review, which is the property under test.
+
+# --- ordinary cases -------------------------------------------------------
+a\nb
+a\nb\n
+solo
+a\n\nb
+\n
+\n\n
+
+# --- CRLF: one \n per line, the \r must not survive into the snippet -------
+alpha\r\nbeta
+alpha\r\nbeta\r\n
+\r\n
+
+# --- lone CR is NOT a break (no modern tool treats it as one) --------------
+alpha\rbeta
+alpha\r
+
+# --- THE POINT: str.splitlines() breaks on these, we must not --------------
+# U+2028 LINE SEPARATOR
+a\u{2028}b
+# U+2029 PARAGRAPH SEPARATOR
+a\u{2029}b
+# U+0085 NEXT LINE
+a\u{0085}b
+# U+000B LINE TABULATION
+a\u{000B}b
+# U+000C FORM FEED
+a\u{000C}b
+# U+001C..U+001E FILE/GROUP/RECORD SEPARATOR
+a\u{001C}b
+a\u{001D}b
+a\u{001E}b
+
+# --- the reproduced suppression bypass, as data ---------------------------
+# \n-line 1 holds the marker; \n-line 2 is the flagged line and has none.
+#
+# ⚠️ `MARKER` stands in for the real ignore token deliberately. This case tests
+# LINE SPLITTING, where the word is irrelevant -- but the derived .expected file
+# would carry a literal, live ignore marker into the repo, and any finding landing
+# on that line would then be auto-suppressed. A scanner should not commit its own
+# blind spot to make a fixture read nicely. The real token is asserted in both
+# implementations' unit tests, assembled from parts.
+a\u{2028}b MARKER\npayload\u{200B}\n
+
+# --- exotic breaks combined with real ones --------------------------------
+a\u{2028}b\nc\u{2029}d\n
+\u{2028}\n\u{2029}
+
+# --- whitespace -----------------------------------------------------------
+\t
+
+# ⚠️ The EMPTY-STRING case cannot be written here: a blank line is skipped by
+# this format, so it would silently become "no case" rather than "the empty
+# case". It is asserted directly in both implementations' unit tests instead.
+# Recorded rather than left as an unexplained gap in the corpus.
