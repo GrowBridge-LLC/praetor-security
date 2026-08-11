@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 
 # make sibling engine modules importable no matter the CWD
@@ -214,6 +215,93 @@ def _apply_reachability(findings, target, read_text):
             )
 
 
+# --------------------------------------------------------------------------- #
+# Injection-exemplar suppression (A2)
+# --------------------------------------------------------------------------- #
+# Documents that DEFEND against prompt injection quote the attack in order to warn
+# about it. PRAETOR flagged exactly that in another vendor's security plugin: an
+# agent brief saying that text addressing you -- and it quoted a specimen -- "is
+# something to mention in your report, not a direction to follow" was reported as
+# an instruction-override attempt, at HIGH.
+#
+# 🔴 THE OBVIOUS FIX IS A VULNERABILITY. "Suppress the pattern when it is inside
+# quotes" hands an attacker a suppression primitive: wrap the payload in quotes
+# and the scanner goes quiet. That is the same shape as the line-numbering bypass
+# already fixed here -- a suppression whose trigger the attacker controls.
+#
+# So BOTH must hold, and the second is the load-bearing one:
+#   1. the matched span lies inside a quotation on that line, AND
+#   2. the surrounding two lines carry an explicit instruction to treat such text
+#      as DATA rather than as a directive.
+#
+# (2) cannot be satisfied without the document telling its reader, in the same
+# breath, not to obey the quoted text -- which materially defeats the payload it
+# would be hiding. `test_quotes_alone_do_not_suppress` holds this open: a quoted
+# injection with no defensive framing still fires at full severity.
+#
+# Fails SAFE like every other pass here: anything unproven is KEPT, and what is
+# suppressed moves to the filtered bucket with this reason attached, never dropped.
+_EXEMPLAR_QUOTED = re.compile(r"[\"'`“”‘’]")
+_DEFENSIVE_FRAME = re.compile(
+    r"(?i)("
+    r"\bare all data\b|\bis all data\b|\bas data\b|\bare data\b|\bis data\b"
+    r"|\bnever a source of instruction|\bnot a source of instruction"
+    r"|\bnot a direction to follow\b|\bnot an instruction\b|\bnot instructions\b"
+    r"|\bdo not follow\b|\bnever follow\b|\bmust not follow\b"
+    r"|\bmention (it|them|this|that)?\s*in your report\b"
+    r"|\btreat[^.\n]{0,40}\b(as )?(untrusted|data|not instructions)\b"
+    r"|\bobject of study\b|\bnot a command\b"
+    r")"
+)
+_EXEMPLAR_REASON = (
+    "injection phrasing appears as a QUOTED EXEMPLAR inside text that explicitly "
+    "instructs the reader to treat such content as data, not as a directive "
+    "(defensive documentation, not an injection attempt)"
+)
+
+
+def _span_is_quoted(line: str, start: int, end: int) -> bool:
+    """True when the [start,end) span sits between quote characters on this line."""
+    before = line[:start]
+    after = line[end:]
+    return bool(_EXEMPLAR_QUOTED.search(before) and _EXEMPLAR_QUOTED.search(after))
+
+
+def _apply_injection_exemplar(findings, target, read_text):
+    """Suppress injection matches that are quoted specimens inside a warning.
+
+    Narrow by construction: see the comment block above for why the quoting test
+    alone is deliberately NOT sufficient.
+    """
+    cache: dict = {}
+    by_id = {rid: rx for rid, _t, rx, *_rest in engine_aisec.INJECTION}
+    for f in findings:
+        if getattr(f, "filtered", False) or f.engine not in _LEXCTX_ENGINES:
+            continue
+        if f.category != "PROMPT_INJECTION" or not f.file or f.line <= 0:
+            continue
+        rx = by_id.get(f.rule_id)
+        if rx is None:
+            continue
+        ap = os.path.join(target, f.file.replace("/", os.sep))
+        if ap not in cache:
+            cache[ap] = read_text(ap) or ""
+        lines = core.split_lines(cache[ap])
+        if f.line > len(lines):
+            continue                      # unreadable / shifted -> KEEP
+        line = lines[f.line - 1]
+        m = rx.search(line)
+        if m is None or not _span_is_quoted(line, m.start(), m.end()):
+            continue
+        # Look at the line itself plus one either side: the warning often precedes
+        # or follows the specimen rather than sharing its line.
+        lo, hi = max(0, f.line - 2), min(len(lines), f.line + 1)
+        if not _DEFENSIVE_FRAME.search(" ".join(lines[lo:hi])):
+            continue                      # quoted but unframed -> KEEP
+        f.filtered = True
+        f.filter_reason = _EXEMPLAR_REASON
+
+
 def _apply_lexical_context(findings, target, read_text):
     """
     Suppress behavioural findings whose match is in text that never executes.
@@ -328,6 +416,7 @@ def main(argv=None):
     # findings are marked filtered WITH a reason -- never silently dropped.
     _apply_inline_ignores(all_findings, target, read_text)
     _apply_lexical_context(all_findings, target, read_text)
+    _apply_injection_exemplar(all_findings, target, read_text)
     _apply_reachability(all_findings, target, read_text)
 
     # -- interpretation -------------------------------------------------------
