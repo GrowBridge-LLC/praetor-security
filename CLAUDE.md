@@ -97,6 +97,20 @@ python -m pytest tests/ -q
 - ⚠️ **`git checkout --` only restores COMMITTED state.** For an untracked or
   uncommitted file it deletes your work rather than restoring it. Copy the file
   aside before mutating.
+- 🔴 **A FIX IS UNAUDITED CODE, and its author is the worst reader of it.** An
+  audit found a guard here whose comment claimed it covered every SCA backend
+  while the list was hand-written. The repair — written immediately after reading
+  that finding, by someone who understood the class and was specifically trying to
+  close it — filtered on the literal prefix `pub fn `, and a `pub(crate) fn`
+  builder returning `install` sailed through with every test green. Understanding a
+  class does not confer immunity to it; only a second reader does.
+  ⇒ `references/audits/2026-08-10-independent-audit.md`, F2 and F4.
+- **When a guard enumerates, ask what spelling of the thing it misses.** "I have
+  handled the case the auditor demonstrated" is the narrowest possible scope and
+  feels like the whole class from the inside. State what the check cannot reach
+  (here: macro-generated definitions) in the comment, rather than leaving a third
+  audit to find it — but check that disclosure is *complete*, because an incomplete
+  "known gaps" list reads as exhaustive and is worse than none.
 
 ## Writing tests for a detector adds noise to that detector
 

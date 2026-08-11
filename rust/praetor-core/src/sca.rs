@@ -157,9 +157,28 @@ mod tests {
     /// function *name*, so a signature whose parenthesis sits on the next line is
     /// counted too.
     ///
-    /// 🔴 **Still not covered, stated rather than left to be rediscovered:** a
-    /// macro-generated builder never appears as source text and is invisible here.
-    /// If one is ever added, this guard must be replaced, not trusted.
+    /// 🔴 **THIS CHECK IS POROUS AND MUST NOT BE RELIED ON ALONE.** An earlier
+    /// version of this comment named macro-generation as the one uncovered gap. A
+    /// third audit then demonstrated three more, all by mutation, all easier to
+    /// hit by accident than a macro:
+    ///
+    /// - a builder **not named** `*_argv` (`npm_command`) — the name is the only
+    ///   thing matched here, and a name is a promise a contributor can forget;
+    /// - a builder in a **different file** — `include_str!` takes a literal path,
+    ///   so this can never see a file that does not exist yet. **Unfixable in
+    ///   Rust** without a `build.rs`, which this crate refuses because it runs
+    ///   code at build time;
+    /// - an **attribute sharing the line** (`#[allow(dead_code)] pub fn x_argv(`),
+    ///   which defeats the first-token logic below.
+    ///
+    /// Under all three, this suite stayed **8/8 green** with builders containing
+    /// the literal `"install"` present.
+    ///
+    /// ⇒ **`tests/test_rust_sca_argv_sweep.py` is the real enforcement.** It reads
+    /// the crate directory, keys on the `-> Vec<String>` signature rather than a
+    /// name, and asserts set membership in `all_argvs()` rather than a count. This
+    /// test is kept as the fast in-language check, not as the guarantee.
+    /// Macro-generated builders remain invisible to both.
     #[test]
     fn every_argv_builder_in_this_file_is_swept() {
         // Reading our own source is crude, and it is the only mechanism available
