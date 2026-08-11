@@ -165,7 +165,7 @@ a stable JSON schema for programmatic consumers.
 ## rust/ — a SECOND implementation, in progress
 
 Everything above describes the Python implementation, which is **the reference
-implementation and the one you get from `pip install praetor-security`**. There is
+implementation, and the only one you can actually run today**. There is
 also a Rust workspace under `rust/`, and a contributor who does not know that will
 make changes in one implementation that silently diverge from the other.
 

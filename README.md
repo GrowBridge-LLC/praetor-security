@@ -43,10 +43,18 @@ engine reports itself **skipped** and the scan continues.
 
 ## Install
 
+⚠️ **PRAETOR is NOT on PyPI.** `pip install praetor-security` does not work and never has —
+the name is unregistered. (Do not reach for `pip install praetor` either: that name belongs
+to an unrelated project.) Install from source:
+
 ```bash
-pip install praetor-security        # or: pipx install praetor-security
+git clone https://github.com/GrowDev1/praetor-security
+cd praetor-security
+pip install .          # provides the `praetor` command
 praetor --version
 ```
+
+Or without installing anything at all — see below.
 
 PRAETOR has **no runtime dependencies** — deliberately. A tool that vets other
 people's dependencies should not arrive with a large dependency tree of its own.
@@ -227,8 +235,8 @@ decisions behind them.
 
 ### There is a second implementation, in progress
 
-Python is the reference implementation and is what `pip install praetor-security`
-gives you. A Rust workspace also lives under [`rust/`](rust/), and **no detector
+Python is the reference implementation and is what you get from a clone or
+`pip install .`. A Rust workspace also lives under [`rust/`](rust/), and **no detector
 has been ported yet** — it currently holds the shared line definition, SCA argv
 construction with its never-execute invariant guard, and generated Unicode tables.
 The binary refuses to scan rather than pretend to.

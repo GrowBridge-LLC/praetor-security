@@ -37,7 +37,7 @@ The case for an exception was:
    actually occurring.** The dominant defect classes were enumeration errors and
    correction-propagation failures. Rust addresses neither.
 3. **Cost:** ~2,900 working lines, a green suite, a committed regression
-   baseline, and a live `pip install praetor-security` — plus a long window in
+   baseline, and a packaged distribution — plus a long window in
    which PRAETOR exists as **two implementations**, which is the
    "two copies with no propagation path" defect in the one repository where a
    divergence means *a scanner that reports differently depending on which binary
@@ -71,8 +71,12 @@ the truth; its corpus is the only place truth enters.
 
 ## Consequences
 
-- Python remains shipped and remains the reference implementation until parity.
-  `pip install praetor-security` must keep working throughout.
+- Python remains the reference implementation until parity, and remains the only
+  implementation a user can run. Installation from source must keep working
+  throughout.
+  📌 Nothing is published to PyPI; the packaging metadata exists but no release has
+  been made. Any statement here about an install channel means installing from the
+  repository.
 - The JSON contract (`schema_version`) is the interface both implementations
   satisfy; it is what the differential harness compares.
 - **Toolchain (verified 2026-08-10):** `rustc` / `cargo` 1.97.1, host

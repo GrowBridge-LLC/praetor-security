@@ -75,6 +75,10 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## 1.0.0
 
-Initial public release: four engines (`sast`, `secrets`, `sca`, `aisec`), the
+⚠️ **Not a release — a version number.** `pyproject.toml` says `1.0.0`, but nothing has
+been tagged and nothing is published to PyPI. This entry records the state that
+version designates, not a distribution event.
+
+Four engines (`sast`, `secrets`, `sca`, `aisec`), the
 interpretation layer (dedup, ranking, false-positive filtering with stated
 reasons), text and JSON reporting, and bundled offline Semgrep rules.
