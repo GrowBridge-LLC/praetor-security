@@ -252,8 +252,28 @@ TEXT_EXTS = {
     ".pem", ".key", ".crt", ".cer", ".pub", ".asc", ".ppk", ".pk8",
 }
 
+# The names git will actually execute as a hook. Defined HERE, in core, because
+# two separate lists needed them and had already drifted apart:
+#
+# 🔴 `TEXT_NAMES` (which decides what the walker even OPENS) carried five of these
+# while the aisec engine's detector knew twenty-three. A `commit-msg` hook that
+# fetched a remote script and piped it into a shell was therefore invisible -- not
+# "scanned and clean", never read at all. Discovery and detection keying on two
+# hand-maintained copies of the same concept is the same missing-shared-definition
+# bug this repo already fixed once for line numbering. One definition, both users.
+# (The pipe is described rather than spelled: this file is scanned by the engine
+# it feeds, and prose naming the pattern becomes a finding in the self-scan.)
+GIT_HOOK_NAMES = {
+    "applypatch-msg", "pre-applypatch", "post-applypatch",
+    "pre-commit", "pre-merge-commit", "prepare-commit-msg", "commit-msg",
+    "post-commit", "pre-rebase", "post-checkout", "post-merge", "pre-push",
+    "pre-receive", "update", "proc-receive", "post-receive", "post-update",
+    "reference-transaction", "push-to-checkout", "pre-auto-gc", "post-rewrite",
+    "sendemail-validate", "fsmonitor-watchman", "post-index-change",
+}
+
 # Files with no/other extension that are still worth scanning.
-TEXT_NAMES = {
+TEXT_NAMES = GIT_HOOK_NAMES | {
     "dockerfile", "makefile", "procfile", "jenkinsfile", "vagrantfile",
     ".env", ".env.local", ".env.production", ".env.development", ".env.example",
     ".npmrc", ".netrc", ".pypirc", ".dockercfg", ".gitconfig",
@@ -267,7 +287,7 @@ TEXT_NAMES = {
     ".cursorrules", ".clinerules", ".windsurfrules", ".roorules", ".aiderrules",
     ".goosehints", ".continuerules", "copilot-instructions.md",
     "gemini.md", "qwen.md", "cline_instructions.md",
-    "pre-commit", "post-commit", "pre-push", "post-checkout", "post-merge",
+    # (git hook names come from GIT_HOOK_NAMES above -- do not re-list them here)
     "gemfile", "rakefile", "berksfile",
     "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "id_rsa.pub",
 }

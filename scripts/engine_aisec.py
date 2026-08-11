@@ -30,7 +30,7 @@ import os
 import re
 import unicodedata
 
-from core import Finding, Severity, Confidence, split_lines
+from core import Finding, Severity, Confidence, split_lines, GIT_HOOK_NAMES
 
 REF_LLM = "https://owasp.org/www-project-top-10-for-large-language-model-applications/"
 REF_TROJAN = "https://trojansource.codes/"
@@ -348,12 +348,66 @@ def _is_agent_hook_config(low_rel: str, base: str) -> bool:
         return True
     padded = "/" + low_rel
     return any(d in padded or low_rel.startswith(d) for d in AGENT_CONFIG_DIRS)
-GIT_HOOK_NAMES = {
-    "pre-commit", "post-commit", "pre-push", "post-checkout", "post-merge",
-    "pre-rebase", "post-rewrite", "prepare-commit-msg", "post-applypatch",
-}
+# ⚠️ GIT_HOOK_NAMES comes from `core` -- the SAME set the walker uses to decide
+# what to open. It used to be a 9-name copy here, survivable only because the
+# path predicate also fired on *any* directory called `hooks/`, which quietly
+# covered `commit-msg`, `pre-receive`, `update` and the rest. That broad clause
+# is gone (it was matching agent/plugin hook directories -- see `_is_git_hook`),
+# so completeness is now load-bearing, and a second copy would rot.
 NPM_LIFECYCLE = re.compile(r"(?i)\"(preinstall|install|postinstall|prepare|prepublish)\"\s*:\s*\"([^\"]+)\"")
-EXEC_IN_HOOK = re.compile(r"(?i)(curl|wget|Invoke-WebRequest|iwr|nc\b|bash\s+-c|sh\s+-c|eval\b|base64\b|node\s+-e|python[0-9.]*\s+-c|powershell)")
+
+# Evidence for `git-hook-network-exec`, split so the rule cannot fire without the
+# thing its own name asserts.
+#
+# 🔴 It previously fired on a single regex that included `python -c`, `node -e`,
+# `base64` and `powershell` -- so `if python3 -c 'import sys'` inside a Claude
+# Code plugin's `hooks/` directory produced a HIGH "Git hook performs network/exec
+# on a git event": not a git hook, no network, no exec of fetched content. The
+# rule's NAME asserted evidence its predicate never required, which is this
+# project's own recurring defect class aimed back at itself.
+# ⚠️ TWO EVIDENCE BARS, DELIBERATELY DIFFERENT -- do not "unify" them.
+#
+# `EXEC_IN_HOOK` (broad) serves `agent-hook-autorun-dangerous`, whose claim is
+# "this command performs network/exec/ENCODING operations" on an assistant event.
+# For that rule a bare `python -c` genuinely is the risk: an agent hook config
+# auto-runs it at load time, from a file an attacker may have supplied.
+#
+# `NETWORK_IN_HOOK` / `OPAQUE_EXEC_IN_HOOK` (narrow) serve `git-hook-network-exec`,
+# whose claim is specifically network access or execution of fetched content on a
+# git operation. Reusing the broad pattern there is what produced the false
+# positive: the rule's name asserted evidence its predicate never required.
+#
+# The lesson generalises past these two rules: the evidence bar belongs to the
+# CLAIM, not to the file. One shared regex serving two different claims will
+# always over-fire for the narrower one.
+EXEC_IN_HOOK = re.compile(
+    r"(?i)(curl|wget|Invoke-WebRequest|iwr|nc\b|bash\s+-c|sh\s+-c|eval\b|base64\b|node\s+-e|python[0-9.]*\s+-c|powershell)"
+)
+
+NETWORK_IN_HOOK = re.compile(
+    r"(?i)(\b(curl|wget|Invoke-WebRequest|iwr|ncat|telnet)\b|\bnc\s+-|/dev/tcp/)"
+)
+# Executing content the hook did not author: piping into an interpreter, `eval`,
+# PowerShell's `iex`, or decoding a blob to run it. A bare interpreter call
+# (`python3 -c`, `node -e`) is how ordinary hooks work and is NOT this.
+OPAQUE_EXEC_IN_HOOK = re.compile(
+    r"(?i)(\|\s*(sh|bash|zsh|pwsh|powershell|python[0-9.]*|node)\b|\beval\b|\biex\b"
+    r"|base64\s+(-d|-D|--decode))"
+)
+
+
+def _is_git_hook(base: str) -> bool:
+    """True only for a file git would really run as a hook.
+
+    Name-based, because that is what git itself honours (in `.git/hooks/` or any
+    `core.hooksPath`). A `.sample` is never executed by git, and a plugin's
+    `hooks/pre-tool-use.sh` is not a git hook however much its directory looks
+    like one.
+    """
+    if base.endswith(".sample"):
+        return False
+    stem = base.rsplit(".", 1)[0] if "." in base else base
+    return base in GIT_HOOK_NAMES or stem in GIT_HOOK_NAMES
 
 
 def _scan_hooks(text: str, rel: str) -> list:
@@ -387,22 +441,29 @@ def _scan_hooks(text: str, rel: str) -> list:
                 cwe="CWE-829", owasp="LLM05: Supply Chain", references=[REF_LLM],
             ))
 
-    # --- git hooks by path ---
-    if base in GIT_HOOK_NAMES or "/hooks/" in ("/" + low_rel):
-        if EXEC_IN_HOOK.search(text):
-            for m in EXEC_IN_HOOK.finditer(text):
-                ln = text.count("\n", 0, m.start()) + 1
-                out.append(Finding(
-                    engine="aisec", rule_id="git-hook-network-exec",
-                    title="Git hook performs network/exec on a git event",
-                    severity=Severity.HIGH, confidence=Confidence.LOW,
-                    file=rel, line=ln, category="DANGEROUS_HOOK",
-                    description="A git hook script runs network/exec commands automatically on git operations.",
-                    snippet=split_lines(text)[ln - 1].strip()[:160] if ln - 1 < len(split_lines(text)) else "",
-                    fix="Review committed git hooks; a repo should not ship hooks that curl|sh or eval.",
-                    cwe="CWE-829", owasp="LLM05: Supply Chain", references=[REF_LLM],
-                ))
-                break
+    # --- git hooks: by NAME (what git runs), and only on real evidence ---
+    if _is_git_hook(base):
+        net = NETWORK_IN_HOOK.search(text)
+        opaque = OPAQUE_EXEC_IN_HOOK.search(text)
+        m = net or opaque
+        if m:
+            ln = text.count("\n", 0, m.start()) + 1
+            got = [n for n, hit in (("network access", net), ("execution of opaque/fetched content", opaque)) if hit]
+            out.append(Finding(
+                engine="aisec", rule_id="git-hook-network-exec",
+                title="Git hook performs network/exec on a git event",
+                severity=Severity.HIGH, confidence=Confidence.LOW,
+                file=rel, line=ln, category="DANGEROUS_HOOK",
+                # State the evidence actually found, so the reader can tell a
+                # fetch-into-shell from an `eval` without opening the file.
+                description=(
+                    "A git hook runs automatically on git operations and shows "
+                    + " and ".join(got) + "."
+                ),
+                snippet=split_lines(text)[ln - 1].strip()[:160] if ln - 1 < len(split_lines(text)) else "",
+                fix="Review committed git hooks; a repo should not ship hooks that curl|sh or eval.",
+                cwe="CWE-829", owasp="LLM05: Supply Chain", references=[REF_LLM],
+            ))
 
     # --- npm lifecycle scripts ---
     if base == "package.json":
