@@ -1,0 +1,18 @@
+[package]
+name = "praetor-core"
+description = "PRAETOR scanning engines (Rust port, in progress)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# 🔴 NO DEPENDENCIES, DELIBERATELY.
+#
+# The Python `core`/`aisec` modules are standard-library only, and that is a
+# property worth preserving rather than an accident: PRAETOR is a security tool,
+# so every crate added here is a crate its users must trust. The port does not
+# get to widen the trust surface that the thing being ported kept narrow.
+#
+# Adding a dependency is a decision, not a convenience. Record it here when made.
+[dependencies]

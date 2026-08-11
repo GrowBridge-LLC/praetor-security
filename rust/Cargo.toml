@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["praetor-core", "praetor"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/GrowDev1/praetor-security"
+rust-version = "1.74"
+
+[workspace.dependencies]
+praetor-core = { path = "praetor-core" }

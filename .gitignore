@@ -28,3 +28,13 @@ references/test-corpus/clean/
 build/
 dist/
 *.egg-info/
+
+# Rust build artifacts (the port -- see references/ADR-001-engine-language.md).
+# NOT `target/` unanchored: that would also swallow any future directory named
+# `target` elsewhere in the tree, and this repo ships a scanner whose own test
+# corpus uses arbitrary directory names.
+/rust/target/
+
+# Cargo.lock IS committed on purpose -- this workspace ships a binary, and a
+# security tool's users should be able to reproduce the exact dependency set
+# that was audited. (Libraries conventionally omit it; applications do not.)
