@@ -161,3 +161,42 @@ tool **error**, surfaced as `status: error` -- never laundered into a clean
 Emits a plain-ASCII human report (CI/log friendly) with an engine-status table,
 severity summary, ranked findings, the filtered bucket, and a LIMITS section; and
 a stable JSON schema for programmatic consumers.
+
+## rust/ — a SECOND implementation, in progress
+
+Everything above describes the Python implementation, which is **the reference
+implementation and the one you get from `pip install praetor-security`**. There is
+also a Rust workspace under `rust/`, and a contributor who does not know that will
+make changes in one implementation that silently diverge from the other.
+
+**Status, stated precisely because "port in progress" is too vague to act on:**
+**no detector has been ported.** `rust/praetor-core/src/` contains `text.rs` (the
+shared line definition), `sca.rs` (argv construction plus the never-execute
+invariant guard) and `unicode_tables.rs` (generated script tables) — real, tested,
+load-bearing code. There is no `scan()` entry point, and the binary exits non-zero
+rather than pretend to scan.
+
+The decision, its conditions, and the counter-argument that lost are in
+[`ADR-001-engine-language.md`](ADR-001-engine-language.md). Two of its conditions
+bind anyone touching `rust/`:
+
+- 🔴 **No backend merges before its never-execute invariant test does.** A Rust
+  backend is a new backend, and every new backend widens the surface the
+  `--disable-pip` guarantee covers.
+- **Acceptance is DIFFERENTIAL, not "the tests pass."** Both implementations must
+  emit identical `(engine, rule_id, file, line)` sets over one shared corpus. Two
+  implementations that are not continuously reconciled are not a port; they are a
+  fork.
+
+### references/differential/ — 🔴 a contract, not a fixture
+
+`line-splitting.txt` is the shared corpus; `line-splitting.expected` is the
+**committed expectation both implementations must reproduce**. It encodes the line
+definition that a suppression bypass turned on (see `core.split_lines`).
+
+**Do not regenerate `*.expected` to make a test pass.** It is the only artifact
+that can catch the two implementations agreeing on the *wrong* answer, and a
+regenerated expectation agrees with whatever produced it — by construction. If it
+fails, one of the implementations is wrong; find out which. The file repeats this
+warning in its own header, because whoever regenerates it will be reading the file,
+not this document.

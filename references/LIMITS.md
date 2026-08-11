@@ -109,3 +109,31 @@ finding as a lead to verify, and every clean result as an incomplete negative.
 - PRAETOR does not replace a human security review, a penetration test, or a
   threat model. It is a fast, repeatable first pass that catches a large fraction
   of common mistakes and frees a reviewer to focus on the rest.
+
+## A second implementation exists, and that is itself a risk
+
+A Rust workspace lives under `rust/`. **No detector has been ported**, so nothing
+in this document's coverage claims is affected today — but the risk it introduces
+is worth naming before it materialises rather than after.
+
+**The failure mode is two implementations that quietly disagree.** A detector
+ported with a subtly different notion of what a "line" is, or of which characters
+are letters, produces a finding in one implementation and silence in the other,
+while both test suites stay green — because each is consistent with itself. That is
+not hypothetical: a line-definition mismatch between Python's `str.splitlines()`
+and the `\n` convention every other tool uses was a real, exploitable suppression
+bypass in this scanner, and it was found **by porting** — the whole test suite, the
+self-scan and code review all passed over it.
+
+The controls, such as they are:
+
+- `references/differential/` holds a shared corpus and a committed expectation both
+  implementations must reproduce. 🔴 The `*.expected` files are contracts; a
+  regenerated expectation agrees with whatever produced it and catches nothing.
+- Acceptance is defined as identical `(engine, rule_id, file, line)` sets, not as
+  "both suites pass."
+- ⚠️ **Known gap, stated rather than left to be discovered:** that comparison keys
+  on location, so it **cannot detect description drift** between the two
+  implementations, and the corpus is finite — two implementations can still share a
+  bug on an input shape it does not contain. Differential testing bounds divergence;
+  it does not eliminate it.

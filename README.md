@@ -225,6 +225,25 @@ See [`references/ARCHITECTURE.md`](references/ARCHITECTURE.md) for how each engi
 and the interpretation layer (dedup, ranking, FP filtering) work, and the design
 decisions behind them.
 
+### There is a second implementation, in progress
+
+Python is the reference implementation and is what `pip install praetor-security`
+gives you. A Rust workspace also lives under [`rust/`](rust/), and **no detector
+has been ported yet** — it currently holds the shared line definition, SCA argv
+construction with its never-execute invariant guard, and generated Unicode tables.
+The binary refuses to scan rather than pretend to.
+
+If you are contributing, two things bind you before you touch either tree:
+
+- Acceptance is **differential** — both implementations must produce identical
+  `(engine, rule_id, file, line)` sets over one shared corpus.
+- 🔴 `references/differential/*.expected` is a **contract, not a fixture.** Never
+  regenerate it to make a test pass; a regenerated expectation agrees with whatever
+  produced it, which is exactly the failure it exists to catch.
+
+Rationale, conditions and the counter-argument that lost:
+[`references/ADR-001-engine-language.md`](references/ADR-001-engine-language.md).
+
 ## License
 
 MIT - see [`LICENSE`](LICENSE).
