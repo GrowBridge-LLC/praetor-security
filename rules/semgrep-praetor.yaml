@@ -207,3 +207,68 @@ rules:
       owasp: "LLM06: Sensitive Information Disclosure"
     patterns:
       - pattern-regex: '(?i)(system|prompt|content)\s*[:=]\s*["'']?[^"''\n]*(sk-[A-Za-z0-9]{20}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36})'
+
+  # VERIFIED 2026-08-10 against both controls with semgrep 1.172.0 (Linux/WSL --
+  # semgrep does not run natively on Windows). Recorded here rather than in a
+  # commit message because this is the file a future reader opens:
+  #   positive control (visit_Attribute guarded only by startswith("_")) -> 1 finding
+  #   negative control (visit_Attribute guarded by an allowlist)          -> 0 findings
+  #   `semgrep --validate` on this whole file -> "valid ... 15 rule(s)", 0 errors
+  # That last line is not ceremony: semgrep rejects a --config file as a UNIT, so
+  # an invalid pattern here would take the other 14 rules down with it for every
+  # --no-registry user. This rule was held out of the shipped file until it ran.
+  #
+  # CVE-2026-53753 (Crawl4AI, CVSS 9.8, pre-auth RCE): an AST sandbox whose
+  # attribute denylist only blocked names beginning with an underscore. Python's
+  # frame-walking attributes -- gi_frame, f_back, cr_frame, tb_frame, gi_code --
+  # carry NO leading underscore, so `(lambda: 0).gi_frame.f_back.f_globals` walks
+  # straight out of the sandbox to builtins.
+  #
+  # 🔴 THE FAILURE MODE, stated because a reader WILL over-read a clean result:
+  # this rule matches ONE RECOGNISABLE SHAPE. It does NOT establish that a sandbox
+  # is sound -- soundness is undecidable -- and ABSENCE OF THIS FINDING IS NOT
+  # EVIDENCE OF SAFETY. Severity is WARNING, not ERROR, for exactly that reason: a
+  # confident-looking verdict on an undecidable property is a false negative
+  # wearing a badge.
+  - id: praetor-py-underscore-only-attribute-denylist
+    languages: [python]
+    severity: WARNING
+    message: >
+      Attribute guard keyed solely on a leading underscore. Python's frame-walking
+      attributes (gi_frame, f_back, f_globals, cr_frame, tb_frame, gi_code, __class__
+      reachable via them) do NOT start with an underscore in every case, so a
+      denylist of this shape is escapable -- this is CVE-2026-53753 (Crawl4AI,
+      CVSS 9.8, pre-auth RCE via gi_frame/f_back). Deny by ALLOWLIST of permitted
+      attributes instead of by prefix. NOTE: absence of this finding does not mean a
+      sandbox is sound; this rule matches one known-bad shape, not soundness.
+    metadata:
+      cwe: "CWE-693"
+      owasp: "A04:2021 Insecure Design"
+      confidence: MEDIUM
+      references:
+        - "https://cwe.mitre.org/data/definitions/693.html"
+        - "https://docs.python.org/3/reference/datamodel.html#frame-objects"
+    patterns:
+      - pattern-either:
+          # a visitor whose only attribute check is the underscore prefix
+          - pattern: |
+              def visit_Attribute(self, $NODE):
+                  ...
+                  if $NODE.attr.startswith("_"):
+                      ...
+          - pattern: |
+              def visit_Attribute(self, $NODE):
+                  ...
+                  if $A.startswith("_"):
+                      ...
+          # a getattr wrapper gated the same way
+          - pattern: |
+              def $FN(..., $NAME, ...):
+                  ...
+                  if $NAME.startswith("_"):
+                      ...
+                  ...
+                  return getattr(...)
+      - pattern-not-inside: |
+          if $NAME in $ALLOWED:
+              ...
