@@ -1,17 +1,20 @@
 # Independent audit — 2026-08-10
 
-**Scope:** commits `3b6008b..51657ef` (6 commits).
-**Method:** four independent auditors with **zero prior context**, each instructed to verify against
-ground truth — real `git`, real test runs, real mutations — and explicitly *not* against the prose of
-the work under review.
-**Outcome:** 3 real defects, all of the same class, all fixed in `f0b3ad2`.
+**Scope:** commits `3b6008b..51657ef` (6 commits), then a **second pass over the fix commits themselves**
+(`51657ef..5a82e93`) — because a fix is unaudited code, and this one was written by the author whose work
+the first pass had just faulted.
+**Method:** independent auditors with **zero prior context**, each instructed to verify against ground
+truth — real `git`, real test runs, real mutations — and explicitly *not* against the prose of the work
+under review.
+**Outcome:** **4 real defects, all of the same class.** F1–F3 fixed in `f0b3ad2`; **F4 is a defect in the
+fix for F2** and is the most instructive of the four.
 
 > Recorded here rather than summarised in a commit message, because a finding that lives only in a
 > summary cannot be re-checked. This file is the artifact; the fixes cite it.
 
 ## Why this exists at all
 
-Every guard in the audited commits had already been mutation-tested by its author. All three defects
+Every guard in the audited commits had already been mutation-tested by its author. All four defects
 below survived that. The distinction the audit exposed:
 
 > **Mutation testing proves a guard catches the case in front of it today. It says nothing about the
@@ -20,7 +23,9 @@ below survived that. The distinction the audit exposed:
 
 That is the class this repo's own `CLAUDE.md` names as the killer: **a safety property asserted in a
 header that the code does not implement.** Three instances shipped in six commits, written by an author
-who had just cited that rule.
+who had just cited that rule — and a **fourth** shipped two commits later in the *repair* for one of them,
+written by that author immediately after reading the finding. ⇒ Understanding a class does not confer
+immunity to it; only a second reader does.
 
 ## Findings
 
@@ -66,6 +71,35 @@ green.
 *Fix:* narrowed to skip only the prose. The two are distinguishable: documentation writes
 `str.splitlines()` (the thing warned about), an accidental call reads `text.splitlines()`. Verified
 against the auditor's exact probe.
+
+### F4 — 🔴 The fix for F2 had the same defect as F2 (`rust/praetor-core/src/sca.rs`)
+
+A **second** audit pass, run over the fix commits themselves, defeated F2's brand-new sweep counter. The
+detector filtered source lines with `l.starts_with("pub fn ")`. The auditor added:
+
+```rust
+pub(crate) fn npm_audit_argv(exe: &str) -> Vec<String> {
+    vec![exe.to_string(), "install".to_string()]
+}
+```
+
+**All four tests stayed green.** `pub(crate)` is not an exotic shape — it is the *ordinary* visibility for
+a builder only `main.rs` calls, so a future contributor reaches for it without thinking. Two further
+evasions were confirmed by re-derivation: a plain private `fn`, and a signature whose `(` sits on the next
+line (the filter also required `_argv(` on the same line).
+
+*Impact:* identical to F2 — an unswept SCA backend on the never-execute invariant. The guard written
+*specifically to stop this* stopped one spelling of it.
+
+*Fix:* strip any visibility modifier, then match on the function **name** ending in `_argv` rather than on
+a line prefix. Mutation-verified against all three shapes at once: **5 defined vs 2 swept**, red, with every
+offender named. Restored to green afterwards.
+
+> **The lesson is F4 itself, not its fix.** F2's repair was written by an author who had just read the
+> finding, understood the class, and was actively trying to close it — and it closed the *instance*. A
+> guard's coverage is a scope decision, and "I have handled the case the auditor showed me" is the
+> narrowest possible scope. ⇒ The doc comment now states what the check does **not** reach
+> (macro-generated builders), because the alternative is a third audit finding it.
 
 ## Claims corrected (not defects, but misleading)
 

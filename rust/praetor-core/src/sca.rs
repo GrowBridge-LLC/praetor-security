@@ -148,6 +148,18 @@ mod tests {
     /// it counts the argv builders the module actually defines and fails if the
     /// swept list has fallen behind, so the never-execute invariant cannot be
     /// widened by omission.
+    ///
+    /// ⚠️ **This is a TEXTUAL check, not an AST one, and the distinction is not
+    /// cosmetic.** A second audit defeated the first version of it — which keyed on
+    /// the literal prefix `"pub fn "` — with a `pub(crate) fn` builder, an ordinary
+    /// visibility for something only `main.rs` calls. All tests stayed green. The
+    /// detection below therefore strips any visibility modifier and matches on the
+    /// function *name*, so a signature whose parenthesis sits on the next line is
+    /// counted too.
+    ///
+    /// 🔴 **Still not covered, stated rather than left to be rediscovered:** a
+    /// macro-generated builder never appears as source text and is invisible here.
+    /// If one is ever added, this guard must be replaced, not trusted.
     #[test]
     fn every_argv_builder_in_this_file_is_swept() {
         // Reading our own source is crude, and it is the only mechanism available
@@ -158,12 +170,33 @@ mod tests {
         let defined: Vec<&str> = SRC
             .lines()
             .map(str::trim_start)
-            .filter(|l| l.starts_with("pub fn ") && l.contains("_argv("))
+            .filter_map(|l| {
+                // Strip `pub`, `pub(crate)`, `pub(super)`, `pub(in ::path)`.
+                let rest = match l.strip_prefix("pub") {
+                    Some(r) => match r.strip_prefix('(') {
+                        Some(after) => after.split_once(')')?.1,
+                        None => r,
+                    },
+                    None => l,
+                };
+                // Requiring `fn ` at the START (after visibility) is what keeps this
+                // from matching prose: the assertion messages below both contain the
+                // text `fn *_argv(`, and a substring search would count them.
+                let rest = rest.trim_start().strip_prefix("fn ")?;
+                let name = rest
+                    .split(|c: char| c == '(' || c == '<' || c.is_whitespace())
+                    .next()?;
+                if name.ends_with("_argv") {
+                    Some(name)
+                } else {
+                    None
+                }
+            })
             .collect();
 
         assert!(
             !defined.is_empty(),
-            "found no `pub fn *_argv(` definitions -- this guard has gone vacuous, \
+            "found no `fn *_argv` definitions -- this guard has gone vacuous, \
              fix the detection rather than deleting the test"
         );
         assert_eq!(
