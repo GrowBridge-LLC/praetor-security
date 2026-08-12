@@ -83,8 +83,24 @@ not the reassurance.
 ## Testing discipline
 
 ```bash
-python -m pytest tests/ -q
+bash tests/precommit.sh
 ```
+
+That is the gate, not a convenience wrapper: 8 checks, it exits non-zero on any
+failure and names the one that failed. **Commit/push authorization is conditional
+on it passing**, so a green run is the precondition, not a formality.
+
+The suite alone, when you want a fast inner loop:
+
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/ -q
+```
+
+⚠️ **The env var is required, not optional.** A pytest plugin installed globally
+on this machine autoloads and dies on a missing import *before collection*, so a
+bare `python -m pytest` aborts with a traceback pointing at pytest internals and a
+package this project does not depend on. That looks like a broken repo and is not
+one — the same confusion cost time in the session that found it.
 
 - **A green suite proves nothing until you have seen it red.** After writing a
   guard, *change the real code* it protects and confirm the **named** test fails.
