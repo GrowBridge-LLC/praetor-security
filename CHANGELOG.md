@@ -12,6 +12,54 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### 🔴 Security — the SAST engine was not running, and the target could stop it
+
+- **A broken semgrep was reported as a working runtime**
+  (`scripts/engine_sast.py`). `detect_runtime` answered `available: True` from
+  `shutil.which("semgrep")` alone. The version check beside it, `_native_version`,
+  ignored the exit code and had `except Exception: return "semgrep"` — a probe
+  that could not fail, whose result was used only as a display label.
+
+  On the box this project is developed on, a pip-installed Windows `semgrep.EXE`
+  exits 1 and prints nothing. PRAETOR reported it available, **preferred it over a
+  healthy WSL semgrep**, ran it, got no output, and reported `[error] sast`. The
+  engine covering OWASP and injection had not run here at all. Turning it on
+  surfaced two HIGH findings in this repository's own CI workflow.
+
+  Every branch now probes: `--version` must exit 0 *and* print something. In
+  `auto`, a candidate that fails falls through, so one broken install cannot mask
+  a working runtime beside it.
+
+- **WSL was resolved in a non-login shell.** `wsl -d <distro> which semgrep`
+  reports on the bare system PATH, not the one the operator's profile builds, so
+  per-user installs (pipx, a venv, `~/.local/bin`) were invisible. Resolution now
+  uses a login shell, and **the resolved absolute path is used in the command** —
+  the old prefix invoked bare `semgrep`, repeating the non-login lookup at run
+  time, so a passing probe could still be followed by a failing run.
+
+- **Any scanned tree could disable an engine with one typographic quote**
+  (`scripts/core.py`). Engines called `subprocess.run(..., text=True)` with no
+  `encoding`, which decodes with the *locale* codec — cp1252 on a stock Windows
+  install, where five bytes are undefined. Semgrep and osv-scanner embed snippets
+  and paths **from the scanned tree** in their JSON, so those bytes arrive from
+  the target. `U+201D` (`”`) is `E2 80 9D`; its mirror `U+201C` is `E2 80 9C` and
+  was harmless.
+
+  The decode runs on subprocess's reader thread, so `run` returned normally with
+  `stdout=None` and the next `.strip()` raised outside the engine's try block —
+  surfacing as `'NoneType' object has no attribute 'strip'`. All engine
+  subprocesses now go through `core.run_tool`, which decodes UTF-8 with
+  replacement; a source-level guard keeps new call sites from bypassing it.
+
+- **Findings from WSL and Docker carried unusable paths.** Semgrep reports under
+  the root it was given (`/mnt/c/...`, `/src/...`), and the relative path was
+  computed against the Windows target, yielding
+  `../../mnt/c/projects/…/ci.yml`. `f.file` is the key that inline `# nosec`
+  suppression, lexical context, taint reachability and the baseline classifier
+  all use to reopen a file, so each degraded silently — and because "cannot open
+  ⇒ keep the finding" is the fail-safe direction, it hid as noise rather than as
+  an error. Snippet reads used the same unusable path.
+
 ### 🔴 Security — a fail-open in the gating path
 
 - **`--fail-on` returned exit 0 when an engine could not measure**

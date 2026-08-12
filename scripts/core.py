@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import subprocess
 from dataclasses import dataclass, field, asdict
 from enum import IntEnum
 from typing import Iterable, Optional
@@ -98,6 +99,51 @@ ENGINE_ERROR = "error"
 #: added by a future engine and never considered here -- is treated as a blind
 #: spot. Unproven ⇒ assume unmeasured, exactly as an unproven finding is KEPT.
 GATE_TRUSTED_STATUSES = frozenset({ENGINE_OK, ENGINE_NOT_APPLICABLE, ENGINE_DISABLED})
+
+
+def run_tool(cmd: list, timeout: int, cwd: Optional[str] = None):
+    """Run an external ANALYSIS tool and capture its output as text.
+
+    🔴 THE SCANNED TREE MUST NOT BE ABLE TO DECIDE WHETHER AN ENGINE REPORTS.
+
+    Every engine used to call `subprocess.run(..., text=True)` with no `encoding`.
+    `text=True` alone decodes with the LOCALE codec -- cp1252 on a default Windows
+    install -- and cp1252 leaves five bytes undefined (0x81 0x8D 0x8F 0x90 0x9D).
+    Semgrep and osv-scanner embed SNIPPETS AND PATHS FROM THE TARGET in their
+    JSON, so those bytes arrive from the tree being scanned.
+
+    U+201D, the right double quotation mark, is `E2 80 9D`. A single typographic
+    quote -- in a docstring, a README, anything pasted from a word processor --
+    was therefore enough to make the output undecodable. (Its mirror U+201C is
+    `E2 80 9C`, and 0x9C *is* defined in cp1252, so the left quote was harmless
+    and the right one was not. Nothing about that is discoverable from a stack
+    trace.)
+
+    The failure mode is worse than an exception, because it is not one at the
+    call site: the decode happens on subprocess's READER THREAD, so `run` returns
+    normally with **`stdout=None`** and prints an unhandled-thread traceback to
+    stderr. The engine's next statement was `r.stdout.strip()`, outside its own
+    try block, and the AttributeError surfaced as `'NoneType' object has no
+    attribute 'strip'` -- naming nothing that could lead a reader here.
+
+    Net effect: any tree could disable PRAETOR's SAST engine at will, and before
+    the exit-code gate landed, a disabled engine returned exit 0. Measured, not
+    theorised -- it took down this repo's own self-scan, and the same decode
+    error hit the tooling used to diagnose it.
+
+    Decoding is UTF-8 with `errors="replace"`: a tool's output is diagnostic
+    text, and a mojibake snippet in one finding is strictly better than losing
+    every finding in the run. Reads nothing from the target itself.
+    """
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        cwd=cwd,
+    )
 
 
 def engine_blind_spots(engine_meta: dict) -> list:

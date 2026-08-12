@@ -36,6 +36,7 @@ import os
 import shutil
 import subprocess
 
+import core
 from core import Finding, Severity, Confidence, ENGINE_NOT_APPLICABLE
 
 _TIMEOUT = 300
@@ -142,10 +143,10 @@ def _run_osv(target: str) -> dict:
         return {"ok": False}
     cmd = [exe, "--format", "json", "--recursive", os.path.abspath(target)]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=_TIMEOUT)
+        r = core.run_tool(cmd, timeout=_TIMEOUT)
     except Exception as e:  # noqa
         return {"ok": True, "status": "error", "detail": f"osv-scanner launch error: {e}", "findings": []}
-    out = r.stdout.strip()
+    out = (r.stdout or "").strip()
     if not out:
         # No output => osv-scanner analysed NOTHING. This must NEVER be reported as
         # a successful scan. An earlier version returned status "ok" here, commented
@@ -291,7 +292,7 @@ def _run_pip_audit(manifests: list, target: str) -> dict:
         cmd = [exe, "--format", "json", "--progress-spinner", "off",
                "--no-deps", "--disable-pip", "-r", req]
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=_TIMEOUT)
+            r = core.run_tool(cmd, timeout=_TIMEOUT)
         except Exception as e:  # noqa
             errored = True
             detail_parts.append(f"pip-audit ERROR on {base}: {e}")
@@ -376,7 +377,7 @@ def _run_npm_audit(manifests: list, target: str) -> dict:
         cmd = [exe, "audit", "--json", "--audit-level", "low",
                "--registry", "https://registry.npmjs.org/"]
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=_TIMEOUT, cwd=d)
+            r = core.run_tool(cmd, timeout=_TIMEOUT, cwd=d)
         except Exception as e:  # noqa
             errored = True
             detail_parts.append(f"npm audit ERROR in {d}: {e}")
