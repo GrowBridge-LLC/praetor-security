@@ -150,6 +150,24 @@ def _log(quiet, msg):
 
 IGNORE_MARKERS = ("nosec", "nosemgrep", "praetor:ignore", "praetor-ignore")
 
+#: 🔴 The marker must be a WHOLE WORD, inside an actual COMMENT.
+#:
+#: This was `any(m in low for m in IGNORE_MARKERS)` -- a bare substring test over
+#: the entire line, with no word boundary and no comment requirement. Measured:
+#:
+#:     {"nosec_note": "x", "apiKey": "<a real key>"}   -> EXIT 0, finding suppressed
+#:     {"note": "x",       "apiKey": "<a real key>"}   -> EXIT 1
+#:
+#: JSON has no comment syntax at all, so nothing on that line could possibly be an
+#: authored suppression -- and `nosec` is a substring of `nosecret`, `nosecurity`,
+#: `nosection`, and of any path or hostname containing it. The scanned tree is
+#: attacker-controlled, which made this a suppression primitive rather than a
+#: papercut.
+_IGNORE_WORD_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:" + "|".join(re.escape(m) for m in IGNORE_MARKERS) + r")(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
+
 
 def _apply_inline_ignores(findings, target, read_text):
     """
@@ -171,8 +189,11 @@ def _apply_inline_ignores(findings, target, read_text):
             cache[ap] = core.split_lines(txt) if txt else []
         lines = cache[ap]
         if 1 <= f.line <= len(lines):
-            low = lines[f.line - 1].lower()
-            if any(m in low for m in IGNORE_MARKERS):
+            # Only the COMMENT part of the line can carry a marker, and only as a
+            # whole word. lexctx owns what a comment is -- praetor.py must not
+            # grow a second, divergent idea of comment syntax.
+            comment = lexctx.comment_text(lines[f.line - 1])
+            if comment and _IGNORE_WORD_RE.search(comment):
                 f.filtered = True
                 f.filter_reason = "suppressed by inline ignore marker on the flagged line"
 

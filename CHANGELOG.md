@@ -12,6 +12,41 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### 🔴 Security — three suppressions the scanned tree could trigger itself
+
+Found by independent adversarial audit, re-verified from source. **None was
+introduced by the commit under audit; all three were pre-existing and live.**
+PRAETOR reads attacker-controlled input by definition, so any suppression the
+target can trigger makes the scanner an oracle for the attacker.
+
+- **Dedup elected a *filtered* finding over an unfiltered one**
+  (`scripts/interpret.py`). All five injection rules share `CWE-77`, so every
+  `PROMPT_INJECTION` finding on a line collapses into one dedup group.
+  `_sort_key` ignored `filtered`, so a quoted, defensively-framed exemplar —
+  correctly suppressed — won primary election and **discarded the live payload
+  beside it**. Measured, identical payload: alone it is a HIGH active finding
+  and exits 1; with a quoted specimen appended to the same line, `active` is
+  empty and it exits 0. The live finding was in *neither* bucket and carried no
+  `filter_reason`, so a reviewer auditing suppressions could not have found it.
+  The rule-level guard was correct; the defect re-entered one layer down.
+
+- **The inline-ignore marker was a bare substring of the whole line**
+  (`scripts/praetor.py`). No word boundary and no comment required, so a JSON
+  file — which has no comment syntax at all — could suppress a real credential
+  via a key named `"nosec_note"`, and `nosec` matched inside `nosecret`,
+  `nosecurity`, `nosection`. Markers must now be whole words inside an actual
+  comment (`scripts/lexctx.py`); string literals are blanked first, so a marker
+  appearing as a *value* no longer suppresses.
+
+- **`.github/`, `.githooks/` and `.gitlab/` were never walked**
+  (`scripts/core.py`). `not d.startswith(".git")` skipped every sibling of
+  `.git`. `.github/workflows/` is executable CI code and `.githooks/` is the
+  conventional `core.hooksPath` home, so the git-hook detector could not see
+  hooks where they normally live. The engines still reported `status: ok`.
+  `TEXT_NAMES` listed `copilot-instructions.md`, which lives under `.github/`
+  and was therefore unreachable — a name documented as covered that no file
+  could match.
+
 ### 🔴 Security — the SAST engine was not running, and the target could stop it
 
 - **A broken semgrep was reported as a working runtime**

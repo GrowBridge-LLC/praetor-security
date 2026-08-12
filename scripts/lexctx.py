@@ -70,6 +70,36 @@ def _strip_inline_strings(line: str) -> str:
     return "".join(out)
 
 
+#: Comment introducers recognised by `comment_text`. 🔴 DELIBERATELY CONSERVATIVE.
+#: This list decides where a SUPPRESSION marker is allowed to live, so the unsafe
+#: direction here is recognising TOO MANY things as comments -- an over-generous
+#: entry (`--`, `;`, `%`, `'`) would let an ordinary expression or a quoted value
+#: introduce a "comment" and suppress a real finding.
+#:
+#: ⚠️ STATED IN FULL rather than implied: a marker written in SQL (`-- nosec`),
+#: ini/asm (`; nosec`), MATLAB/TeX (`% nosec`) or VB (`' nosec`) is NOT honoured
+#: and the finding is KEPT. That is the safe direction, and it is the whole
+#: reason those are absent.
+COMMENT_INTRODUCERS = ("#", "//", "/*", "<!--")
+
+
+def comment_text(line: str, introducers=COMMENT_INTRODUCERS) -> str:
+    """Return the COMMENT portion of a single line, or "" if it has none.
+
+    String literals are blanked first, so a marker inside a string -- `x = "# nosec"`,
+    or a JSON value, or a key named `"nosec_note"` -- is not mistaken for a comment.
+    That distinction is the entire point: a file format with no comment syntax at
+    all (JSON) must not be able to carry a suppression marker.
+    """
+    bare = _strip_inline_strings(line)
+    first = None
+    for intro in introducers:
+        idx = bare.find(intro)
+        if idx != -1 and (first is None or idx < first):
+            first = idx
+    return "" if first is None else bare[first:]
+
+
 def classify_lines(text: str, comment_prefixes=("#",)) -> list:
     """
     Return a per-line context label for `text` (1 label per line, index 0 = line 1).

@@ -383,7 +383,13 @@ TEXT_NAMES = GIT_HOOK_NAMES | {
     # walker never reaches is invisible to every engine downstream.
     # ⚠️ The ones that MATTER here are the extensionless dotfiles. Anything ending
     # in .md / .mdc / .yml is already reached via TEXT_EXTS -- `.cursor/rules/*.mdc`
-    # and `.github/copilot-instructions.md` were never the gap.
+    # is not the gap.
+    # ⚠️ CORRECTED 2026-08-12: this sentence used to include
+    # `.github/copilot-instructions.md` in that reassurance. It was FALSE. The
+    # walker's `startswith(".git")` skipped the whole `.github/` tree, so this very
+    # entry was unreachable -- a name listed as covered that no file could ever
+    # match. Extension-vs-name was the wrong axis to reason about; REACHABILITY was
+    # the gap, one layer above. Fixed in walk_files below.
     "claude.md", "agents.md", "skill.md", "readme", "readme.md",
     ".cursorrules", ".clinerules", ".windsurfrules", ".roorules", ".aiderrules",
     ".goosehints", ".continuerules", "copilot-instructions.md",
@@ -469,7 +475,20 @@ def walk_files(
         return out
 
     for root, dirs, files in os.walk(target, followlinks=False):
-        dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith(".git")]
+        # 🔴 `d != ".git"`, NOT `d.startswith(".git")`. The prefix form also ate
+        # `.github/`, `.githooks/` and `.gitlab/`. Measured: the same credential in
+        # `.github/workflows/ci.yml` and in `hooks/same.yml` gave file_count=1 --
+        # only the second was found, and `secrets` still reported status "ok".
+        #
+        # Those directories are the opposite of noise: `.github/workflows/` is
+        # EXECUTABLE CI code (a prime home for leaked tokens and for supply-chain
+        # injection) and `.githooks/` is the conventional `core.hooksPath` location,
+        # so the git-hook detector could not see hooks where they normally live.
+        # `TEXT_NAMES` below lists `copilot-instructions.md` -- which lives under
+        # `.github/` and was therefore unreachable, i.e. dead code.
+        # engine_sca.py's own walker already skipped `".git"` exactly; this was the
+        # outlier, not the convention.
+        dirs[:] = [d for d in dirs if d not in skip_dirs and d != ".git"]
         for fn in files:
             ap = os.path.join(root, fn)
             rel = os.path.relpath(ap, target).replace("\\", "/")

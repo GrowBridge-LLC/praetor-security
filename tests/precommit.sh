@@ -105,7 +105,19 @@ fi
 # real findings -- so BOTH numbers are pinned, and a change (either way) stops
 # the commit for a human to look, never silently.
 EXPECT_ACTIVE=12
-EXPECT_FILTERED=45
+# 2026-08-12: 45 -> 53, deliberately, and NOT because false positives improved.
+# The two causes were measured separately by reverting each change on its own:
+#   +3  the dedup fix stopped DISCARDING findings. A filtered finding could win
+#       primary election over an unfiltered sibling, and the loser went into
+#       neither bucket. The three that reappear are at scripts/interpret.py:33-35
+#       -- the comment documenting this very attack was being deleted by it.
+#       They land in `filtered`, correctly: they are comment prose.
+#   +5  new scan surface. tests/test_suppression_is_not_attacker_controlled.py
+#       carries credential- and injection-shaped fixtures by necessity.
+# ⚠️ Counts from before and after are therefore NOT comparable as a quality
+# measure -- the tree differs. ACTIVE staying at 12 is the control that matters:
+# if filtered rose while active FELL, suppression would be eating real findings.
+EXPECT_FILTERED=53
 SS="$(py -3.14 scripts/praetor.py . --no-registry 2>&1)"
 GOT_ACTIVE="$(printf '%s' "$SS" | grep -oE 'Findings \(active\): [0-9]+' | grep -oE '[0-9]+$')"
 GOT_FILTERED="$(printf '%s' "$SS" | grep -oE 'Filtered \(likely FP / low-signal, shown separately\): [0-9]+' | grep -oE '[0-9]+$')"

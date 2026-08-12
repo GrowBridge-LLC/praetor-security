@@ -44,7 +44,18 @@ _ZWSP = chr(0x200B)    # ZERO WIDTH SPACE    -- the payload aisec flags
 _NL = chr(0x000A)
 
 # Assembled so this file is not itself a suppression specimen.
-_MARK = "nos" + "ec"
+# ⚠️ CARRIES ITS COMMENT INTRODUCER, and must keep carrying it.
+#
+# This was a bare `nosec` token. On 2026-08-12 the ignore marker was narrowed to
+# whole-word-inside-an-actual-comment, because the bare-substring form let a JSON
+# key named "nosec_note" suppress a real credential -- a suppression the SCANNED
+# TREE could trigger. A bare token in code is no longer a marker.
+#
+# 🔴 Both tests below need the `#`, for OPPOSITE reasons. The keep-direction test
+# fails without it. The bypass test would still PASS without it -- VACUOUSLY,
+# because a bare token cannot suppress from any line, so it would no longer
+# exercise the line-shift bypass it exists to pin.
+_MARK = "# nos" + "ec"
 
 
 # --------------------------------------------------------------------------- #
