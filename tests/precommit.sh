@@ -7,7 +7,17 @@
 # the mechanical condition: it exits NON-ZERO the moment any gate fails, and it
 # names the gate that failed. A green run is the precondition for commit+push.
 #
-# It NEVER regenerates a baseline and NEVER mutates the tree -- it only reads.
+# It NEVER regenerates a baseline and never edits a tracked file. It is not
+# read-only, though, and saying so would be false: running the suites writes
+# __pycache__/, .pytest_cache/ and rust/target/. All three are gitignored, so
+# `git status` stays clean -- but "only reads" was literally untrue and this file
+# is not the place to be loose about what a check does.
+#
+# ⚠️ It also has NO protection against a concurrent writer. An audit caught a run
+# that straddled another session's in-flight mutation and reported
+# `OK rust suite` while text.rs was diverged: the per-gate results are a sequence
+# of point-in-time readings, not one coherent snapshot of a single tree state.
+# Do not run this against a tree something else is editing.
 #
 # The public-hygiene denylist below is assembled from string fragments on
 # purpose: this file is tracked and ships in the public repo, so spelling the
@@ -29,21 +39,54 @@ echo "== PRAETOR pre-commit gate =="
 # ---- 1. Python suite -------------------------------------------------------
 # The bare `python -m pytest` FAILS on this box (an unrelated langsmith plugin
 # breaks collection on 3.14); the disable-autoload form is the supported one.
+#
+# 🔴 A SUITE THAT DID NOT RUN MUST NOT READ AS A SUITE THAT PASSED. An audit
+# found this gate green on `0 passed` and the Rust gate green on
+# `ok. 6 passed; 2 ignored` -- the *exact* string commit 55a1719 cites as the
+# demonstrated bypass. The differential runner closed that hole for ONE contract;
+# the generic hole stayed open in this file, in the same commit. So both gates now
+# require a FLOOR and refuse any skipped/ignored test.
+#
+# ⚠️ Floors, not exact pins, and the tradeoff is deliberate: an exact count must be
+# edited on every commit that adds a test, and the predictable end of that is
+# somebody raising the number without looking -- which is how a pin becomes a
+# rubber stamp. A floor cannot fall silently, and `SKIPPED == 0` is what actually
+# catches the disappearing-test class.
+MIN_PY=120
 PYOUT="$(PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 py -3.14 -m pytest tests/ -q 2>&1)"
-if printf '%s' "$PYOUT" | grep -qE '[0-9]+ passed' && ! printf '%s' "$PYOUT" | grep -qE '[0-9]+ (failed|error)'; then
-  pass "python suite ($(printf '%s' "$PYOUT" | grep -oE '[0-9]+ passed' | tail -1))"
-else
+PYPASS="$(printf '%s' "$PYOUT" | grep -oE '[0-9]+ passed' | tail -1 | grep -oE '^[0-9]+')"
+PYSKIP="$(printf '%s' "$PYOUT" | grep -oE '[0-9]+ (skipped|deselected|xfailed)' | grep -oE '^[0-9]+' | awk '{s+=$1} END{print s+0}')"
+if printf '%s' "$PYOUT" | grep -qE '[0-9]+ (failed|error)'; then
   fail "python suite"; printf '%s\n' "$PYOUT" | tail -8
+elif [ -z "$PYPASS" ]; then
+  fail "python suite reported NO pass count -- it did not run. A suite that never ran is not a suite that passed."
+  printf '%s\n' "$PYOUT" | tail -8
+elif [ "$PYPASS" -lt "$MIN_PY" ]; then
+  fail "python suite: $PYPASS passed, floor is $MIN_PY -- tests disappeared. Raise MIN_PY deliberately if they were removed on purpose."
+elif [ "$PYSKIP" -gt 0 ]; then
+  fail "python suite: $PYSKIP test(s) skipped/deselected. A skipped test is indistinguishable from a passing one; un-skip it or delete it."
+else
+  pass "python suite ($PYPASS passed, 0 skipped)"
 fi
 
 # ---- 2. Rust suite ---------------------------------------------------------
+# Same floor-and-zero-tolerance discipline as gate 1. `ignored` is the Rust
+# spelling of the bypass: `#[ignore]` on a test leaves `cargo test` exiting 0 and
+# reporting "ok", which is precisely how a diverged split_lines was demonstrated
+# to survive a green suite.
+MIN_RS=8
 if command -v cargo >/dev/null 2>&1; then
   ROUT="$(cargo test --manifest-path rust/Cargo.toml 2>&1)"
-  if printf '%s' "$ROUT" | grep -qE 'test result: ok' && ! printf '%s' "$ROUT" | grep -qE 'test result: FAILED'; then
-    RPASS="$(printf '%s' "$ROUT" | grep -oE '[0-9]+ passed' | grep -oE '^[0-9]+' | awk '{s+=$1} END{print s+0}')"
-    pass "rust suite ($RPASS passed)"
-  else
+  RPASS="$(printf '%s' "$ROUT" | grep -oE '[0-9]+ passed' | grep -oE '^[0-9]+' | awk '{s+=$1} END{print s+0}')"
+  RIGN="$(printf '%s' "$ROUT" | grep -oE '[0-9]+ ignored' | grep -oE '^[0-9]+' | awk '{s+=$1} END{print s+0}')"
+  if ! printf '%s' "$ROUT" | grep -qE 'test result: ok' || printf '%s' "$ROUT" | grep -qE 'test result: FAILED'; then
     fail "rust suite"; printf '%s\n' "$ROUT" | tail -8
+  elif [ "$RPASS" -lt "$MIN_RS" ]; then
+    fail "rust suite: $RPASS passed, floor is $MIN_RS -- tests disappeared. Raise MIN_RS deliberately if they were removed on purpose."
+  elif [ "$RIGN" -gt 0 ]; then
+    fail "rust suite: $RIGN test(s) #[ignore]d. An ignored test still reports 'ok' -- that is the documented bypass, not an exemption."
+  else
+    pass "rust suite ($RPASS passed, 0 ignored)"
   fi
 else
   fail "rust suite -- cargo not on PATH (need \$HOME/.cargo/bin)"
@@ -150,7 +193,11 @@ if [ ! -f "$DIFF_RUNNER" ]; then
 elif DIFFOUT="$(py -3.14 "$DIFF_RUNNER" 2>&1)"; then
   pass "differential Python<->Rust contract holds"
 else
-  fail "differential contract DIVERGED -- run: py -3.14 $DIFF_RUNNER"
+  # Not necessarily a divergence: the runner also exits non-zero when the corpus
+  # is too thin to discriminate, when the toolchain is unreachable, or when the
+  # interpreter is missing. Gating on any of those is correct; naming them all
+  # "DIVERGED" sends the reader to the wrong file, so print the real output.
+  fail "differential gate FAILED -- run: py -3.14 $DIFF_RUNNER"
   printf '%s\n' "$DIFFOUT" | sed 's/^/      /'
 fi
 

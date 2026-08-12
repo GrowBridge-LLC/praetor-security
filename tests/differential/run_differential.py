@@ -248,9 +248,13 @@ def _locate(parts, offset):
 
     ⚠️ Do NOT re-split a signature on `" "` to recover its cases. `escape()`
     passes a literal space through unchanged (it is in the printable range), and
-    corpus case 20 contains one -- so a naive split yields 24 fields for a
-    23-case corpus and reports the wrong case as the one that moved. The first
-    draft of this runner did exactly that.
+    corpus case **19** (0-based, as `_report` prints them) contains one -- so a
+    naive split yields 24 fields for a 23-case corpus and reports the wrong case
+    as the one that moved. The first draft of this runner did exactly that.
+
+    📌 That index read `20` until an audit caught it: 1-based, in a file whose
+    entire subject is two definitions of one index disagreeing. Every case number
+    here and in `_report` is 0-based, from `enumerate`.
 
     The joined-string comparison itself is sound: both implementations build the
     string the same way, and the case COUNT is asserted separately. It is only
@@ -266,8 +270,20 @@ def _locate(parts, offset):
 
 
 def _report(label, a_name, a, b_name, b, sources, parts):
-    """Name the case that moved, using the boundaries of the Python rendering."""
+    """Name the case that moved, using the boundaries of the Python rendering.
+
+    ⚠️ Must survive an EMPTY corpus. An audit found this raising IndexError
+    before the anti-vacuity summary printed -- the run still failed (no false
+    pass), but the reader never saw the carefully-worded message explaining
+    *why*, in exactly the gutted-corpus scenario those floors exist for. A
+    diagnostic that crashes in its own headline case is not a diagnostic.
+    """
     print(f"FAIL  {label}", file=sys.stderr)
+    if not parts:
+        print("      corpus is EMPTY -- there are no cases to compare. See the "
+              "corpus/contract failures listed below; that is the real fault.",
+              file=sys.stderr)
+        return
     n = min(len(a), len(b))
     offset = next((i for i in range(n) if a[i] != b[i]), n)
     idx, start = _locate(parts, offset)

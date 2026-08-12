@@ -46,13 +46,35 @@ failures above: **the guard must key on the property, never on the spelling.**
 - This is a **textual** check over Rust source, not a parse. It strips comment
   lines before matching, but it is not a tokeniser and does not understand string
   literals.
+
+⚠️ **A FOURTH SPELLING OF THE SAME DEFECT, found 2026-08-11 — and the gap list
+above was itself the incomplete thing it warns about.** The enumeration was
+`(REPO/"rust"/"praetor-core"/"src").glob("*.rs")`: **one crate, one directory,
+non-recursive.** So `rust/praetor/src/main.rs` -- the crate that actually SHIPS as
+the CLI -- was never swept, and neither was `examples/`. A
+`pub fn pip_argv() -> Vec<String>` pasted into the shipping binary matched
+`_ARGV_SIGNATURE` perfectly and was simply never handed to it.
+
+Note the shape, because it is now four for four: **the guard keyed on the right
+property and enumerated the wrong place.** Twice it was the wrong spelling
+(`pub fn `, `*_argv`), once the wrong file (`include_str!`), now the wrong
+directory. The list above named four limits and read as exhaustive while omitting
+the one that was actually live -- exactly the failure it opens by warning about.
+⇒ `_rust_sources()` now walks the whole `rust/` workspace recursively, so a new
+crate, example, bench or module is covered on creation rather than on the next
+audit. **The anti-vacuity test below pins the discovered set**, so shrinking the
+walk fails loudly instead of quietly sweeping less.
 """
 
 import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-CRATE_SRC = REPO / "rust" / "praetor-core" / "src"
+# The whole workspace is the sweep population. CRATE_SRC is kept ONLY to locate
+# sca.rs itself (the one file argv construction is allowed in) -- never as the
+# enumeration root, which is the mistake this file's fourth-spelling note records.
+RUST_ROOT = REPO / "rust"
+CRATE_SRC = RUST_ROOT / "praetor-core" / "src"
 
 # The one file argv construction is allowed to live in. Anything elsewhere is a
 # finding, because the never-execute sweep is defined over this module.
@@ -131,12 +153,57 @@ def _builders_in(src: str):
 
 
 def _rust_sources():
-    files = sorted(CRATE_SRC.glob("*.rs"))
+    """EVERY .rs file in the workspace, recursively -- never one crate's src/.
+
+    🔴 `rglob`, not `glob`, and rooted at the workspace rather than at one crate.
+    The previous form missed `rust/praetor/src/main.rs` (the SHIPPING CLI) and
+    `praetor-core/examples/`. A guard that enumerates one directory cannot see an
+    argv builder placed in a second one, and adding a crate is exactly when a new
+    backend appears.
+
+    `target/` is excluded: it is build output, not source, and it contains vendored
+    third-party code whose argv builders are not ours to sweep.
+    """
+    files = sorted(
+        p for p in RUST_ROOT.rglob("*.rs")
+        if "target" not in p.relative_to(RUST_ROOT).parts
+    )
     assert files, (
-        f"no .rs files found under {CRATE_SRC} -- this guard has gone vacuous. "
+        f"no .rs files found under {RUST_ROOT} -- this guard has gone vacuous. "
         f"Fix the path, do not delete the test."
     )
     return files
+
+
+def test_the_sweep_reaches_every_crate_not_just_praetor_core():
+    """Anti-vacuity for the ENUMERATION, which is what failed four times.
+
+    Mutation-checked: narrowing `_rust_sources()` back to
+    `praetor-core/src/*.rs` reddens this test by name.
+
+    ⚠️ This asserts the shipping binary and the examples dir are reached, because
+    those are the two locations the old glob silently omitted. It deliberately
+    does NOT pin an exact file list -- that would fail on every new module and get
+    weakened. It pins the DIRECTORIES that must be represented.
+    """
+    swept = {p.relative_to(RUST_ROOT).as_posix() for p in _rust_sources()}
+
+    assert "praetor/src/main.rs" in swept, (
+        f"the SHIPPING CLI crate is not swept. An argv builder in the binary "
+        f"PRAETOR actually ships would be invisible to the never-execute sweep. "
+        f"got: {sorted(swept)}"
+    )
+    assert any(s.startswith("praetor-core/examples/") for s in swept), (
+        f"praetor-core/examples/ is not swept. got: {sorted(swept)}"
+    )
+    assert any(s.startswith("praetor-core/src/") for s in swept), (
+        f"praetor-core/src/ is not swept -- the original coverage regressed. "
+        f"got: {sorted(swept)}"
+    )
+    # Build output must NOT be swept: it is not our source.
+    assert not any(s.startswith("target/") or "/target/" in s for s in swept), (
+        f"build output is being swept as source: {sorted(swept)}"
+    )
 
 
 def _all_argvs_body(src: str) -> str:
