@@ -141,6 +141,53 @@ def test_allow_degraded_is_the_only_way_past(tmp_path, monkeypatch):
     )
 
 
+def test_min_severity_is_a_display_filter_and_must_not_narrow_the_gate(tmp_path):
+    """A SECOND fail-open, same class, found by re-reading the exit path.
+
+    `--min-severity` moved below-threshold findings out of result["active"], and
+    the gate judged that same mutated list. So `--min-severity CRITICAL
+    --fail-on HIGH` on a target with a live HIGH-severity credential returned
+    EXIT 0 -- both flags doing exactly what their help text says, combining into
+    a pass. No broken environment required, unlike the errored-engine case above.
+
+    Measured before the fix: exit 1 without --min-severity, exit 0 with it, same
+    target and the same real finding.
+    """
+    (tmp_path / "leak.py").write_text(
+        'KEY = "' + "sk-" + "ant-" + "api03-" + "A" * 80 + '"\n', encoding="utf-8"
+    )
+
+    baseline = _run([str(tmp_path), "--engines", "secrets", "--fail-on", "HIGH",
+                     "--format", "json", "--quiet"])
+    assert baseline == 1, (
+        f"fixture assumption: this target must produce a HIGH finding, got exit {baseline}"
+    )
+
+    rc = _run([str(tmp_path), "--engines", "secrets", "--min-severity", "CRITICAL",
+               "--fail-on", "HIGH", "--format", "json", "--quiet"])
+    assert rc == 1, (
+        "FALSE CLEAN AT THE GATE: a display filter silently narrowed it. The "
+        f"operator asked to fail on HIGH, a HIGH-severity credential is present, and "
+        f"the run returned exit {rc} because --min-severity CRITICAL emptied the list "
+        "the gate reads. --fail-on means 'fail if a HIGH exists', not 'fail if a HIGH "
+        "survived the reporting threshold'."
+    )
+
+
+def test_min_severity_still_filters_the_report(tmp_path, capsys):
+    """THE KEEP DIRECTION: the display filter must still do its own job."""
+    (tmp_path / "leak.py").write_text(
+        'KEY = "' + "sk-" + "ant-" + "api03-" + "A" * 80 + '"\n', encoding="utf-8"
+    )
+    _run([str(tmp_path), "--engines", "secrets", "--min-severity", "CRITICAL",
+          "--format", "json", "--quiet"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["findings"] == [], (
+        "--min-severity CRITICAL must still hide the HIGH finding from the REPORT; "
+        "the fix was to stop it reaching the gate, not to disable it"
+    )
+
+
 def test_operator_disabled_engines_do_not_block_the_gate(tmp_path):
     """`disabled` is a choice the operator made knowingly -- not a surprise blind spot.
 

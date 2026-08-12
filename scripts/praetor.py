@@ -434,6 +434,20 @@ def main(argv=None):
     _log(args.quiet, "  interpreting (dedup + rank + FP filter)...")
     result = interpret.interpret(all_findings)
 
+    # 🔴 What the GATE judges, captured BEFORE --min-severity edits the list.
+    # --min-severity is a DISPLAY filter and --fail-on is a GATE, and they were
+    # reading the same mutated list, so the display filter silently narrowed the
+    # gate: `--min-severity CRITICAL --fail-on HIGH` removed every HIGH finding
+    # from result["active"] and then found nothing at/above HIGH -- exit 0 on a
+    # target with a live HIGH-severity leaked credential, with both flags doing
+    # exactly what their help text says. Reproduced before this line existed.
+    #
+    # `--fail-on HIGH` means "fail if a HIGH exists", not "fail if a HIGH
+    # survived the reporting threshold". Only findings the interpreter FILTERED
+    # (false positives, suppressed with a stated reason) stay out of the gate --
+    # that exclusion is auditable; this one was invisible.
+    gate_findings = list(result["active"])
+
     # min-severity filtering (moves below-threshold active findings out of the active list)
     min_sev = core.Severity.parse(args.min_severity)
     if min_sev > core.Severity.INFO:
@@ -485,7 +499,7 @@ def main(argv=None):
     # decision. Found by an independent reader of this file, not by its author.
     if args.fail_on:
         threshold = core.Severity.parse(args.fail_on)
-        if any(f.severity >= threshold for f in result["active"]):
+        if any(f.severity >= threshold for f in gate_findings):
             return 1
         blind = core.engine_blind_spots(engine_meta)
         if blind and not args.allow_degraded:
