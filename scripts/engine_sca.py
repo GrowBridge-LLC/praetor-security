@@ -36,7 +36,7 @@ import os
 import shutil
 import subprocess
 
-from core import Finding, Severity, Confidence
+from core import Finding, Severity, Confidence, ENGINE_NOT_APPLICABLE
 
 _TIMEOUT = 300
 
@@ -165,7 +165,7 @@ def _run_osv(target: str) -> dict:
         # The old comment claimed "exit 128" while the code checked no return code at
         # all, so a crashing scanner was laundered into a clean result too.
         if r.returncode == 128:
-            return {"ok": True, "status": "unavailable",
+            return {"ok": True, "status": ENGINE_NOT_APPLICABLE,
                     "detail": "osv-scanner found no lockfile packages to analyse (exit 128); nothing was scanned",
                     "findings": []}
         return {"ok": True, "status": "error",
@@ -442,7 +442,10 @@ def run(target: str, backend: str = "auto", excludes=None) -> dict:
             return not any(rx.search(rel) for rx in rxs)
         all_manifests = [m for m in all_manifests if _kept(m)]
     if not all_manifests and backend == "auto":
-        return {"findings": [], "status": "unavailable",
+        # A property of the TARGET, not of this box: there are no dependencies to
+        # audit, so nothing is left unmeasured. Distinct from "no SCA backend
+        # available" below, which IS a blind spot. See core.ENGINE_NOT_APPLICABLE.
+        return {"findings": [], "status": ENGINE_NOT_APPLICABLE,
                 "detail": "no dependency manifests/lockfiles found", "backend": "none"}
 
     tried = []

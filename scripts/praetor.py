@@ -26,9 +26,16 @@ Usage:
   python praetor.py <target> [options]
 
 Exit codes:
-  0  no active findings at/above --fail-on (default: nothing fails the run)
+  0  scan fully measured, no active findings at/above --fail-on
+     (without --fail-on, nothing fails the run: report-only by request)
   1  active findings at/above --fail-on
   2  usage / internal error
+  3  --fail-on was requested but an engine COULD NOT MEASURE (errored or was
+     unavailable), so "no findings" does not mean "nothing there". Suppress with
+     --allow-degraded if you knowingly gate on a partial scan.
+
+  🔴 1 outranks 3: real findings are the more actionable signal. Both are
+  non-zero, so a gate that only tests `if rc != 0` fails safe either way.
 """
 
 from __future__ import annotations
@@ -108,7 +115,11 @@ def parse_args(argv):
                    help="Hide active findings below this severity (default: INFO = show all).")
     p.add_argument("--fail-on", default="",
                    choices=["", "INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"],
-                   help="Exit 1 if any active finding is at/above this severity (default: never fail).")
+                   help="Exit 1 if any active finding is at/above this severity (default: never fail). "
+                        "Exit 3 if an engine could not measure at all -- see --allow-degraded.")
+    p.add_argument("--allow-degraded", action="store_true",
+                   help="With --fail-on, do NOT exit 3 when an engine errored or was unavailable. "
+                        "Gates on findings alone, knowingly accepting an unmeasured blind spot.")
     p.add_argument("--sca-backend", default="auto",
                    choices=["auto", "osv", "pip-audit", "npm"],
                    help="SCA backend preference (default: auto = osv -> pip-audit -> npm).")
@@ -465,10 +476,31 @@ def main(argv=None):
         print(js)
 
     # -- exit code ------------------------------------------------------------
+    # 🔴 The gate reads engine STATUS, not just findings. An engine that errored
+    # or was unavailable produced zero findings for a reason that has nothing to
+    # do with the target being clean -- and before 2026-08-12 this block consulted
+    # result["active"] alone, so a scan whose SAST engine died returned exit 0,
+    # byte-identical to a fully-measured clean run. The information already
+    # existed in engine_meta and reached the report; it never reached the
+    # decision. Found by an independent reader of this file, not by its author.
     if args.fail_on:
         threshold = core.Severity.parse(args.fail_on)
         if any(f.severity >= threshold for f in result["active"]):
             return 1
+        blind = core.engine_blind_spots(engine_meta)
+        if blind and not args.allow_degraded:
+            sys.stderr.write(
+                "praetor: SCAN DEGRADED -- --fail-on cannot pass a scan that was not "
+                "fully measured.\n"
+            )
+            for name, status, detail in blind:
+                sys.stderr.write(f"  [{status}] {name}: {detail}\n")
+            sys.stderr.write(
+                "  A zero from an engine that did not run is not a clean result. "
+                "Re-run once the engine is available, or pass --allow-degraded to "
+                "gate on findings alone.\n"
+            )
+            return 3
     return 0
 
 

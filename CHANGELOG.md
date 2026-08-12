@@ -12,6 +12,50 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### 🔴 Security — a fail-open in the gating path
+
+- **`--fail-on` returned exit 0 when an engine could not measure**
+  (`scripts/praetor.py`). The exit-code block consulted the active-findings list
+  and nothing else, so an engine that errored — a dead semgrep runtime, an
+  unreachable Docker daemon, unparseable tool output — contributed zero findings
+  and the gate passed. In CI that is indistinguishable from a scan that ran and
+  found nothing.
+
+  PRAETOR already computed the answer: `engine_meta` recorded `ok`/`error`/
+  `disabled` per engine and put it in the report. It was never read for any
+  decision. The fix is one wire, plus the vocabulary needed to make it safe.
+
+  **New exit code `3`** — `--fail-on` was requested and an engine did not
+  measure. `--allow-degraded` opts out per run. `1` still outranks `3`.
+
+- **`unavailable` split into two states.** It meant both "this target has no
+  dependency manifests" (nothing to measure) and "this box has no semgrep
+  runtime" (could not measure) — opposite facts under one word, which forces a
+  gate to choose between failing every manifest-free repo and going blind. The
+  target-property cases are now `not-applicable`. **JSON consumers keying on
+  `"status": "unavailable"` for an empty-manifest scan must update.**
+
+- **Unknown engine statuses now fail toward "unmeasured."** The gate reads an
+  allowlist (`core.GATE_TRUSTED_STATUSES`), so a status word introduced by a
+  future engine and never considered here blocks rather than passes silently.
+
+- **The report says so too.** An unmeasured engine renders `[BLIND]`, not
+  `[skipped]`, and the "No active findings" line carries the caveat directly —
+  that line is the one most likely to be read as a clean bill of health.
+
+- **The Docker runtime probe checked the binary, not the daemon**
+  (`scripts/engine_sast.py`). `shutil.which("docker")` proves the CLI is
+  installed; it does not prove the daemon is reachable. With Docker Desktop
+  installed but stopped, SAST reported available and then failed with a connect
+  error surfaced as `Run 'docker run --help' for more information` — naming the
+  wrong layer entirely. The probe now asks the daemon. The native and WSL
+  branches already did this; Docker was the one that asserted the capability.
+
+  ⚠️ These two composed: a probe that reports a dead runtime as available
+  produces an errored engine, and an errored engine used to produce exit 0.
+
+  Both were found by independent readers, not by this repo's own tests.
+
 ### 🔴 Security — a suppression bypass in PRAETOR itself
 
 - **One definition of a line** (`scripts/core.py: split_lines`). PRAETOR resolved

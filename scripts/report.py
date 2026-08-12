@@ -11,7 +11,8 @@ from __future__ import annotations
 import datetime
 import json
 
-from core import Severity
+from core import (Severity, engine_blind_spots, ENGINE_OK, ENGINE_NOT_APPLICABLE,
+                  ENGINE_DISABLED, ENGINE_UNAVAILABLE, ENGINE_ERROR)
 
 # 2.0 (2026-08-10): BREAKING for consumers that match on `rule_id`.
 #   `claude-hook-autorun`  -> `agent-hook-autorun`
@@ -44,13 +45,33 @@ PRAETOR is a high-signal aid, not a guarantee of security. Known limits:
 """
 
 
+#: 🔴 Any status word NOT listed here renders as [BLIND], never as [?] or
+#: [skipped]. A benign-looking mark on an unrecognised status is how a blind
+#: spot reads as a clean engine -- the same failure the exit code carried.
+#: `unavailable` was rendered "[skipped]" until 2026-08-12, which reads as
+#: "nothing to do here" for a state that actually means "could not look".
+_STATUS_MARKS = {
+    ENGINE_OK: "[ran]",
+    ENGINE_NOT_APPLICABLE: "[n/a]",
+    ENGINE_DISABLED: "[off]",
+    ENGINE_UNAVAILABLE: "[BLIND]",
+    ENGINE_ERROR: "[error]",
+}
+
+
 def _engine_status_block(meta: dict) -> list:
+    engines = meta.get("engines", {})
     lines = ["Engine status:"]
-    for name, info in meta.get("engines", {}).items():
+    for name, info in engines.items():
         status = info.get("status", "?")
         detail = info.get("detail", "")
-        mark = {"ok": "[ran]", "unavailable": "[skipped]", "error": "[error]", "disabled": "[off]"}.get(status, "[?]")
+        mark = _STATUS_MARKS.get(status, "[BLIND]")
         lines.append(f"  {mark:10} {name:8} {detail}")
+    blind = engine_blind_spots(engines)
+    if blind:
+        lines.append("")
+        lines.append("  🔴 SCAN DEGRADED -- " + ", ".join(n for n, _, _ in blind) +
+                     " did not measure. Their zero is not evidence of anything.")
     return lines
 
 
@@ -78,6 +99,15 @@ def render_text(result: dict, meta: dict, redacted: bool = True) -> str:
     if not active:
         out.append("No active findings at or above the reporting threshold.")
         out.append("(Read the LIMITS section below -- 'nothing matched' is not 'proven safe'.)")
+        blind = engine_blind_spots(meta.get("engines", {}))
+        if blind:
+            # The emptiest result is the one most likely to be misread, so the
+            # caveat goes HERE as well as in the status block above -- a reader
+            # who skips to "No active findings" must not be able to miss it.
+            out.append("")
+            out.append("🔴 ...but this scan was NOT fully measured: " +
+                       ", ".join(f"{n} [{s}]" for n, s, _ in blind) + ".")
+            out.append("   Zero findings from an engine that never ran is not a clean result.")
     else:
         out.append("-" * 74)
         out.append("  FINDINGS  (most dangerous first)")

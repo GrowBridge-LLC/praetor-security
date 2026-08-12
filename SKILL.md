@@ -73,11 +73,18 @@ python scripts/praetor.py /path/to/repo --fail-on HIGH --format json
 ```
 
 Key options (see `--help` for all): `--engines`, `--format {text,json,both}`,
-`--out DIR`, `--min-severity`, `--fail-on`, `--sca-backend {auto,osv,pip-audit,npm}`,
+`--out DIR`, `--min-severity`, `--fail-on`, `--allow-degraded`,
+`--sca-backend {auto,osv,pip-audit,npm}`,
 `--semgrep-runtime {auto,native,wsl,docker}`, `--no-registry`, `--exclude REGEX`.
 
-Exit codes: `0` clean (or below `--fail-on`), `1` findings at/above `--fail-on`,
-`2` usage/internal error.
+Exit codes: `0` fully measured and clean (or below `--fail-on`), `1` findings
+at/above `--fail-on`, `2` usage/internal error, `3` an engine **could not
+measure** under `--fail-on` (errored or unavailable).
+
+🔴 **Never report exit `3` as a clean scan.** It means an engine did not run, so
+its zero findings say nothing about the target. Read the `engines` block in the
+report, fix the runtime, and scan again — or pass `--allow-degraded` if the
+blind spot is knowingly accepted.
 
 ## Interpreting the output
 

@@ -62,6 +62,61 @@ class Confidence(IntEnum):
 
 
 # --------------------------------------------------------------------------- #
+# Engine status model
+# --------------------------------------------------------------------------- #
+#
+# 🔴 An engine that could not measure must never be indistinguishable from an
+# engine that measured and found nothing. Every consumer that turns a scan into
+# a DECISION -- `--fail-on`, a CI gate, a human reading the report -- reads these
+# five words, so they are defined once, here, and nowhere else.
+#
+#   ok               the engine ran to completion. Its zero means something.
+#   not-applicable   nothing of this kind exists in the TARGET (no dependency
+#                    manifests to audit). A property of what was scanned. There
+#                    was nothing to measure, so nothing is unmeasured.
+#   disabled         the OPERATOR excluded this engine (`--engines`). Their
+#                    choice, made knowingly; not a surprise blind spot.
+#   unavailable      the ENVIRONMENT could not run this engine (no semgrep
+#                    runtime, no SCA backend). 🔴 A BLIND SPOT.
+#   error            the engine launched and failed. 🔴 A BLIND SPOT.
+#
+# ⚠️ `unavailable` and `not-applicable` were ONE word until 2026-08-12, and the
+# ambiguity is why this matters: "no dependency manifests in this repo" and
+# "semgrep is not installed on this box" are opposite facts, and collapsing them
+# forces a gate to choose between failing every manifest-free repo and going
+# blind whenever a runtime is missing. The engines already know which case they
+# are in; they now say so.
+
+ENGINE_OK = "ok"
+ENGINE_NOT_APPLICABLE = "not-applicable"
+ENGINE_DISABLED = "disabled"
+ENGINE_UNAVAILABLE = "unavailable"
+ENGINE_ERROR = "error"
+
+#: Statuses under which an engine's silence is TRUSTWORTHY input to a gate.
+#: 🔴 Deliberately an allowlist. Any status word not named here -- including one
+#: added by a future engine and never considered here -- is treated as a blind
+#: spot. Unproven ⇒ assume unmeasured, exactly as an unproven finding is KEPT.
+GATE_TRUSTED_STATUSES = frozenset({ENGINE_OK, ENGINE_NOT_APPLICABLE, ENGINE_DISABLED})
+
+
+def engine_blind_spots(engine_meta: dict) -> list:
+    """Engines whose verdict a gate MUST NOT read as 'clean'.
+
+    Returns [(name, status, detail), ...] sorted by engine name, empty when the
+    scan was fully measured. `engine_meta` is the per-engine block PRAETOR puts
+    in its report payload under "engines".
+    """
+    blind = []
+    for name in sorted(engine_meta or {}):
+        info = engine_meta[name] or {}
+        status = info.get("status", "")
+        if status not in GATE_TRUSTED_STATUSES:
+            blind.append((name, status or "?", info.get("detail", "")))
+    return blind
+
+
+# --------------------------------------------------------------------------- #
 # Finding
 # --------------------------------------------------------------------------- #
 

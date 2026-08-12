@@ -125,7 +125,8 @@ python scripts/praetor.py /path/to/target --fail-on HIGH --format json
 | `--format` | `text`, `json`, or `both` (default: text) |
 | `--out DIR` | Write `praetor-report.txt` / `.json` to DIR |
 | `--min-severity` | Hide active findings below this level |
-| `--fail-on` | Exit 1 if any active finding is at/above this level |
+| `--fail-on` | Exit 1 if any active finding is at/above this level; exit 3 if an engine could not measure |
+| `--allow-degraded` | With `--fail-on`, gate on findings alone and accept an unmeasured engine |
 | `--sca-backend` | `auto` (default), `osv`, `pip-audit`, `npm` |
 | `--semgrep-runtime` | `auto` (default), `native`, `wsl`, `docker` |
 | `--no-registry` | Bundled Semgrep rules only; no network fetch |
@@ -133,8 +134,16 @@ python scripts/praetor.py /path/to/target --fail-on HIGH --format json
 | `--exclude REGEX` | Exclude matching relative paths (repeatable) |
 | `--max-file-size` | Skip files larger than N bytes (default 3 MB) |
 
-Exit codes: `0` clean (or below `--fail-on`), `1` findings at/above `--fail-on`,
-`2` usage/internal error.
+Exit codes: `0` fully measured and clean (or below `--fail-on`), `1` findings
+at/above `--fail-on`, `2` usage/internal error, `3` `--fail-on` was requested but
+an engine **could not measure** — it errored, or its runtime was unavailable.
+
+🔴 **`3` exists because "no findings" and "nothing ran" are not the same result.**
+An engine that dies produces zero findings for a reason that has nothing to do
+with the target being clean, and until that reached the exit code a broken
+semgrep runtime looked exactly like a passing scan. Pass `--allow-degraded` to
+gate on findings alone when you knowingly accept the blind spot. `1` outranks
+`3`, and both are non-zero, so a gate testing `if rc != 0` fails safe either way.
 
 ## Output
 

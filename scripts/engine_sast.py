@@ -60,12 +60,46 @@ def detect_runtime(prefer: str = "auto", wsl_distro: str = "Ubuntu") -> dict:
             pass
 
     if prefer in ("docker", "auto") and shutil.which("docker"):
-        # We do not pull here; caller runs with -v mount. Report as available-if-image.
-        return {"mode": "docker", "prefix": ["docker"], "available": True,
-                "detail": "docker (image semgrep/semgrep will be used)"}
+        # 🔴 `shutil.which` proves the CLI is INSTALLED. It does not prove the
+        # DAEMON is REACHABLE, and it is the daemon that decides whether semgrep
+        # can run. Docker Desktop installed-but-stopped reported available:True
+        # here; the run then died with a connect error PRAETOR surfaced as
+        # "Run 'docker run --help' for more information" -- naming the wrong
+        # layer, so it read as a malformed command rather than a dead daemon.
+        # Found by an outside user running a real scan, not by this repo's tests.
+        # The native and WSL branches above already probe the capability itself;
+        # this one asserted it. Probing the daemon reads nothing from the target.
+        ready, why = _docker_daemon_ready()
+        if ready:
+            # We do not pull here; caller runs with -v mount. Report as available-if-image.
+            return {"mode": "docker", "prefix": ["docker"], "available": True,
+                    "detail": "docker (image semgrep/semgrep will be used)"}
+        return {"mode": "none", "prefix": [], "available": False,
+                "detail": f"docker CLI present but {why}"}
 
     return {"mode": "none", "prefix": [], "available": False,
             "detail": "no semgrep runtime found (native/WSL/Docker)"}
+
+
+def _docker_daemon_ready(timeout: int = 10) -> tuple:
+    """(ready, reason) -- probe the Docker DAEMON, not the `docker` binary.
+
+    `docker version` queries the daemon and exits non-zero when it is
+    unreachable. It reads nothing from the scan target and starts no container,
+    so it does not widen the never-execute-the-target invariant.
+    """
+    try:
+        r = subprocess.run(["docker", "version", "--format", "{{.Server.Version}}"],
+                           capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return False, f"the daemon did not respond within {timeout}s"
+    except Exception as e:  # noqa -- probe must never take the scan down
+        return False, f"the daemon could not be probed ({e})"
+    if r.returncode != 0 or not r.stdout.strip():
+        said = ((r.stderr or "") + (r.stdout or "")).strip().splitlines()
+        why = said[0][:160] if said else f"exit {r.returncode}"
+        return False, f"the daemon is unreachable ({why})"
+    return True, ""
 
 
 def _native_version(exe: str) -> str:

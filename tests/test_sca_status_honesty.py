@@ -9,7 +9,7 @@ JSON contract than in the text report because the JSON is what gates consume.
 
 MEASURED DEFECT (2026-08-10), reproduced end to end before it was fixed:
 
-    praetor.py <no-manifest-dir> --engines sca                  -> "status": "unavailable"
+    praetor.py <no-manifest-dir> --engines sca                  -> "status": "not-applicable"
     praetor.py <no-manifest-dir> --engines sca --sca-backend osv -> "status": "ok"
 
 The same target, scanned two ways, disagreed about whether the scan happened --
@@ -21,7 +21,7 @@ treated the identical condition as not-ok. osv was the sole outlier.
 The old comment also claimed "exit 128" while the code checked no return code at
 all, so a *crashing* scanner was laundered into a clean result too. Hence the
 two directions are asserted separately: exit 128 is a property of the TARGET
-(unavailable), any other empty-output exit is a property of the ENVIRONMENT
+(not-applicable), any other empty-output exit is a property of the ENVIRONMENT
 (error).
 
 ⚠️ The cross-backend test is the one that matters long-term: it fails for a NEW
@@ -32,6 +32,7 @@ import subprocess
 
 import pytest
 
+import core
 import engine_sca
 
 
@@ -63,7 +64,7 @@ def _fake_exec(monkeypatch, tool, result):
 # osv -- the backend that carried the defect
 # --------------------------------------------------------------------------- #
 
-def test_osv_no_packages_is_unavailable_not_ok(tmp_path, monkeypatch):
+def test_osv_no_packages_is_not_applicable_not_ok(tmp_path, monkeypatch):
     """exit 128 + no output = nothing to scan. Honest, but NOT a clean scan."""
     calls = _fake_exec(monkeypatch, "osv-scanner", _Completed(returncode=128, stdout=""))
     res = engine_sca._run_osv(str(tmp_path))
@@ -74,9 +75,16 @@ def test_osv_no_packages_is_unavailable_not_ok(tmp_path, monkeypatch):
         f'status={res["status"]!r} with {len(res["findings"])} findings. A consumer '
         "cannot distinguish this from a target that was scanned and found clean."
     )
-    assert res["status"] == "unavailable", (
+    assert res["status"] == core.ENGINE_NOT_APPLICABLE, (
         f'exit 128 means "no packages found" -- a property of the TARGET, so the '
-        f'status should be "unavailable", got {res["status"]!r}'
+        f'status should be "not-applicable", got {res["status"]!r}. It was spelled '
+        '"unavailable" until 2026-08-12, when that word was narrowed to mean solely '
+        '"the ENVIRONMENT could not run this engine" so that --fail-on could tell a '
+        "manifest-free repo apart from a missing scanner."
+    )
+    assert res["status"] in core.GATE_TRUSTED_STATUSES, (
+        "a target with no dependencies leaves nothing unmeasured, so this state must "
+        "NOT block --fail-on; if it did, every manifest-free repo would fail its gate"
     )
     assert not res["findings"]
 
