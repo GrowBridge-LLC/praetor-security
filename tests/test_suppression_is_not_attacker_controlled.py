@@ -245,3 +245,90 @@ def test_the_real_git_directory_is_still_skipped(tmp_path):
         f"the .git object store is being walked: {rels}"
     )
 
+
+
+# --------------------------------------------------------------------------- #
+# 4. SUPPRESSION ON PATH ALONE -- renaming a file disarmed the gate
+#
+# `_fp_assessment` rule 1 suppressed ANY SECRET finding whose filename ended
+# `.env.example` / `.sample` / `.template` / `.dist`, with no inspection of the
+# value. Measured, byte-identical structurally valid cloud key:
+#
+#     settings.py    -> 2 active (CRITICAL + HIGH), exit 1
+#     .env.example   -> 0 active, silently filtered,  exit 0
+#
+# 🔴 It could not have been doing useful work, which is why the fix is deletion
+# rather than narrowing. By the time a SECRET finding reaches `_fp_assessment`
+# it has ALREADY passed `engine_secrets.is_dummy()`, which drops placeholders at
+# detection time (`if is_dummy(secret): continue`). And the example path was
+# ALREADY handled, proportionately, as a confidence downgrade
+# (`_path_is_test_or_example`: HIGH -> MEDIUM). The correct response was applied
+# twice before this rule ran; the rule was a third application of it, as
+# suppression, on precisely the findings the first two had judged real.
+#
+# A live credential committed to a `.env.example` is one of the commonest real
+# leaks there is -- the same argument CLAUDE.md makes against exempting `tests/`.
+# --------------------------------------------------------------------------- #
+
+# Assembled from short pieces so no single literal is long enough to trip the
+# entropy detector this file exercises. The first draft split it in two and the
+# 38-character remainder was still flagged -- self-scan active went 12 -> 13 and
+# the gate caught it. Fix the fixture, not the rule.
+_AWS_ID = "AKIA" + "QY7TZ" + "LNP4R" + "VX2WKD"
+_AWS_SECRET = "wJalrX" + "UtnFEM" + "I7K7MD" + "ENG3bP" + "xRfiCY" + "zq4Tn2" + "Bd9L"
+
+
+@pytest.mark.parametrize("filename", [
+    ".env.example", ".env.sample", ".env.template", ".env.dist",
+])
+def test_a_real_credential_in_an_example_env_file_is_not_suppressed(tmp_path, filename):
+    """Renaming a file must not disarm the gate."""
+    (tmp_path / filename).write_text(
+        f"AWS_ACCESS_KEY_ID={_AWS_ID}\nAWS_SECRET_ACCESS_KEY={_AWS_SECRET}\n",
+        encoding="utf-8",
+    )
+    rc = praetor.main([str(tmp_path), "--engines", "secrets", "--fail-on", "HIGH",
+                       "--format", "json", "--quiet"])
+    assert rc == 1, (
+        f"a structurally valid, non-placeholder credential in {filename} returned "
+        f"exit {rc}. The value was never inspected -- only the filename was, and "
+        f"an attacker (or a careless commit) chooses the filename."
+    )
+
+
+def test_placeholders_in_an_example_env_file_are_still_not_reported(tmp_path):
+    """THE KEEP DIRECTION. Deleting the rule must not make example files noisy.
+
+    If this reddens, the placeholder handling was NOT already in the engine and
+    the deletion above was wrong -- which is the whole premise of the fix.
+    """
+    (tmp_path / ".env.example").write_text(
+        "AWS_ACCESS_KEY_ID=AKIA" + "X" * 16 + "\n"
+        "AWS_SECRET_ACCESS_KEY=your-secret-key-here\n",
+        encoding="utf-8",
+    )
+    rc = praetor.main([str(tmp_path), "--engines", "secrets", "--fail-on", "HIGH",
+                       "--format", "json", "--quiet"])
+    assert rc == 0, (
+        f"placeholders in an example env file must not fire (got exit {rc}). "
+        f"engine_secrets.is_dummy() drops these at detection; if that stopped "
+        f"being true, deleting the path rule would have made example files noisy."
+    )
+
+
+@pytest.mark.parametrize("path,is_lock", [
+    ("package-lock.json", True),
+    ("frontend/yarn.lock", True),
+    ("Cargo.lock", True),
+    ("src/locks/keys.py", False),        # the substring match's victim
+    ("app/unlock.js", False),
+    ("clockwork/config.py", False),
+    ("services/deadlock_monitor.py", False),
+    ("lock", False),
+])
+def test_the_lockfile_predicate_requires_an_actual_lockfile(path, is_lock):
+    """`"lock" in path` matched source directories where credentials live."""
+    assert interpret._is_lockfile(path.lower()) is is_lock, (
+        f"{path!r}: a bare substring test suppressed high-entropy findings in any "
+        f"path containing 'lock', including source trees named for locking."
+    )

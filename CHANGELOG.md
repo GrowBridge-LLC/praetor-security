@@ -12,6 +12,40 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### 🔴 Security — suppression on PATH ALONE; renaming a file disarmed the gate
+
+Found by independent adversarial audit, re-derived before fixing.
+
+- **Any secret in a `.env.example` was suppressed without inspecting its value**
+  (`scripts/interpret.py`). Measured with a byte-identical, structurally valid
+  cloud key: **2 active findings and exit 1** in `settings.py`, **0 active and
+  exit 0** in `.env.example`. The filename was the whole predicate, and a
+  filename is chosen by whoever wrote the file.
+
+  🔴 **Deleted rather than narrowed, because it could not have been doing useful
+  work.** By the time a `SECRET` finding reaches the false-positive pass it has
+  already passed `engine_secrets.is_dummy()`, which drops placeholders at
+  detection. The example path was already handled proportionately, as a
+  confidence downgrade (HIGH → MEDIUM via `_path_is_test_or_example`). The right
+  response had been applied twice before this rule ran; the rule applied it a
+  third time, as suppression, to exactly the findings the first two had judged
+  real. A live credential committed to a `.env.example` is one of the commonest
+  real leaks there is.
+
+  Both directions are pinned: a real credential in all four example suffixes now
+  fires, and placeholders in the same files still do not — the latter is the test
+  that would catch this deletion having made example files noisy.
+
+- **`"lock" in path` matched any path containing the substring**, so
+  high-entropy findings were suppressed in `src/locks/keys.py`, `app/unlock.js`
+  and `clockwork/`. Now anchored to actual dependency lockfile **basenames** — a
+  directory named for locking is where credential handling tends to live.
+
+  ⚠️ `.env.template` and `.env.dist` now report at full confidence, because the
+  downgrade list does not match them. Deliberately **not** "fixed" by adding
+  substrings: `dist` would match `dist/` build directories, widening a
+  suppression to close a reports-too-loudly gap.
+
 ### 🔴 Security — every engine trusted, none of them measured
 
 Found by independent adversarial audit and re-derived before fixing.

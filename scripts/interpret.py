@@ -102,16 +102,65 @@ def dedup(findings: list) -> list:
 # False-positive heuristics -> (is_fp, reason)
 # --------------------------------------------------------------------------- #
 
+#: Real dependency lockfiles, by basename. A file whose integrity hashes are
+#: high-entropy by construction is a genuine false-positive source; a directory
+#: whose NAME contains "lock" is not. Matched on the basename so a path segment
+#: cannot smuggle a source file in.
+_LOCKFILE_NAMES = frozenset({
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "npm-shrinkwrap.json",
+    "poetry.lock", "pdm.lock", "pipfile.lock", "uv.lock", "conda-lock.yml",
+    "cargo.lock", "gemfile.lock", "composer.lock", "go.sum", "packages.lock.json",
+    "flake.lock", "mix.lock", "podfile.lock", "package.resolved", "gradle.lockfile",
+})
+
+
+def _is_lockfile(file_low: str) -> bool:
+    """True only for an actual dependency lockfile, by basename."""
+    base = file_low.replace("\\", "/").rsplit("/", 1)[-1]
+    return base in _LOCKFILE_NAMES
+
+
 def _fp_assessment(f: Finding) -> tuple:
     file_low = (f.file or "").lower()
 
-    # 1. Example/placeholder env files are documentation, not live secrets.
-    if f.category == "SECRET" and file_low.endswith((".env.example", ".env.sample", ".env.template", ".env.dist")):
-        return True, "secret in an example/template env file (documentation, not a live credential)"
+    # 1. DELETED 2026-08-12 -- suppression on PATH ALONE, which this project's own
+    #    rules forbid, and which could not have been doing any useful work.
+    #
+    #        if f.category == "SECRET" and file_low.endswith(
+    #                (".env.example", ".env.sample", ".env.template", ".env.dist")):
+    #            return True, "secret in an example/template env file"
+    #
+    #    Measured, byte-identical structurally valid cloud key: active at exit 1
+    #    in `settings.py`, silently filtered at exit 0 in `.env.example`. Renaming
+    #    a file was enough to disarm the gate.
+    #
+    #    🔴 The reason it was pure harm, not merely over-broad: by the time a
+    #    SECRET finding reaches this function it has ALREADY passed
+    #    `engine_secrets.is_dummy()`, which drops placeholders at detection
+    #    (`if is_dummy(secret): continue`). So every finding this rule could
+    #    suppress was one the placeholder check had positively judged NOT a
+    #    placeholder. And the example path was ALREADY accounted for, correctly
+    #    and proportionately, as a confidence downgrade
+    #    (`_path_is_test_or_example` -> HIGH becomes MEDIUM). The right response
+    #    was applied twice before this rule ran; this was a third application of
+    #    it, as suppression, on exactly the findings the first two had kept.
+    #
+    #    A real credential committed to a `.env.example` is one of the commonest
+    #    real leaks there is -- the same argument this repo's CLAUDE.md makes
+    #    against exempting `tests/`. Deleting is the fail-safe direction: nothing
+    #    is newly suppressed, and `.env.example` / `.env.sample` keep their
+    #    confidence downgrade. `.env.template` and `.env.dist` now report at full
+    #    confidence, because the downgrade list does not match them -- deliberately
+    #    NOT "fixed" by adding substrings, since `dist` would match `dist/` build
+    #    directories and widen a suppression to close a report-too-loudly gap.
 
     # 2. Low-confidence entropy hits inside lockfiles/minified assets.
+    #    ⚠️ `"lock" in file_low` matched any path CONTAINING the substring --
+    #    `src/locks/keys.py`, `app/unlock.js`, `clockwork/`. Anchored to real
+    #    lockfile names, because a directory called `locks` is where credential
+    #    handling actually lives.
     if f.rule_id in ("high-entropy-string",) and (
-        "lock" in file_low or file_low.endswith((".min.js", ".min.css", ".map", ".snap"))
+        _is_lockfile(file_low) or file_low.endswith((".min.js", ".min.css", ".map", ".snap"))
     ):
         return True, "high-entropy token in a lockfile/minified/generated asset (typically an integrity hash, not a secret)"
 
