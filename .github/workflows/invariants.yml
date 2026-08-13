@@ -67,7 +67,13 @@ jobs:
           # A test-count FLOOR. The skip check above cannot see a deleted file:
           # removing tests/ entirely leaves CI green with '0 passed'. precommit.sh
           # has had MIN_PY since it was written; CI had nothing.
-          COLLECTED="$(grep -oE '^collected [0-9]+' pytest.out | grep -oE '[0-9]+' || echo 0)"
+          # NOT anchored with ^ -- pytest -v prints 'collecting ... collected N items',
+          # so the line does not START with 'collected'. The anchored version parsed
+          # 0 and reddened CI on its first real run: validated as YAML, never run
+          # against real pytest output. It failed CLOSED, which is the only reason
+          # this was cheap.
+          COLLECTED="$(grep -oE 'collected [0-9]+ items' pytest.out | grep -oE '[0-9]+' | head -1)"
+          COLLECTED="${COLLECTED:-0}"
           MIN_CI=200
           if [ "$COLLECTED" -lt "$MIN_CI" ]; then
             echo "::error::collected $COLLECTED tests, floor is $MIN_CI -- tests disappeared. Raise MIN_CI deliberately if they were removed on purpose."
