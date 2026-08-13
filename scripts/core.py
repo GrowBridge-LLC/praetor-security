@@ -187,11 +187,29 @@ def engines_that_measured(engine_meta: dict) -> list:
     Measured; an *invalid* engine name was correctly rejected with exit 2, so the
     typo was caught and the empty string was not.
 
-    ⚠️ Keyed on the whole-scan property, not on the empty-string spelling that
-    demonstrated it. Any future route to "every engine trusted, none measured"
-    fails the same way. The narrower fix -- rejecting `""` at parse time -- is
-    also applied, because a clear early error beats a correct late one, but it is
-    the diagnostic and this is the guarantee.
+    🔴 WHAT THIS DOES **NOT** COVER, corrected 2026-08-13 after an independent
+    reader falsified the claim that used to stand here.
+
+    This function reads a STATUS WORD. It does not observe any work. An engine
+    handed an empty file list returns without raising and is recorded `ok`, so
+    `engines_that_measured` reports it as having measured -- and a scan that
+    opened zero files passes this floor with every engine "measuring":
+
+        praetor <tree with a live key> --fail-on INFO               -> exit 1
+        praetor <same tree> --fail-on INFO --exclude ""             -> exit 0
+        praetor <same tree> --fail-on INFO --max-file-size 1        -> exit 0
+
+    The previous docstring asserted the opposite -- that this was "keyed on the
+    whole-scan property" so "any future route fails the same way". It was written
+    by the author of the fix, in the same commit, and was false when written: the
+    next route was one flag over. ⇒ **`ok` is not a measurement, it is the
+    absence of an exception.** The real whole-scan guarantee is the file-count
+    floor in `praetor.py`, which keys on `len(scan_files)` -- a count of things
+    actually opened, which no silence can satisfy.
+
+    ⇒ Keep this function for the diagnosis it genuinely gives ("every engine's
+    silence was individually trustworthy and none ran", i.e. the `--engines ""`
+    family). Do not extend anything to depend on it as proof that work happened.
     """
     return [name for name in sorted(engine_meta or {})
             if (engine_meta[name] or {}).get("status", "") in ENGINE_MEASURED_STATUSES]

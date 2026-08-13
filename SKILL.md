@@ -77,7 +77,7 @@ Key options (see `--help` for all): `--engines`, `--format {text,json,both}`,
 `--sca-backend {auto,osv,pip-audit,npm}`,
 `--semgrep-runtime {auto,native,wsl,docker}`, `--no-registry`, `--exclude REGEX`.
 
-Exit codes: `0` fully measured and clean (or below `--fail-on`), `1` findings
+Exit codes: `0` no active findings at or above `--fail-on` — **`NO FINDING`, never `SAFE`**, and *without* `--fail-on` it does not assert that anything was measured at all, `1` findings
 at/above `--fail-on`, `2` usage/internal error, `3` an engine **could not
 measure** under `--fail-on` (errored or unavailable).
 

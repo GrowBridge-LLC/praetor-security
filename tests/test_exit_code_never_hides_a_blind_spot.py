@@ -389,3 +389,114 @@ def test_when_both_faults_hold_the_more_specific_diagnosis_wins(tmp_path, monkey
         "the floor answered a question the degraded path answers better; the two "
         "blocks are in the wrong order"
     )
+
+
+# --------------------------------------------------------------------------- #
+# THE FLOOR MUST BE A MEASUREMENT, NOT A STATUS WORD
+#
+# Added 2026-08-13, after an independent reader falsified the claim that the
+# measured-engine floor above closed the "trusted but never looked" class.
+# It did not. It reads `engine_meta[...]["status"]`, and an engine handed an
+# EMPTY FILE LIST returns without raising and is recorded `ok`. So the floor
+# said "an engine measured" about an engine that had opened nothing, and
+# `--exclude ""` -- one flag over from the `--engines ""` that motivated it --
+# exited 0 on a tree containing a live-shaped credential.
+#
+# The repair is a term no silence can satisfy: `len(scan_files)`, the count of
+# files actually opened. These tests assert the COUNT-based property, and one of
+# them deliberately uses a route the fix was NOT written against.
+# --------------------------------------------------------------------------- #
+
+# Assembled from fragments so this file does not itself trip the secrets engine
+# it exercises -- the repo rule is "fix the fixture, not the rules".
+_LIVE_SHAPED_KEY = "sk-" + "ant-" + "api03-" + ("A" * 80)
+
+
+def _target_with_a_real_finding(tmp_path):
+    """A target that provably HAS something to find.
+
+    🔴 The arming half. `exit 3 because 0 files were scanned` is indistinguishable
+    from `exit 3 because the tree was empty anyway` unless the control proves the
+    finding was there to be missed.
+    """
+    (tmp_path / "settings.py").write_text(
+        f'ANTHROPIC_API_KEY = "{_LIVE_SHAPED_KEY}"\n', encoding="utf-8"
+    )
+    return str(tmp_path)
+
+
+def test_the_control_actually_finds_the_key(tmp_path):
+    """ARMING CHECK -- every test below is void if this one does not fail loudly."""
+    rc = _run([_target_with_a_real_finding(tmp_path), "--engines", "secrets",
+               "--fail-on", "INFO", "--format", "json", "--quiet"])
+    assert rc == 1, (
+        f"premise broken: the control scan must FIND the planted key and exit 1, "
+        f"got {rc}. Every zero-file assertion below is meaningless without this."
+    )
+
+
+def test_an_empty_exclude_pattern_cannot_produce_a_clean_bill_of_health(tmp_path):
+    """THE HEADLINE OF THIS BLOCK. `--exclude ""` matches every path.
+
+    Measured before the fix: `Files (text): 0`, `Findings (active): 0`, exit 0 --
+    on the same tree the control above exits 1 for.
+    """
+    rc = _run([_target_with_a_real_finding(tmp_path), "--engines", "secrets",
+               "--fail-on", "INFO", "--exclude", "", "--format", "json", "--quiet"])
+    assert rc == 2, (
+        f"an empty --exclude excludes the whole tree and must be rejected, got {rc}"
+    )
+
+
+def test_the_floor_catches_a_route_it_was_not_written_against(tmp_path):
+    """🔴 THE POINT OF KEYING ON A COUNT.
+
+    No code anywhere special-cases `--max-file-size`. This route empties the tree
+    by a completely different mechanism than the empty exclude regex, and it must
+    fail identically -- because the floor asks how many files were opened, not
+    how any engine described itself.
+
+    If this test ever needs its own carve-out to pass, the floor has stopped
+    being a measurement and gone back to being an enumeration of known routes.
+    """
+    rc = _run([_target_with_a_real_finding(tmp_path), "--engines", "secrets",
+               "--fail-on", "INFO", "--max-file-size", "1", "--format", "json",
+               "--quiet"])
+    assert rc == 3, (
+        f"a byte cap that excludes every file must hit the NOTHING WAS EXAMINED "
+        f"floor, got {rc}"
+    )
+
+
+def test_a_prefix_of_the_bypass_flag_does_not_reach_it(tmp_path):
+    """argparse abbreviates long options BY DEFAULT.
+
+    `--allow` was an unambiguous prefix of `--allow-degraded`, so seven characters
+    turned exit 3 into exit 0. An exit code is this tool's whole contract with CI;
+    no prefix of a bypass flag may be spelled by accident.
+    """
+    with pytest.raises(SystemExit) as exc:
+        _run([_clean_target(tmp_path), "--engines", "sca", "--fail-on", "INFO",
+              "--allow", "--format", "json", "--quiet"])
+    assert exc.value.code == 2, (
+        f"--allow must be an argparse error, not a silent bypass; got exit "
+        f"{exc.value.code}"
+    )
+
+
+def test_the_full_spelling_of_the_bypass_still_works(tmp_path):
+    """KEEP DIRECTION. Closing the abbreviation must not break the real flag."""
+    rc = _run([_clean_target(tmp_path), "--engines", "sca", "--fail-on", "INFO",
+               "--allow-degraded", "--format", "json", "--quiet"])
+    assert rc == 0, f"--allow-degraded must still opt out of the floor; got {rc}"
+
+
+def test_a_genuinely_measured_clean_tree_still_passes(tmp_path):
+    """KEEP DIRECTION. The floor must not make every clean scan exit 3.
+
+    This is the assertion that distinguishes 'narrowed the gate' from 'jammed the
+    gate shut', which look identical from the outside.
+    """
+    rc = _run([_clean_target(tmp_path), "--engines", "secrets", "--fail-on", "INFO",
+               "--format", "json", "--quiet"])
+    assert rc == 0, f"a real scan of a real clean tree must still pass; got {rc}"

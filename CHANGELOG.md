@@ -12,6 +12,55 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### 🔴 Security — the floor that was supposed to close "trusted but never looked" did not
+
+The previous entry's fix rejected `--engines ""` and added a floor asking *"did
+any engine measure?"*. Its docstring claimed the floor was **"keyed on the
+whole-scan property … any future route fails the same way."** That was written by
+the author of the fix, in the same commit, and was **false when written**.
+
+`engines_that_measured()` reads a **status word**. An engine handed an empty file
+list returns without raising and is recorded `ok` — so the floor reported that an
+engine had measured when it had opened nothing. The next route was one flag over:
+
+```
+praetor <tree with a live-shaped key> --fail-on INFO                -> Files: 1, exit 1
+praetor <same tree>                   --fail-on INFO --exclude ""   -> Files: 0, exit 0
+praetor <same tree>                   --fail-on INFO --max-file-size 1 -> Files: 0, exit 0
+```
+
+`--exclude ""` compiles to `re.compile("")`, which matches every path.
+
+- **The gate now keys on `len(scan_files)`** — a count of files actually opened,
+  which no silence can satisfy. Under `--fail-on`, zero files examined is **exit
+  3**, whatever emptied the tree. Verified against `--max-file-size`, a route
+  nothing in the fix special-cases: it fails identically, which is the difference
+  between a measurement and an enumeration of known spellings.
+- **`--exclude ""` is rejected at parse time** (exit 2), mirroring `--engines ""`.
+  Diagnostic, not guarantee — the count is the guarantee.
+- 🔴 **`--allow` was an unambiguous prefix of `--allow-degraded`.** argparse
+  abbreviates long options by default, so **seven characters turned exit 3 into
+  exit 0**. `allow_abbrev=False` is now set. An exit code is this tool's entire
+  contract with CI; no prefix of a bypass flag may be spelled by accident.
+
+### Changed — exit `0` no longer documented as a coverage certificate
+
+`README.md`, `SKILL.md` and `--help` all said exit `0` meant *"fully measured and
+clean"*. It never did: **without `--fail-on`, none of the measured-scan floors run
+at all**, so a scan whose engine died still exits 0. This repo's own audit had
+already flagged the sentence; it shipped anyway for four more commits. Now stated
+as `NO FINDING`, never `SAFE`, with the `--fail-on` condition named.
+
+### Fixed — two test-count floors that were not floors
+
+- CI claimed to mirror `precommit.sh`'s skip rule and did not: it grepped
+  `skipped|deselected` while `precommit.sh` also counts **`xfailed`**, so the
+  exact hole ("a skipped test is indistinguishable from a passing one") stayed
+  open in its `xfail` spelling. Mirrored properly.
+- **CI had no test-count floor at all** — deleting a whole test file left it
+  green. `MIN_CI` added. `MIN_PY` was **120** against a 200-test suite: 80 tests
+  could vanish with the gate still green. Raised to 200.
+
 ### 🔴 Two more things CI could not see, found by fixing the one masking them
 
 - **`_win_to_wsl` read the drive letter *after* `os.path.abspath`**

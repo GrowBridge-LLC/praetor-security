@@ -59,8 +59,17 @@ jobs:
         run: |
           set -o pipefail
           PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/ -v 2>&1 | tee pytest.out
-          if grep -qE '[0-9]+ (skipped|deselected)' pytest.out; then
+          if grep -qE '[0-9]+ (skipped|deselected|xfailed)' pytest.out; then
             echo "::error::Tests were skipped or deselected. A skipped test is indistinguishable from a passing one -- install what it needs, or delete it."
-            grep -E '[0-9]+ (skipped|deselected)|SKIPPED' pytest.out || true
+            grep -E '[0-9]+ (skipped|deselected|xfailed)|SKIPPED' pytest.out || true
+            exit 1
+          fi
+          # A test-count FLOOR. The skip check above cannot see a deleted file:
+          # removing tests/ entirely leaves CI green with '0 passed'. precommit.sh
+          # has had MIN_PY since it was written; CI had nothing.
+          COLLECTED="$(grep -oE '^collected [0-9]+' pytest.out | grep -oE '[0-9]+' || echo 0)"
+          MIN_CI=200
+          if [ "$COLLECTED" -lt "$MIN_CI" ]; then
+            echo "::error::collected $COLLECTED tests, floor is $MIN_CI -- tests disappeared. Raise MIN_CI deliberately if they were removed on purpose."
             exit 1
           fi

@@ -26,7 +26,9 @@ Usage:
   python praetor.py <target> [options]
 
 Exit codes:
-  0  scan fully measured, no active findings at/above --fail-on
+  0  no active findings at/above --fail-on. NOT a certificate of coverage:
+     without --fail-on this is returned even when an engine died or nothing
+     was examined. Only --fail-on enforces the measured-scan floors.
      (without --fail-on, nothing fails the run: report-only by request)
   1  active findings at/above --fail-on
   2  usage / internal error
@@ -103,6 +105,17 @@ def parse_args(argv):
     p = argparse.ArgumentParser(
         prog="praetor",
         description="Multi-engine static security analysis (SAST + secrets + SCA + AI-security).",
+        # 🔴 argparse abbreviates long options BY DEFAULT, and one of ours disarms
+        # the gate. With allow_abbrev left at True, `--allow` is an unambiguous
+        # prefix of `--allow-degraded`, so seven characters turned exit 3 into
+        # exit 0 on a scan that measured nothing. Measured 2026-08-13:
+        #   praetor <clean> --engines sca --fail-on INFO          -> 3
+        #   praetor <clean> --engines sca --fail-on INFO --allow  -> 0
+        # An exit code is this tool's entire contract with CI, so no prefix of a
+        # bypass flag may be spelled by accident. This also freezes the CLI
+        # surface: adding any `--allow-*` sibling would silently have made
+        # `--allow` ambiguous and started erroring on scripts that relied on it.
+        allow_abbrev=False,
     )
     p.add_argument("target", nargs="?", default=".", help="File or directory to scan (default: current dir).")
     p.add_argument("--engines", default="all",
@@ -388,6 +401,24 @@ def main(argv=None):
         )
         return 2
 
+    # The SAME shape as `--engines ""`, one flag over, and it survived the fix
+    # that was written to close the class. `--exclude ""` compiles to
+    # `re.compile("")`, which matches every path, so the walker returns zero
+    # files, every engine is handed an empty list, every engine returns without
+    # raising, and every engine reports `ok` -- a MEASURED status. Measured
+    # 2026-08-13 on a tree holding a live-shaped key: control `Files (text): 1`
+    # / exit 1; with `--exclude ""` `Files (text): 0` / exit 0.
+    # ⇒ Found by an independent reader AFTER this file's author had written a
+    # comment claiming the class was closed. See the file-count floor below,
+    # which is the guarantee; this is only the diagnostic.
+    if any(pattern == "" for pattern in (args.exclude or [])):
+        sys.stderr.write(
+            "praetor: --exclude was given an empty pattern, which matches every path.\n"
+            "  That excludes the entire tree and scans nothing, which is never a clean "
+            "result. If a CI variable expanded to empty here, that is the bug.\n"
+        )
+        return 2
+
     _log(args.quiet, f"praetor {VERSION}: scanning {target}")
 
     # Enumerate scannable text files exactly once (shared by secrets + aisec).
@@ -547,6 +578,37 @@ def main(argv=None):
                 "  A zero from an engine that did not run is not a clean result. "
                 "Re-run once the engine is available, or pass --allow-degraded to "
                 "gate on findings alone.\n"
+            )
+            return 3
+        # 🔴 THE ONLY TERM IN THIS BLOCK THAT IS A MEASUREMENT RATHER THAN A
+        # STATUS WORD. An engine handed an empty file list returns without
+        # raising and reports `ok` -- so "an engine measured" was itself just
+        # another trust token, and `--exclude ""` walked straight through the
+        # floor written one commit earlier to close exactly this class:
+        #   control                 -> Files (text): 1, exit 1 (live key found)
+        #   --exclude ""            -> Files (text): 0, exit 0
+        #   --max-file-size 1       -> Files (text): 0, exit 0
+        # `len(scan_files)` cannot be satisfied by a silence. It is the count of
+        # things actually opened, so every route that empties the tree -- an
+        # empty exclude regex, a byte cap below every file, an empty directory,
+        # a walker that skipped everything -- fails here identically, including
+        # routes nobody has thought of yet. That claim is what the previous
+        # comment asserted falsely about a status word; it is true of a count.
+        # Checked BEFORE the measured-engine floor because zero files examined
+        # is the root cause and the more actionable diagnosis.
+        if not scan_files and not args.allow_degraded:
+            sys.stderr.write(
+                "praetor: NOTHING WAS EXAMINED -- 0 files were opened, so --fail-on "
+                "has no basis to pass.\n"
+            )
+            sys.stderr.write(
+                f"  target: {target}\n"
+                f"  --max-file-size: {args.max_file_size}\n"
+                f"  --exclude: {args.exclude or '(none)'}\n"
+            )
+            sys.stderr.write(
+                "  An empty file set is not a clean tree. Widen the filters, or pass "
+                "--allow-degraded to gate on findings alone.\n"
             )
             return 3
         # 🔴 A whole-scan floor, not a per-engine one. Reached only when every

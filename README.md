@@ -134,7 +134,7 @@ python scripts/praetor.py /path/to/target --fail-on HIGH --format json
 | `--exclude REGEX` | Exclude matching relative paths (repeatable) |
 | `--max-file-size` | Skip files larger than N bytes (default 3 MB) |
 
-Exit codes: `0` fully measured and clean (or below `--fail-on`), `1` findings
+Exit codes: `0` no active findings at or above `--fail-on` — **`NO FINDING`, never `SAFE`**, and *without* `--fail-on` it does not assert that anything was measured at all, `1` findings
 at/above `--fail-on`, `2` usage/internal error, `3` `--fail-on` was requested but
 an engine **could not measure** — it errored, or its runtime was unavailable.
 
