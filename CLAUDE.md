@@ -87,7 +87,14 @@ bash tests/precommit.sh
 ```
 
 That is the gate, not a convenience wrapper: 8 checks, it exits non-zero on any
-failure and names the one that failed. **Commit/push authorization is conditional
+failure and names the one that failed.
+
+🔴 **Read its EXIT CODE, never its output.** A session chained
+`precommit.sh | grep -E '...|FAIL' && git commit` and committed over a **red**
+gate — `grep` exited 0 because it *found the word* `FAIL`, so the harder the
+gate failed, the more reliably the commit proceeded. Capture `$?` and branch on
+it. This is the third recorded instance in this repo of a check that reports
+where it was believed to gate. **Commit/push authorization is conditional
 on it passing**, so a green run is the precondition, not a formality.
 
 The suite alone, when you want a fast inner loop:
