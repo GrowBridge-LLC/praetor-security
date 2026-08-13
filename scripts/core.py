@@ -595,4 +595,30 @@ def read_text(path: str, max_bytes: int = DEFAULT_MAX_BYTES) -> str:
             data = fh.read(max_bytes + 1)
     except OSError:
         return ""
-    return data.decode("utf-8", errors="surrogatepass")
+    try:
+        return data.decode("utf-8", errors="surrogatepass")
+    except UnicodeDecodeError:
+        # 🔴 ONE BYTE IN THE SCANNED TREE USED TO KILL A WHOLE ENGINE.
+        # `surrogatepass` tolerates lone SURROGATES but still raises on an invalid
+        # UTF-8 START BYTE, and no caller guarded per-file -- so the exception
+        # unwound the entire engine. `is_probably_binary` does not save us: it
+        # sniffs only the first 4096 bytes, so a file that is clean ASCII up front
+        # and has one high byte later passes the filter and then raises.
+        #
+        # Measured 2026-08-13, tree = a live-shaped key in app.py plus a
+        # vendored file of 5000 ASCII bytes then a single 0xa4:
+        #     before: [error] secrets 'utf-8' codec can't decode byte 0xa4
+        #             0 active findings; --fail-on HIGH --allow-degraded -> EXIT 0
+        #     after : [ran]   secrets 3 raw, 1 active HIGH, exit 1
+        # The root-level credential was erased by a byte in a directory the
+        # operator never asked to scan. Found on a real repo too: a file shipped
+        # by `joblib` to TEST encoding handling is deliberately non-UTF-8, so any
+        # target with joblib in a venv lost its entire secrets scan.
+        #
+        # `surrogateescape` never raises and is byte-for-byte reversible, so the
+        # smuggled-code-point guarantee above still holds for the AI-security
+        # engine. Decodable files are untouched: this path runs only where the
+        # old one crashed. ⇒ Same class as the `text=True` subprocess defect this
+        # repo already recorded -- a different door into "the scanned tree can
+        # disable an engine".
+        return data.decode("utf-8", errors="surrogateescape")

@@ -713,3 +713,83 @@ def test_version_control_internals_are_still_skipped_even_for_secrets(tmp_path):
     rc = praetor.main([str(tmp_path), "--engines", "secrets", "--fail-on", "INFO",
                        "--format", "json", "--quiet"])
     assert rc == 0, f"VCS internals must stay out of the secrets walk; got exit {rc}"
+
+
+# --------------------------------------------------------------------------- #
+# ONE BYTE IN THE SCANNED TREE MUST NOT DISABLE AN ENGINE
+#
+# `core.read_text` decoded with `errors="surrogatepass"`, which tolerates lone
+# SURROGATES but still raises on an invalid UTF-8 START BYTE. No caller guarded
+# per-file, so the exception unwound the entire engine. `is_probably_binary`
+# does not save it: that sniffs only the first 4096 bytes, so a file clean up
+# front with one high byte later passes the filter and then raises.
+#
+# Measured 2026-08-13 -- live-shaped key in app.py, plus a vendored file of 5000
+# ASCII bytes then one 0xa4:
+#     before: [error] secrets ... 0 active; --fail-on HIGH --allow-degraded -> 0
+#     after : [ran]   secrets ... 1 active HIGH -> exit 1
+# A root-level credential erased by a byte in a directory nobody asked to scan.
+# Same class as the `text=True` subprocess defect already recorded here: a
+# different door into "the scanned tree can disable an engine".
+# --------------------------------------------------------------------------- #
+
+_DECODE_KEY = "sk-" + "ant-" + "api03-" + ("D" * 80)
+
+
+def _tree_with_an_undecodable_vendored_file(tmp_path):
+    (tmp_path / "app.py").write_text(f'API_KEY = "{_DECODE_KEY}"\n', encoding="utf-8")
+    v = tmp_path / "vendor"
+    v.mkdir()
+    # Clean ASCII past the 4096-byte binary sniff, THEN one invalid start byte.
+    (v / "bundle.js").write_bytes(b"a" * 5000 + b"\xa4" + b"\n")
+    return str(tmp_path)
+
+
+def test_one_undecodable_byte_cannot_erase_a_real_finding(tmp_path):
+    """🔴 THE HEADLINE. The credential is at the ROOT; the bad byte is vendored."""
+    rc = praetor.main([_tree_with_an_undecodable_vendored_file(tmp_path), "--engines",
+                       "secrets", "--fail-on", "HIGH", "--format", "json", "--quiet"])
+    assert rc == 1, (
+        f"a byte in vendor/ must not erase a root-level credential; got exit {rc}"
+    )
+
+
+def test_the_undecodable_byte_does_not_even_degrade_the_engine(tmp_path):
+    """`--allow-degraded` is where this was silent rather than loud.
+
+    Under it the run returned 0 with the credential gone -- a documented flag
+    turning an engine crash into a clean bill of health.
+    """
+    rc = praetor.main([_tree_with_an_undecodable_vendored_file(tmp_path), "--engines",
+                       "secrets", "--fail-on", "HIGH", "--allow-degraded",
+                       "--format", "json", "--quiet"])
+    assert rc == 1, (
+        f"--allow-degraded must not convert a decode crash into a clean scan; got {rc}"
+    )
+
+
+def test_read_text_never_raises_on_an_invalid_start_byte(tmp_path):
+    """Root cause, asserted directly so the fix cannot be narrowed to one engine."""
+    p = tmp_path / "x.bin"
+    p.write_bytes(b"hello " + b"\xa4\xff\xfe" + b" world")
+    text = core.read_text(str(p))
+    assert "hello" in text and "world" in text, (
+        "surrounding text must survive an undecodable byte"
+    )
+
+
+def test_decodable_files_are_untouched_by_the_fallback(tmp_path):
+    """KEEP DIRECTION. The smuggled-code-point guarantee for aisec must hold.
+
+    The fallback path must run ONLY where the old one crashed, so a file that
+    decodes under surrogatepass must decode identically.
+    """
+    p = tmp_path / "y.py"
+    # Built from chr() on purpose: a literal bidi control here is a real
+    # Trojan Source character in a shipping file, and this repo's own aisec
+    # engine correctly flags it (self-scan went 12 -> 13). Fix the FIXTURE,
+    # never the rule -- an exemption for tests/ would also exempt a real one.
+    raw = ("x = 'caf" + chr(0xE9) + " " + chr(0x200B) + chr(0x202E)
+           + "'" + chr(10)).encode("utf-8")
+    p.write_bytes(raw)
+    assert core.read_text(str(p)) == raw.decode("utf-8", errors="surrogatepass")

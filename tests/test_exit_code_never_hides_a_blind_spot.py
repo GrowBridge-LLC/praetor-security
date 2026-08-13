@@ -500,3 +500,30 @@ def test_a_genuinely_measured_clean_tree_still_passes(tmp_path):
     rc = _run([_clean_target(tmp_path), "--engines", "secrets", "--fail-on", "INFO",
                "--format", "json", "--quiet"])
     assert rc == 0, f"a real scan of a real clean tree must still pass; got {rc}"
+
+
+def test_the_floor_is_not_suppressed_by_an_unselected_engines_walk(tmp_path):
+    """🔴 A REGRESSION THIS SUITE DID NOT CATCH, found by adversarial audit.
+
+    The secrets engine walks wider than the others (it must: a credential in
+    `vendor/` is disclosed). The floor was briefly written as
+    `not scan_files and not secret_files` -- and since `secret_files` is a strict
+    SUPERSET of `scan_files`, that collapses to `not secret_files`, so the floor
+    stopped protecting the narrow walk entirely.
+
+    Measured: a tree whose only content was an os.system concat under `vendor/`
+    went from exit 3 to exit 0, and with `--engines sast` the floor was suppressed
+    by a walk belonging to an engine the operator had switched OFF.
+
+    ⇒ A floor may only be satisfied by work a SELECTED engine actually did.
+    """
+    v = tmp_path / "vendor"
+    v.mkdir()
+    (v / "app.py").write_text(
+        "import os" + chr(10) + "def h(e):" + chr(10) + "    os.system('ls ' + e)" + chr(10),
+        encoding="utf-8")
+    rc = _run([str(tmp_path), "--engines", "sast", "--fail-on", "INFO",
+               "--format", "json", "--quiet"])
+    assert rc == 3, (
+        f"nothing SAST can read was enumerated, so this is not a clean result; got {rc}"
+    )

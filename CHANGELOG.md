@@ -12,6 +12,45 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### 🔴 Security — one byte in the scanned tree disabled an engine, and a floor I widened stopped guarding
+
+Both found by 2× independent adversarial audit of the held bundle. **Both were
+introduced or exposed by the commit immediately before them.**
+
+**1. One undecodable byte erased a real finding.** `core.read_text` decoded with
+`errors="surrogatepass"`, which tolerates lone *surrogates* but still raises on an
+invalid UTF-8 *start byte* — and no caller guarded per-file, so the exception
+unwound the whole engine. `is_probably_binary` does not save it: that sniffs only
+the first 4096 bytes, so a file clean up front with one high byte later passes the
+filter and then raises. Widening the secrets walk into vendored directories made
+this reachable on ordinary repos.
+
+```
+tree = live-shaped key in app.py + vendor/bundle.js (5000 ASCII bytes, then 0xa4)
+  before: [error] secrets 'utf-8' codec can't decode byte 0xa4 ... 0 active
+          --fail-on HIGH -> 3 ;  + --allow-degraded -> 0   (credential gone)
+  after : [ran]   secrets 3 raw, 1 active HIGH -> exit 1 both ways
+```
+
+On a real repo this fired for real: a file **shipped by `joblib`** to test encoding
+handling is deliberately non-UTF-8, so any target with joblib in a venv lost its
+entire secrets scan — measured **82 active findings → 0**.
+
+Fixed at the root: `read_text` falls back to `surrogateescape`, which never raises
+and is byte-for-byte reversible, so the smuggled-code-point guarantee still holds.
+Decodable files are untouched — the fallback runs only where the old path crashed.
+
+**2. The whole-scan floor stopped protecting the narrow walk.** It briefly read
+`not scan_files and not secret_files` — and `secret_files` is a strict **superset**
+of `scan_files`, so the conjunction collapsed to `not secret_files`. A tree whose
+only content was an `os.system` concat under `vendor/` went from **exit 3 to exit
+0**, and under `--engines sast` the floor was suppressed by a walk belonging to an
+engine the operator had switched **off**.
+
+⇒ **A floor may only be satisfied by work a SELECTED engine actually did.**
+Reverted, and now pinned by a test — the clause had none in either direction, so
+mutating it back left the whole suite green.
+
 ### 🔴 Security — the skip list was an attacker-controlled scope boundary
 
 `core.DEFAULT_SKIP_DIRS` is 30 directory names the walker will not enter, and

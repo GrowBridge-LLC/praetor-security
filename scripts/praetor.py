@@ -632,7 +632,7 @@ def main(argv=None):
         # older than this floor and is not closed by it.
         # Checked BEFORE the measured-engine floor because zero files examined
         # is the root cause and the more actionable diagnosis.
-        if not scan_files and not secret_files and not args.allow_degraded:
+        if not scan_files and not args.allow_degraded:
             sys.stderr.write(
                 "praetor: NOTHING WAS EXAMINED -- 0 files were opened, so --fail-on "
                 "has no basis to pass.\n"
