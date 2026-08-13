@@ -12,6 +12,42 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### 🔴 Security — the skip list was an attacker-controlled scope boundary
+
+`core.DEFAULT_SKIP_DIRS` is 30 directory names the walker will not enter, and
+**the scanned tree chooses its own directory names.** Measured, all engines, on a
+live-shaped credential:
+
+```
+credential in vendor/, nothing else    -> exit 3   (the whole-scan floor fired)
+same tree + ONE README.md at the root  -> exit 0   file_count=1
+same credential at the top level       -> exit 1
+```
+
+One unrelated file at the root satisfied the floor and the credential was never
+read. Reproduced identically for `node_modules/`, `.venv/`, `dist/`, `build/`.
+
+**Resolved by asymmetry rather than by scanning everything.** A vulnerability in
+vendored code is mostly not yours; **a credential committed there is disclosed
+exactly as much as one at the root**. So:
+
+- **SAST keeps skipping them.** Scanning them is not free — measured 11,127 →
+  138,848 semgrep targets on a real repo, against a 900s timeout — and it reports
+  third-party findings as the target's own.
+- **The secrets engine now walks them**, via a second walk differing from the
+  first *only* in its skip list (`core.SECRETS_SKIP_DIRS`).
+
+VCS internals (`.git`, `.hg`, `.svn`) stay skipped even for secrets: they are not
+source, and secrets in **history** is a separate problem needing a different tool.
+
+**The report now names both scopes** — `Files (text): N (secrets scanned M, incl.
+vendored/build dirs)`. Printing one count over findings from two scopes is the
+same defect that made a `vendor/` finding look like it came from an unscanned
+tree, and this repo has now hit that shape three times.
+
+Self-scan unchanged at 12 active / 53 filtered: the wider walk adds 15 files here
+and no findings, so the baseline is untouched rather than re-pinned.
+
 ### Fixed — an experimental flag could break the SAST engine on every scan
 
 `--x-ignore-semgrepignore-files` is `--x-` prefixed and therefore not a stable

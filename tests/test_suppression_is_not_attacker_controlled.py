@@ -620,3 +620,96 @@ def test_an_unrelated_semgrep_error_is_not_retried(tmp_path, monkeypatch):
                           extra_configs=["p/ci"], enumerated_code_files=1)
     assert calls["n"] == 1, "an unrelated failure must not be retried"
     assert res["status"] == "error"
+
+
+# --------------------------------------------------------------------------- #
+# THE SKIP LIST IS AN ATTACKER-CONTROLLED SCOPE BOUNDARY
+#
+# core.DEFAULT_SKIP_DIRS is 30 directory names the walker will not enter, and the
+# SCANNED TREE CHOOSES ITS OWN DIRECTORY NAMES. Measured 2026-08-13, all engines,
+# live-shaped credential:
+#     credential in vendor/, nothing else    -> exit 3   (the whole-scan floor)
+#     same tree + ONE README.md at the root  -> exit 0   file_count=1
+#     same credential at the top level       -> exit 1
+# One decoy file at the root satisfied the floor and the credential was never read.
+#
+# Resolved by asymmetry, not by scanning everything: a vulnerability in vendored
+# code is mostly not yours; a credential committed there is. SAST keeps skipping
+# (scanning them took semgrep 11,127 -> 138,848 targets on a real repo, against a
+# 900s timeout); SECRETS scans them, where the finding IS the disclosure.
+# --------------------------------------------------------------------------- #
+
+_VENDOR_KEY = "sk-" + "ant-" + "api03-" + ("B" * 80)
+
+
+def _tree_hiding_a_key_in(tmp_path, dirname):
+    d = tmp_path / dirname
+    d.mkdir(parents=True)
+    (d / "leak.py").write_text(f'API_KEY = "{_VENDOR_KEY}"\n', encoding="utf-8")
+    (tmp_path / "README.md").write_text("# decoy\n", encoding="utf-8")
+    return str(tmp_path)
+
+
+@pytest.mark.parametrize("dirname", ["vendor", "node_modules", ".venv", "dist", "build"])
+def test_a_credential_in_a_skipped_directory_is_still_found(tmp_path, dirname):
+    """🔴 THE HEADLINE. Every one of these returned exit 0 before the fix."""
+    rc = praetor.main([_tree_hiding_a_key_in(tmp_path, dirname), "--engines", "secrets",
+                       "--fail-on", "INFO", "--format", "json", "--quiet"])
+    assert rc == 1, (
+        f"a credential in {dirname}/ is disclosed wherever it sits; got exit {rc}. "
+        f"The scanned tree must not choose the scope by naming a directory."
+    )
+
+
+def test_the_decoy_at_the_root_is_what_made_this_invisible(tmp_path):
+    """The floor fires without the decoy, which is why this looked handled.
+
+    Pins the mechanism, not just the outcome: the earlier defence only ever
+    caught the tree being empty, and one unrelated file defeated it.
+    """
+    d = tmp_path / "vendor"
+    d.mkdir()
+    (d / "leak.py").write_text(f'API_KEY = "{_VENDOR_KEY}"\n', encoding="utf-8")
+    rc_no_decoy = praetor.main([str(tmp_path), "--engines", "secrets", "--fail-on", "INFO",
+                                "--format", "json", "--quiet"])
+    (tmp_path / "README.md").write_text("# decoy\n", encoding="utf-8")
+    rc_decoy = praetor.main([str(tmp_path), "--engines", "secrets", "--fail-on", "INFO",
+                             "--format", "json", "--quiet"])
+    assert rc_no_decoy == 1, f"without a decoy the key must be found, got {rc_no_decoy}"
+    assert rc_decoy == 1, (
+        f"adding one unrelated file must not hide the key; got {rc_decoy}. Before the "
+        f"fix this was exactly the difference between exit 3 and a silent exit 0."
+    )
+
+
+def test_secrets_walks_wider_than_the_other_engines(tmp_path):
+    """The asymmetry IS the design -- assert it directly, not via a scan.
+
+    If these two sets ever become equal, either secrets stopped covering vendored
+    code or SAST started paying the scope-explosion cost. Both are regressions and
+    they look identical from outside.
+    """
+    assert core.SECRETS_SKIP_DIRS < core.DEFAULT_SKIP_DIRS, (
+        "secrets must skip strictly FEWER directories than the default walk"
+    )
+    for d in ("vendor", "node_modules", ".venv", "dist", "build", "target"):
+        assert d in core.DEFAULT_SKIP_DIRS, f"{d} should be skipped by the default walk"
+        assert d not in core.SECRETS_SKIP_DIRS, f"{d} must NOT be skipped when hunting secrets"
+
+
+def test_version_control_internals_are_still_skipped_even_for_secrets(tmp_path):
+    """KEEP DIRECTION, and a deliberate scope boundary.
+
+    `.git` is not source, and secrets in HISTORY is a different problem needing a
+    different tool -- a scrubbed file at HEAD still publishes its earlier commits.
+    Widening the secrets walk must not quietly turn this into a history scanner.
+    """
+    for d in (".git", ".hg", ".svn"):
+        assert d in core.SECRETS_SKIP_DIRS, f"{d} must stay skipped"
+    git = tmp_path / ".git"
+    git.mkdir()
+    (git / "config").write_text(f'token = "{_VENDOR_KEY}"\n', encoding="utf-8")
+    (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+    rc = praetor.main([str(tmp_path), "--engines", "secrets", "--fail-on", "INFO",
+                       "--format", "json", "--quiet"])
+    assert rc == 0, f"VCS internals must stay out of the secrets walk; got exit {rc}"

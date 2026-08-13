@@ -429,7 +429,17 @@ def main(argv=None):
 
     # Enumerate scannable text files exactly once (shared by secrets + aisec).
     scan_files = core.walk_files(target, max_bytes=args.max_file_size, extra_excludes=args.exclude)
-    _log(args.quiet, f"  enumerated {len(scan_files)} text file(s)")
+    # 🔴 A SECOND, WIDER WALK FOR SECRETS ONLY -- see core.SECRETS_SKIP_DIRS.
+    # `core.DEFAULT_SKIP_DIRS` is 30 directory names, and the SCANNED TREE CHOOSES
+    # ITS OWN DIRECTORY NAMES, so it is an attacker-controlled scope boundary.
+    # Skipping `vendor/` for SAST is right (its findings are third-party noise and
+    # scanning it explodes semgrep's target count). Skipping it for SECRETS is
+    # not: a credential committed there is disclosed exactly as much as one at the
+    # root. Same target, same excludes, same size cap -- only the skip list differs.
+    secret_files = core.walk_files(target, skip_dirs=core.SECRETS_SKIP_DIRS,
+                                   max_bytes=args.max_file_size, extra_excludes=args.exclude)
+    _log(args.quiet, f"  enumerated {len(scan_files)} text file(s)"
+                     f" ({len(secret_files)} for secrets)")
 
     read_text = (lambda p: core.read_text(p, args.max_file_size))
 
@@ -440,7 +450,7 @@ def main(argv=None):
     if "secrets" in engines:
         _log(args.quiet, "  [secrets] scanning...")
         try:
-            fs = engine_secrets.scan(scan_files, read_text)
+            fs = engine_secrets.scan(secret_files, read_text)
             all_findings.extend(fs)
             engine_meta["secrets"] = {"status": "ok", "detail": f"{len(fs)} raw finding(s); provider patterns + entropy + base64-unwrap"}
         except Exception as e:  # noqa
@@ -544,6 +554,7 @@ def main(argv=None):
         "timestamp": report.now_iso(),
         "version": VERSION,
         "file_count": len(scan_files),
+        "secret_file_count": len(secret_files),
         "engines": engine_meta,
         "min_severity": args.min_severity,
     }
@@ -621,7 +632,7 @@ def main(argv=None):
         # older than this floor and is not closed by it.
         # Checked BEFORE the measured-engine floor because zero files examined
         # is the root cause and the more actionable diagnosis.
-        if not scan_files and not args.allow_degraded:
+        if not scan_files and not secret_files and not args.allow_degraded:
             sys.stderr.write(
                 "praetor: NOTHING WAS EXAMINED -- 0 files were opened, so --fail-on "
                 "has no basis to pass.\n"

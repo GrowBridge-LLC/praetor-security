@@ -389,6 +389,29 @@ DEFAULT_SKIP_DIRS = {
 
 # NOTE: we do NOT skip ".claude" or "hooks" -- those are prime AI-security targets.
 
+#: Directories skipped even when hunting SECRETS. Deliberately tiny.
+#:
+#: 🔴 DEFAULT_SKIP_DIRS IS AN ATTACKER-CONTROLLED SCOPE BOUNDARY, because the
+#: scanned tree chooses its own directory names. Measured 2026-08-13 on a tree
+#: holding a live-shaped credential:
+#:     credential in vendor/, nothing else    -> exit 3  (the floor fired)
+#:     same tree + ONE README.md at the root  -> exit 0  file_count=1
+#:     same credential at the top level       -> exit 1
+#: Naming a directory `vendor` hid its contents from every engine, and one
+#: unrelated file at the root satisfied the whole-scan floor.
+#:
+#: The asymmetry that resolves it: **a vulnerability in vendored code is mostly
+#: not yours; a credential committed there is.** So SAST keeps skipping these --
+#: scanning them explodes semgrep's target count (measured 11,127 -> 138,848 on a
+#: real repo, against a 900s timeout) and reports third-party findings as the
+#: target's own -- while the SECRETS engine scans them, where the finding is a
+#: disclosure and the disclosure is real wherever it sits.
+#:
+#: VCS internals stay skipped: they are not source, and secrets in *history* is a
+#: separate problem needing a different tool (a scrubbed file at HEAD still
+#: publishes its unscrubbed earlier commits).
+SECRETS_SKIP_DIRS = {".git", ".hg", ".svn"}
+
 # Extensions we treat as scannable text. Everything else is skipped for the
 # text-based engines (secrets/aisec). SCA/SAST discover their own file types.
 TEXT_EXTS = {

@@ -86,7 +86,18 @@ def render_text(result: dict, meta: dict, redacted: bool = True) -> str:
     out.append("=" * 74)
     out.append(f"Target      : {meta.get('target')}")
     out.append(f"Scanned at  : {meta.get('timestamp')}")
-    out.append(f"Files (text): {meta.get('file_count')}")
+    # 🔴 TWO SCOPES, TWO NUMBERS. The secrets engine deliberately walks wider than
+    # the others (core.SECRETS_SKIP_DIRS vs DEFAULT_SKIP_DIRS), because a
+    # credential in `vendor/` is disclosed and a CVE there mostly is not yours.
+    # Printing ONE count over findings from BOTH scopes is exactly the defect that
+    # made a `vendor/` finding look like it came from a tree nobody scanned -- so
+    # when the two differ, say both.
+    _fc = meta.get("file_count")
+    _sfc = meta.get("secret_file_count")
+    if _sfc is not None and _sfc != _fc:
+        out.append(f"Files (text): {_fc}  (secrets scanned {_sfc}, incl. vendored/build dirs)")
+    else:
+        out.append(f"Files (text): {_fc}")
     out.append(f"PRAETOR ver : {meta.get('version')}")
     out.append("")
     out.extend(_engine_status_block(meta))
