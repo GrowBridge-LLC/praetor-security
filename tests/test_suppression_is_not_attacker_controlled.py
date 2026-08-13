@@ -332,3 +332,111 @@ def test_the_lockfile_predicate_requires_an_actual_lockfile(path, is_lock):
         f"{path!r}: a bare substring test suppressed high-entropy findings in any "
         f"path containing 'lock', including source trees named for locking."
     )
+
+
+# --------------------------------------------------------------------------- #
+# 4th of the shape, 2026-08-13: A FILE IN THE TARGET SILENCED AN ENTIRE ENGINE
+#
+# `--no-git-ignore` was added on 2026-08-12 with a comment noting that letting
+# semgrep apply "a SECOND, invisible filter" made the engines disagree about what
+# was scanned. It disables `.gitignore`. It does NOT disable `.semgrepignore` --
+# a SEPARATE mechanism semgrep honours by default, which lives in the scanned
+# tree, and which is the more direct tool of the two. Measured against a target
+# with one os.system-concat finding, via real semgrep 1.172.0:
+#
+#     control                          -> [ran] 1 finding,  exit 1
+#     + .semgrepignore containing "*"  -> [ran] 0 findings, exit 0
+#     + .semgrepignore naming the file -> [ran] 0 findings, exit 0
+#
+# `scan errors=0`, status `ok`, gate-TRUSTED -- and it also passes the file-count
+# floor added the same day, because that floor counts PRAETOR's OWN walker, which
+# still enumerated the file. Every layer reported success.
+#
+# Two defences, and the second is the one that survives semgrep changing:
+#   1. `_SEMGREPIGNORE_OFF` on the command line.
+#   2. `_scanned_count()` -- what semgrep says it actually OPENED. A flag can
+#      become an accepted no-op; a count cannot be satisfied by a silence.
+# --------------------------------------------------------------------------- #
+
+import engine_sast
+
+
+class _FakeCompleted:
+    def __init__(self, stdout, returncode=0, stderr=""):
+        self.stdout, self.returncode, self.stderr = stdout, returncode, stderr
+
+
+def _semgrep_returning(monkeypatch, payload, seen_argv=None):
+    """Pin a native runtime and hand `run()` a crafted semgrep JSON payload."""
+    monkeypatch.setattr(engine_sast, "detect_runtime", lambda *a, **kw: {
+        "mode": "native", "prefix": ["semgrep"], "available": True,
+        "detail": "test", "version": "test"})
+
+    def fake_run_tool(cmd, **kw):
+        if seen_argv is not None:
+            seen_argv.extend(cmd)
+        return _FakeCompleted(json.dumps(payload))
+
+    monkeypatch.setattr(core, "run_tool", fake_run_tool)
+
+
+def _target_with_ignore_file(tmp_path, body="*\n"):
+    (tmp_path / "vuln.py").write_text("import os\nos.system('x' + y)\n", encoding="utf-8")
+    (tmp_path / ".semgrepignore").write_text(body, encoding="utf-8")
+    return str(tmp_path)
+
+
+def test_the_semgrepignore_disabling_flag_reaches_the_command_line(tmp_path, monkeypatch):
+    """Layer 1. Captures argv without running semgrep."""
+    argv = []
+    _semgrep_returning(monkeypatch, {"results": [], "paths": {"scanned": ["vuln.py"]}}, argv)
+    engine_sast.run(_target_with_ignore_file(tmp_path), bundled_rules="", use_registry=False,
+                    extra_configs=["p/ci"])
+    assert engine_sast._SEMGREPIGNORE_OFF in argv, (
+        f"the scanned tree must not decide semgrep's scope; argv={argv}"
+    )
+
+
+def test_zero_files_scanned_with_an_in_tree_ignore_file_is_not_a_clean_result(tmp_path, monkeypatch):
+    """🔴 LAYER 2 -- THE ONE THAT SURVIVES THE FLAG BECOMING A NO-OP.
+
+    `--x-` flags are experimental. If semgrep keeps this one but stops honouring
+    it, semgrep still exits 0 and nothing errors. Only the count notices.
+    """
+    _semgrep_returning(monkeypatch, {"results": [], "paths": {"scanned": []}})
+    res = engine_sast.run(_target_with_ignore_file(tmp_path), bundled_rules="",
+                          use_registry=False, extra_configs=["p/ci"])
+    assert res["status"] == "error", (
+        f"0 files opened + a tree-controlled ignore file must not be `ok`; got {res}"
+    )
+    assert ".semgrepignore" in res["detail"], "the detail must name the file responsible"
+
+
+def test_a_scan_that_opened_files_is_still_ok_with_an_ignore_file_present(tmp_path, monkeypatch):
+    """KEEP DIRECTION. A repo may legitimately carry `.semgrepignore`.
+
+    Narrowing the gate and jamming it shut look identical from outside.
+    """
+    _semgrep_returning(monkeypatch, {"results": [], "paths": {"scanned": ["a.py", "b.py"]}})
+    res = engine_sast.run(_target_with_ignore_file(tmp_path), bundled_rules="",
+                          use_registry=False, extra_configs=["p/ci"])
+    assert res["status"] == "ok", (
+        f"semgrep opened files, so the ignore file did not decide the scope; got {res}"
+    )
+
+
+def test_an_absent_scanned_list_is_not_read_as_zero(tmp_path, monkeypatch):
+    """`-1` for absent, never `0`.
+
+    If a future semgrep drops `paths.scanned`, reading that as 0 would flip every
+    scan of a repo carrying `.semgrepignore` to `error` -- a gate that fails shut
+    on a format change gets disabled by whoever it blocks, which is how a real
+    guard dies.
+    """
+    assert engine_sast._scanned_count({"results": []}) == -1
+    assert engine_sast._scanned_count({"paths": {}}) == -1
+    assert engine_sast._scanned_count({"paths": {"scanned": []}}) == 0
+    _semgrep_returning(monkeypatch, {"results": []})
+    res = engine_sast.run(_target_with_ignore_file(tmp_path), bundled_rules="",
+                          use_registry=False, extra_configs=["p/ci"])
+    assert res["status"] == "ok", f"absent != zero; got {res}"

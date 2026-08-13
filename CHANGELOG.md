@@ -12,6 +12,50 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### 🔴 Security — a file in the scanned repository silently disabled the entire SAST engine
+
+`--no-git-ignore` (added 2026-08-12, with a comment about not letting semgrep
+apply *"a SECOND, invisible filter"*) disables `.gitignore`. It does **not**
+disable **`.semgrepignore`** — a separate mechanism semgrep honours by default,
+which lives in the scanned tree, and which is the more direct of the two.
+
+Measured against real semgrep 1.172.0, on a target with one `os.system` concat
+finding:
+
+```
+control                            -> [ran] 1 finding,  exit 1
++ .semgrepignore containing "*"    -> [ran] 0 findings, exit 0
++ .semgrepignore naming the file   -> [ran] 0 findings, exit 0
+```
+
+`scan errors=0`. Status `ok` — gate-**trusted**, not a blind spot. **It also
+passed the file-count floor added the same day**, because that floor counts
+PRAETOR's *own* walker, which still enumerated the file. Every layer reported
+success while the engine covering OWASP and injection had been switched off by
+the thing it was pointed at.
+
+Neither `--include` (applied *after* semgrepignore filtering) nor relocating the
+working directory helps — measured: semgrep resolves the ignore file from the
+**scan root**, not the cwd.
+
+**Two defences, because the first one is not a stable contract:**
+
+1. **`--x-ignore-semgrepignore-files`** on the command line. It is an
+   experimental flag; if a future semgrep *drops* it the run errors and PRAETOR
+   reports `error` ⇒ exit 3, which fails safe.
+2. 🔴 **A count of what semgrep actually opened.** The dangerous case is the flag
+   surviving as an **accepted no-op** — semgrep succeeds, honours the ignore file
+   again, and nothing errors. So when semgrep reports **0 files opened** and the
+   target carries an ignore file it honours, the result is `error`, not a clean
+   scan. Proven by mutation: with the flag rendered inert, the count catches what
+   the flag no longer does.
+
+`paths.scanned` absent returns **-1**, never 0 — a gate that fails shut on a
+format change gets disabled by whoever it blocks.
+
+⚠️ **Stated gap:** this catches scope shrunk to *nothing*. An ignore file that
+excludes only *part* of a tree still leaves `scanned > 0` and passes.
+
 ### 🔴 Security — the floor that was supposed to close "trusted but never looked" did not
 
 The previous entry's fix rejected `--engines ""` and added a floor asking *"did

@@ -39,6 +39,60 @@ from core import Finding, Severity, Confidence, split_lines
 DEFAULT_REGISTRY_CONFIGS = ["p/owasp-top-ten", "p/security-audit"]
 _SEMGREP_TIMEOUT = 900  # seconds, overall
 
+#: Disables semgrep's own `.semgrepignore` handling, so the SCANNED TREE cannot
+#: decide what gets scanned. See the long note at the call site.
+#:
+#: ⚠️ IT IS AN EXPERIMENTAL FLAG (`--x-` prefix), so it is not a stable contract.
+#: Measured through this code path 2026-08-13: if semgrep DROPS the flag entirely
+#: the run errors (`unknown option`) and PRAETOR reports `error` -> exit 3, which
+#: fails SAFE. The dangerous case is the other one: the flag surviving as an
+#: ACCEPTED NO-OP (deprecated-but-tolerated, or renamed in meaning). Then semgrep
+#: succeeds, honours the ignore file again, and nothing errors.
+#: ⇒ That is why the flag is NOT the guarantee. The guarantee is `_scanned_count()`
+#: below, which measures what semgrep actually opened.
+_SEMGREPIGNORE_OFF = "--x-ignore-semgrepignore-files"
+
+#: Ignore files that live in the SCANNED TREE and can shrink semgrep's scope.
+_TARGET_CONTROLLED_IGNORE_FILES = (".semgrepignore",)
+
+
+def _target_ignore_files(target: str) -> list:
+    """Ignore files inside the target that semgrep would otherwise honour.
+
+    Cheap and shallow-ish by design: semgrep resolves `.semgrepignore` from the
+    scan root, so the root copy is the one that matters, but a nested one is
+    reported too rather than assumed harmless.
+    """
+    found = []
+    if not os.path.isdir(target):
+        return found
+    for root, dirs, files in os.walk(target):
+        dirs[:] = [d for d in dirs if d not in (".git", "node_modules", "__pycache__")]
+        for name in files:
+            if name in _TARGET_CONTROLLED_IGNORE_FILES:
+                found.append(os.path.join(root, name))
+        if len(found) > 20:
+            break
+    return found
+
+
+def _scanned_count(data: dict) -> int:
+    """How many files semgrep actually OPENED, per its own JSON.
+
+    🔴 A COUNT, NOT A STATUS. `scan errors=0` and exit 0 are both satisfied by a
+    run that opened nothing, which is exactly what an in-tree ignore file
+    produces. This number is the only term in the SAST path that a silence
+    cannot satisfy. Returns -1 when semgrep did not report it, so "absent" is
+    never confused with "zero".
+    """
+    paths = data.get("paths")
+    if not isinstance(paths, dict):
+        return -1
+    scanned = paths.get("scanned")
+    if not isinstance(scanned, list):
+        return -1
+    return len(scanned)
+
 
 def _win_to_wsl(path: str) -> str:
     """Map a Windows path to the /mnt/<drive> form WSL reports under.
@@ -366,7 +420,24 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
               # "Verifying it works" procedure.
               #
               # If you scan it, scan it. Exclusion is the caller's call, not git's.
-              "--no-git-ignore"]
+              "--no-git-ignore",
+              # 🔴 AND THE SAME CLASS AGAIN, ONE FILENAME OVER. `--no-git-ignore`
+              # disables `.gitignore`. It does NOT disable `.semgrepignore`, which
+              # is a SEPARATE mechanism semgrep honours by default and which lives
+              # in the scanned tree. Measured 2026-08-13 on a target with one
+              # os.system-concat finding:
+              #     control                            -> [ran] 1 finding,  exit 1
+              #     + .semgrepignore containing "*"    -> [ran] 0 findings, exit 0
+              #     + .semgrepignore naming the file   -> [ran] 0 findings, exit 0
+              # `scan errors=0`, status `ok`, gate-trusted, and it passes the
+              # file-count floor too -- that floor counts PRAETOR's OWN walker,
+              # which still enumerated the file. ⇒ **A file committed to the
+              # scanned repository silently disabled the entire SAST engine.**
+              #
+              # Neither `--include` (applied AFTER semgrepignore filtering) nor
+              # relocating cwd helps -- measured: semgrep resolves the ignore file
+              # from the SCAN ROOT, not the working directory.
+              _SEMGREPIGNORE_OFF]
     # Semgrep --exclude takes a path/glob pattern; pass each exclude through so
     # the SAST engine honors the same exclusions as the built-in engines.
     for pat in (excludes or []):
@@ -421,6 +492,30 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
         data = json.loads(out)
     except json.JSONDecodeError:
         return {"findings": [], "status": "error", "detail": "unparseable semgrep JSON", "runtime": mode}
+
+    # 🔴 THE GUARANTEE FOR SCOPE, AND IT IS A COUNT -- see _SEMGREPIGNORE_OFF.
+    # The flag above closes the vector known on 2026-08-13, but semgrep ignores
+    # unknown `--x-` flags SILENTLY (exit 0, no warning), so the flag alone would
+    # fail open the day it is renamed. `scanned` is what semgrep says it actually
+    # opened. If it opened NOTHING while the target carries an ignore file semgrep
+    # honours, the tree chose the scope and a zero here means nothing.
+    #
+    # Deliberately NOT keyed on the filename `.semgrepignore`: keyed on the
+    # conjunction "opened nothing" AND "the tree carries a scope-shrinking file",
+    # so a future ignore mechanism added to _TARGET_CONTROLLED_IGNORE_FILES is
+    # covered by the same branch. ⚠️ It does NOT cover a mechanism that shrinks
+    # scope PARTIALLY -- an ignore file excluding one directory still leaves
+    # scanned > 0 and passes here. That gap is real and is stated rather than
+    # left for a later audit to find.
+    scanned = _scanned_count(data)
+    ignore_files = _target_ignore_files(target)
+    if ignore_files and scanned == 0:
+        rels = ", ".join(os.path.relpath(p, target) for p in ignore_files[:5])
+        return {"findings": [], "status": "error",
+                "detail": ("semgrep opened 0 files and the target carries an ignore file "
+                           f"it honours ({rels}); the scanned tree decided the scope, so a "
+                           "zero here is not a clean result"),
+                "runtime": mode}
 
     findings = []
     report_root = _report_root(mode, target)
