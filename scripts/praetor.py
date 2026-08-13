@@ -599,12 +599,26 @@ def main(argv=None):
         #   control                 -> Files (text): 1, exit 1 (live key found)
         #   --exclude ""            -> Files (text): 0, exit 0
         #   --max-file-size 1       -> Files (text): 0, exit 0
-        # `len(scan_files)` cannot be satisfied by a silence. It is the count of
-        # things actually opened, so every route that empties the tree -- an
-        # empty exclude regex, a byte cap below every file, an empty directory,
-        # a walker that skipped everything -- fails here identically, including
-        # routes nobody has thought of yet. That claim is what the previous
-        # comment asserted falsely about a status word; it is true of a count.
+        # `len(scan_files)` cannot be satisfied by a silence, so it catches the
+        # routes that empty the tree ENTIRELY -- an empty exclude regex, a byte
+        # cap below every file, an empty directory.
+        #
+        # 🔴 IT CATCHES EXACTLY-ZERO AND NOTHING ELSE, AND ONE FILE DEFEATS IT.
+        # An earlier version of this comment claimed it covered "every route that
+        # empties the tree ... including routes nobody has thought of yet." That
+        # was false when written -- the third false safety claim in this area, all
+        # by the author of the fix. Measured on unmutated HEAD, all four engines:
+        #   credential in vendor/, nothing else       -> exit 3   (floor fires)
+        #   same tree + ONE README.md at the root     -> exit 0   file_count=1
+        #   same credential at the top level          -> exit 1
+        # `core.DEFAULT_SKIP_DIRS` is 30 directory names the walker will not enter,
+        # and THE SCANNED TREE CHOOSES ITS OWN DIRECTORY NAMES. So hiding code in a
+        # directory called `vendor` and leaving one unrelated file at the root
+        # satisfies this floor completely.
+        # ⇒ This is a floor against a scan that measured NOTHING. It is NOT a
+        # guarantee that anything meaningful was measured, and it must never be
+        # described as one. The skip-list evasion is tracked separately; it is
+        # older than this floor and is not closed by it.
         # Checked BEFORE the measured-engine floor because zero files examined
         # is the root cause and the more actionable diagnosis.
         if not scan_files and not args.allow_degraded:
