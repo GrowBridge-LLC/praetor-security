@@ -115,3 +115,172 @@ def test_npm_audit_pins_the_registry_on_the_command_line(tmp_path, monkeypatch):
     argv = calls[0]
     assert "--registry" in argv, f"npm audit invoked without a pinned registry: {argv}"
     assert "https://registry.npmjs.org/" in argv, f"registry not pinned to npmjs: {argv}"
+
+
+# --------------------------------------------------------------------------- #
+# THE SAST PATH -- OWED SINCE 36c00af AND NOT WRITTEN UNTIL NOW
+#
+# That commit added three subprocess call sites to the SAST engine (a docker
+# daemon probe, a `--version` probe, a WSL `command -v`) plus the semgrep run
+# itself, and added nothing here. The file's own header says "every new SCA
+# backend widens this surface" -- which is narrower than the invariant, and the
+# narrowness is why four new call sites arrived unguarded.
+#
+# 🔴 The SAST surface is a DIFFERENT shape from SCA's. SCA's danger was a tool
+# BUILDING the target. SAST's dangers are: a container given write access to the
+# target, and target-derived text reaching a SHELL. Both are asserted here.
+# --------------------------------------------------------------------------- #
+
+import core as _core
+import engine_sast
+
+
+def _capture_sast_argv(monkeypatch, mode):
+    """Pin a runtime and record every argv the SAST engine would execute."""
+    calls = []
+
+    def fake_run_tool(cmd, **kwargs):
+        calls.append((list(cmd), kwargs))
+
+        class _R:
+            returncode = 0
+            stdout = '{"results": [], "paths": {"scanned": ["a.py"]}}'
+            stderr = ""
+
+        return _R()
+
+    monkeypatch.setattr(engine_sast, "detect_runtime", lambda *a, **kw: {
+        "mode": mode, "prefix": ["semgrep"] if mode != "docker" else ["docker"],
+        "available": True, "detail": "test", "version": "test"})
+    monkeypatch.setattr(_core, "run_tool", fake_run_tool)
+    return calls
+
+
+def test_the_docker_runtime_mounts_the_target_read_only(tmp_path):
+    """A container with write access to the target could modify what it scans.
+
+    PRAETOR reads; it does not touch. The `:ro` suffix is the whole guarantee,
+    and like `--disable-pip` it is one string in one argv list.
+    """
+    import pytest
+    calls = []
+
+    def fake_run_tool(cmd, **kwargs):
+        calls.append(list(cmd))
+
+        class _R:
+            returncode = 0
+            stdout = '{"results": [], "paths": {"scanned": ["a.py"]}}'
+            stderr = ""
+        return _R()
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(engine_sast, "detect_runtime", lambda *a, **kw: {
+            "mode": "docker", "prefix": ["docker"], "available": True,
+            "detail": "test", "version": "test"})
+        mp.setattr(_core, "run_tool", fake_run_tool)
+        (tmp_path / "a.py").write_text("x = 1" + chr(10), encoding="utf-8")
+        engine_sast.run(str(tmp_path), bundled_rules="", use_registry=False,
+                        extra_configs=["p/ci"], enumerated_code_files=1)
+
+    assert calls, "premise: the docker path must have been exercised"
+    mounts = [a for argv in calls for i, a in enumerate(argv)
+              if i and argv[i - 1] == "-v"]
+    assert mounts, f"expected a -v mount in {calls[0]}"
+    for m in mounts:
+        assert m.endswith(":ro"), (
+            f"every docker mount must be read-only; {m!r} is writable. A container "
+            f"that can write to the target is PRAETOR modifying what it scans."
+        )
+
+
+def test_the_runtime_probes_never_receive_the_target_at_all(monkeypatch):
+    """🔴 THE PROBE CALL SITES, which the test below CANNOT see.
+
+    `_capture_sast_argv` monkeypatches `detect_runtime`, so the three probe
+    invocations 36c00af added (docker daemon, `--version`, WSL `command -v`) never
+    run under it. A test named "no SAST invocation reaches a shell" that observes
+    one of four invocations is the coverage-claim defect this repo keeps hitting,
+    so the probes get their own test that does NOT stub them out.
+
+    The strongest available property is structural: `detect_runtime` is not
+    given the target, so no probe argv can contain target-derived text however it
+    is later edited. Asserting the signature makes that load-bearing rather than
+    incidental -- adding a target parameter reddens this.
+    """
+    import inspect
+    params = list(inspect.signature(engine_sast.detect_runtime).parameters)
+    assert "target" not in params and "path" not in params, (
+        f"detect_runtime must never receive the scanned path; got {params}. The "
+        f"probes run a SHELL (`bash -lc`), so target text reaching them is "
+        f"command injection from the tree PRAETOR was asked to read."
+    )
+
+    calls = []
+
+    def fake_run_tool(cmd, **kwargs):
+        calls.append((list(cmd), kwargs))
+
+        class _R:
+            returncode = 1
+            stdout = ""
+            stderr = ""
+        return _R()
+
+    monkeypatch.setattr(_core, "run_tool", fake_run_tool)
+    for prefer in ("native", "wsl", "docker", "auto"):
+        try:
+            engine_sast.detect_runtime(prefer, "Ubuntu")
+        except Exception:
+            pass
+    assert calls, "premise: at least one probe must have been attempted"
+    for argv, kwargs in calls:
+        assert kwargs.get("shell") in (None, False), f"probe used a shell: {argv}"
+
+
+def test_no_sast_invocation_ever_reaches_a_shell(tmp_path, monkeypatch):
+    """`shell=True` would make every argv element target-influenced text.
+
+    The WSL branch runs `bash -lc <string>`, which IS a shell -- so the rule is
+    not "never name a shell" but "never let anything derived from the TARGET into
+    one".
+
+    ⚠️ SCOPE, stated because the name overreaches: this stubs
+    `detect_runtime`, so it observes the semgrep RUN invocation only. The probe
+    call sites are covered by the test above, which does not stub them.
+    """
+    (tmp_path / "a.py").write_text("x = 1" + chr(10), encoding="utf-8")
+    for mode in ("native", "wsl", "docker"):
+        calls = _capture_sast_argv(monkeypatch, mode)
+        engine_sast.run(str(tmp_path), bundled_rules="", use_registry=False,
+                        extra_configs=["p/ci"], enumerated_code_files=1)
+        for argv, kwargs in calls:
+            assert kwargs.get("shell") in (None, False), (
+                f"{mode}: shell=True makes the target's own path a shell word: {argv}"
+            )
+            for i, a in enumerate(argv):
+                if a == "-lc":
+                    shell_word = argv[i + 1]
+                    assert str(tmp_path) not in shell_word, (
+                        f"{mode}: the target reached a shell string: {shell_word!r}"
+                    )
+
+
+def test_the_target_is_passed_as_data_never_as_a_program(tmp_path, monkeypatch):
+    """The target path may appear as an ARGUMENT; it must never be argv[0].
+
+    argv[0] is the thing that gets executed. If a path under the scanned tree
+    ever became argv[0], PRAETOR would be running the code it was asked to read.
+    """
+    (tmp_path / "a.py").write_text("x = 1" + chr(10), encoding="utf-8")
+    target = str(tmp_path)
+    for mode in ("native", "wsl", "docker"):
+        calls = _capture_sast_argv(monkeypatch, mode)
+        engine_sast.run(target, bundled_rules="", use_registry=False,
+                        extra_configs=["p/ci"], enumerated_code_files=1)
+        for argv, _ in calls:
+            assert argv, "empty argv"
+            assert target not in argv[0], (
+                f"{mode}: argv[0]={argv[0]!r} lies inside the scanned tree -- that "
+                f"is executing the target, not reading it"
+            )

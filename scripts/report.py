@@ -21,7 +21,18 @@ from core import (Severity, engine_blind_spots, ENGINE_OK, ENGINE_NOT_APPLICABLE
 # Cline and Roo hook configs), so a vendor-named id was actively misleading.
 # Both ids are emitted from ONE ternary; they were renamed together, because
 # renaming the bare id alone would have orphaned the HIGH-severity variant.
-SCHEMA_VERSION = "2.0"
+# 🔴 BUMPED TO 3.0 (2026-08-13). TWO breaking wire changes had shipped under an
+# unchanged "2.0", so a consumer could not tell the old wire from the new one:
+#   * engine status `unavailable` was SPLIT -- "nothing to scan" became
+#     `not-applicable`, leaving `unavailable` to mean only "could not scan". Its
+#     own commit message said "BREAKING for JSON consumers keying on unavailable"
+#     and the version did not move.
+#   * `meta.secret_file_count` was added, and `meta.file_count` stopped covering
+#     the scope that produces secrets findings -- so a consumer treating
+#     `file_count == 0` as "nothing was scanned" is now wrong.
+# ⇒ A version that does not move across a breaking change is the same defect this
+# repo fixed in its generated Unicode table: one label for two incompatible facts.
+SCHEMA_VERSION = "3.0"
 
 _SEV_ORDER = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO]
 

@@ -156,6 +156,27 @@ section with a stated reason (never dropped silently). Detected secrets are
 The JSON report is a stable schema (`schema_version`) suitable for a CI job, an
 apply-gate, or another agent to consume.
 
+### schema_version 3.0 — engine statuses split, and a second file count
+
+Two breaking changes had shipped under an unchanged `2.0`. If you consume the
+JSON, check `schema_version` before these:
+
+| what | 2.0 | 3.0 |
+|---|---|---|
+| an engine with nothing to scan | `unavailable` | **`not-applicable`** |
+| an engine that could not scan | `unavailable` | `unavailable` (unchanged) |
+| files the secrets engine read | *(not reported)* | **`meta.secret_file_count`** |
+
+- **`unavailable` was two facts under one word.** "No dependency manifests here"
+  and "the SCA backend is missing" are different, and a gate must treat them
+  differently — one is a clean answer, the other is a blind spot. If you key on
+  `unavailable`, you now want `not-applicable` for the benign case.
+- **`meta.file_count` no longer covers every finding.** The secrets engine
+  deliberately walks wider than the others (vendored and build directories are
+  skipped for SAST but scanned for credentials), so a finding can be reported in a
+  file `file_count` never counted. Use `meta.secret_file_count` alongside it.
+  ⚠️ **Treating `file_count == 0` as "nothing was scanned" is now wrong.**
+
 ### schema_version 2.0 — breaking change to two `rule_id`s
 
 If you match on `rule_id`, update these:

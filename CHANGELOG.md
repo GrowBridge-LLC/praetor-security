@@ -12,6 +12,42 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Changed — `schema_version` 3.0
+
+Two breaking wire changes had shipped under an unchanged `2.0`, so a consumer
+could not tell the old wire from the new one:
+
+- **`unavailable` was split.** "Nothing to scan" became `not-applicable`, leaving
+  `unavailable` to mean only "could not scan". Its own commit message said
+  *"BREAKING for JSON consumers keying on `unavailable`"* and the version did not
+  move.
+- **`meta.secret_file_count` was added**, and `meta.file_count` stopped covering
+  the scope that produces secrets findings — so treating `file_count == 0` as
+  "nothing was scanned" is now wrong.
+
+⇒ A version that does not move across a breaking change is one label for two
+incompatible facts — the same defect this repo fixed in its generated Unicode
+table. README documents the migration.
+
+### Added — the never-executes invariant now covers the SAST path
+
+`36c00af` added four subprocess call sites to the SAST engine and no test here.
+The file's own header said *"every new SCA **backend** widens this surface"*,
+which is narrower than the invariant — and that narrowness is why they arrived
+unguarded.
+
+The SAST surface is a different shape from SCA's: SCA's danger was a tool
+*building* the target; SAST's are a **container given write access** to it, and
+**target-derived text reaching a shell**. Both are now asserted, plus that the
+target never becomes `argv[0]`.
+
+⚠️ **One of these tests was written claiming more than it saw.** It stubbed
+`detect_runtime`, so it observed the semgrep *run* invocation and none of the
+three *probe* invocations — while being named as though it covered all of them.
+The probes now have their own test that does not stub them, and the original
+states its scope. Mutation-proven: making the docker mount writable, and giving
+`detect_runtime` a `target` parameter, each redden exactly one named test.
+
 ### 🔴 Security — one byte in the scanned tree disabled an engine, and a floor I widened stopped guarding
 
 Both found by 2× independent adversarial audit of the held bundle. **Both were

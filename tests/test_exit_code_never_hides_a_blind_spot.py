@@ -527,3 +527,34 @@ def test_the_floor_is_not_suppressed_by_an_unselected_engines_walk(tmp_path):
     assert rc == 3, (
         f"nothing SAST can read was enumerated, so this is not a clean result; got {rc}"
     )
+
+
+def test_the_report_carries_both_file_counts(tmp_path):
+    """schema_version 3.0: `file_count` no longer covers every finding.
+
+    The secrets engine walks wider than the others, so a finding can be reported
+    in a file `file_count` never counted. A consumer treating `file_count == 0` as
+    "nothing was scanned" is wrong, and needs `secret_file_count` to know it.
+
+    Behavioural, not a config check: asserting SCHEMA_VERSION == "3.0" would pass
+    happily while the field it describes was deleted.
+    """
+    v = tmp_path / "vendor"
+    v.mkdir()
+    (v / "creds.py").write_text(
+        'API_KEY = "' + "sk-" + "ant-" + "api03-" + ("E" * 80) + '"' + chr(10),
+        encoding="utf-8")
+    out = tmp_path / "out"
+    _run([str(tmp_path), "--engines", "secrets", "--format", "json",
+          "--out", str(out), "--quiet"])
+    data = json.loads((out / "praetor-report.json").read_text(encoding="utf-8"))
+    meta = data["meta"]
+    assert "secret_file_count" in meta, (
+        "schema 3.0 promises meta.secret_file_count; consumers cannot otherwise "
+        "tell that a finding came from a file file_count never counted"
+    )
+    assert meta["secret_file_count"] > meta["file_count"], (
+        f"the secrets walk must be wider here; got {meta['secret_file_count']} "
+        f"vs {meta['file_count']}"
+    )
+    assert data["findings"], "premise: the vendored credential must be found"
