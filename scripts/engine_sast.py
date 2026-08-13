@@ -606,10 +606,20 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
         if ignore_files:
             rels = ", ".join(os.path.relpath(p, target) for p in ignore_files[:5])
             because = f" the target carries an ignore file semgrep honours ({rels});"
+        # Carry the fallback note into THIS path too. Found while testing the live
+        # CI check: when semgrep rejects the flag we retry without it, semgrep then
+        # honours the tree's ignore file, and the scope guard fires and returns
+        # HERE -- before the success path that appends the note. So the operator
+        # saw "scope disagreement" and never learned their semgrep was too old,
+        # which is the actionable half of the diagnosis.
+        stale = ("" if semgrepignore_off else
+                 f" NOTE this semgrep rejected {_SEMGREPIGNORE_OFF}, so the target's own"
+                 " .semgrepignore was honoured -- upgrade semgrep and re-run before"
+                 " treating this as an attack.")
         return {"findings": [], "status": "error",
                 "detail": (f"scope disagreement: PRAETOR enumerated {enumerated_code_files} "
                            f"code file(s) here and semgrep opened 0.{because} a zero from an "
-                           "engine that opened nothing is not a clean result"),
+                           f"engine that opened nothing is not a clean result.{stale}"),
                 "runtime": mode}
 
     findings = []

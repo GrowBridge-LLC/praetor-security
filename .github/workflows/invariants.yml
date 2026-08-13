@@ -15,6 +15,46 @@ on:
   workflow_dispatch:
 
 jobs:
+  # A SECOND JOB, because the one below deliberately installs no tools -- the
+  # invariant tests must not need the tools they guard.
+  #
+  # 🔴 WHY THIS EXISTS. engine_sast pins `--x-ignore-semgrepignore-files`, which is
+  # what stops a `.semgrepignore` committed to a scanned repo from switching the
+  # whole SAST engine off. That flag is `--x-` prefixed: explicitly experimental.
+  # An independent audit found NOTHING anywhere ran a real semgrep against it --
+  # every SAST test monkeypatches `core.run_tool` -- so the engine's central scope
+  # guarantee was pinned to an unstable flag with zero automated detection, and the
+  # first sign of a rename would have been users' scans quietly changing behaviour.
+  semgrep-live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install semgrep
+        run: python -m pip install --upgrade pip semgrep
+      - name: Live scope-guarantee check against a real semgrep
+        # 🔴 BOTH the exit code AND the output marker. The exit path could not be
+        # verified on the machine that wrote this script -- that box's WSL
+        # invocation loses exit codes entirely (a control `sys.exit(7)` reported
+        # 0), so "it exits non-zero on failure" was UNPROVEN there. Checking the
+        # marker too means a broken exit path cannot silently pass this job.
+        # Belt and braces costs one grep; this repo has shipped three checks that
+        # reported without gating.
+        run: |
+          set -o pipefail
+          python tests/semgrep_live_check.py 2>&1 | tee live.out
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::live semgrep check exited $rc"
+            exit 1
+          fi
+          if grep -q 'LIVE CHECK FAILURES' live.out; then
+            echo "::error::live semgrep check reported failures but exited 0 -- the check is not gating"
+            exit 1
+          fi
+
   invariants:
     runs-on: ubuntu-latest
     steps:

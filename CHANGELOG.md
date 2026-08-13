@@ -12,6 +12,48 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Added — CI now runs a real semgrep against the scope guarantee
+
+`engine_sast` pins `--x-ignore-semgrepignore-files`, which is what stops a
+`.semgrepignore` committed to a scanned repository from switching the whole SAST
+engine off. That flag is `--x-` prefixed — **explicitly experimental**. Nothing
+anywhere ran a real semgrep against it: every SAST test monkeypatches
+`core.run_tool`, and the main CI job deliberately installs no tools. So the
+engine's central scope guarantee was pinned to an unstable flag with **zero
+automated detection**, and the first sign of a rename would have been users' scans
+quietly changing behaviour.
+
+`tests/semgrep_live_check.py` + a `semgrep-live` CI job now assert, against a real
+semgrep: the planted vulnerability **is** found (the arming control, without which
+every "0 findings" below proves nothing); a `.semgrepignore` in the target does
+**not** silence SAST; and the flag was **accepted** rather than silently fallen
+back on.
+
+⚠️ **Deliberately not a pytest module.** `precommit.sh` fails on any skip, so an
+`importorskip` guard would either break the local gate on every machine without
+semgrep or teach the gate to tolerate skips.
+
+Two things this found in its own making, both worth stating:
+
+- **Its third check was vacuous when written** — it read `engine_meta` at the top
+  level, where the key is `meta.engines`, so it got `""` and passed. Caught only
+  because a mutation that should have reddened it came back green. It now reads
+  the right key and **fails when the field is unreadable**: "I could not find the
+  thing I was checking" is not evidence the thing is fine.
+- **The CI step checks the exit code AND the output marker.** The exit path could
+  not be verified on the machine that wrote it — that box's WSL invocation loses
+  exit codes entirely (a control `sys.exit(7)` reported `0`), so "it exits
+  non-zero on failure" was unproven there. Checking the marker too means a broken
+  exit path cannot silently pass.
+
+### Fixed — the "upgrade your semgrep" note never reached the scope-disagreement path
+
+When semgrep rejects the flag, the engine retries without it; semgrep then honours
+the tree's ignore file, the scope guard fires and returns **early** — before the
+success path that appends the fallback note. So the operator saw *"scope
+disagreement"* and never learned their semgrep was too old, which is the
+actionable half of the diagnosis.
+
 ### Changed — `schema_version` 3.0
 
 Two breaking wire changes had shipped under an unchanged `2.0`, so a consumer
