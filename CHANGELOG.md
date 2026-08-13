@@ -12,6 +12,26 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Fixed — an experimental flag could break the SAST engine on every scan
+
+`--x-ignore-semgrepignore-files` is `--x-` prefixed and therefore not a stable
+contract. Measured: a semgrep that does not know it exits 2 with `unknown option`
+and no stdout, which the engine reported as `error` — so **every SAST scan
+returned exit 3 under `--fail-on`** for anyone on an older semgrep. A hard
+availability break caused entirely by our own hardening flag, and exactly the
+shape that earns a scanner a `|| true` in someone's CI.
+
+That rejection is now detected specifically and the scan retried **once** without
+the flag, changing nothing else on the command line. The run then proceeds with
+semgrep honouring the target's `.semgrepignore` again — **degraded, not blind**,
+because the scope guard compares two independent counts and does not depend on
+this flag. The degraded regime is **named in the report**, so a reader can tell
+which one produced a result rather than having to infer it.
+
+The retry is deliberately narrow: an unrelated semgrep failure is **not** retried,
+since that would double every broken scan's runtime and could mask the real error
+behind a second one.
+
 ### 🔴 Security — the scope guard shipped hours earlier was an enumeration, not a guarantee
 
 Found by independent adversarial audit, re-derived before fixing. **Both findings

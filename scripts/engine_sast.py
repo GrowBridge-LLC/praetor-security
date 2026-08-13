@@ -518,12 +518,42 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
               ["semgrep/semgrep", "semgrep"] + cfg_args + common + ["/src"]
         cwd = None
 
-    try:
-        r = core.run_tool(cmd, timeout=timeout, cwd=cwd)
-    except subprocess.TimeoutExpired:
-        return {"findings": [], "status": "error", "detail": "semgrep timed out", "runtime": mode}
-    except Exception as e:  # noqa
-        return {"findings": [], "status": "error", "detail": f"semgrep failed to launch: {e}", "runtime": mode}
+    def _invoke(command):
+        """Run semgrep; returns (completed, error_result). Exactly one is None."""
+        try:
+            return core.run_tool(command, timeout=timeout, cwd=cwd), None
+        except subprocess.TimeoutExpired:
+            return None, {"findings": [], "status": "error",
+                          "detail": "semgrep timed out", "runtime": mode}
+        except Exception as e:  # noqa
+            return None, {"findings": [], "status": "error",
+                          "detail": f"semgrep failed to launch: {e}", "runtime": mode}
+
+    r, failed = _invoke(cmd)
+    if failed:
+        return failed
+
+    # 🔴 AN EXPERIMENTAL FLAG MUST NOT BE ABLE TO BREAK THE ENGINE ON EVERY SCAN.
+    # `_SEMGREPIGNORE_OFF` is `--x-` prefixed and therefore not a stable contract.
+    # Measured: a semgrep that does not know it exits 2 with `unknown option`, no
+    # stdout -- which this function then reports as `error`, so **every SAST scan
+    # returns exit 3 under --fail-on**. That is a hard availability break for
+    # anyone on an older semgrep, caused entirely by our own hardening flag, and
+    # it is exactly the shape that earns a tool a `|| true` in someone's CI.
+    #
+    # So: detect that specific rejection and retry once WITHOUT the flag. We then
+    # run with semgrep honouring `.semgrepignore` again -- degraded, not blind,
+    # because the scope guard below compares two independent counts and does not
+    # depend on this flag. The degradation is recorded in `detail` so it is
+    # visible in the report rather than silent.
+    semgrepignore_off = True
+    err_text = (r.stderr or "")
+    if r.returncode not in (0, 1) and _SEMGREPIGNORE_OFF in err_text and "unknown option" in err_text:
+        retry_cmd = [a for a in cmd if a != _SEMGREPIGNORE_OFF]
+        r, failed = _invoke(retry_cmd)
+        if failed:
+            return failed
+        semgrepignore_off = False
 
     # semgrep exit codes: 0 = ran (findings or not), 1 = findings, 2+ = error.
     # `r.stdout or ""` is not defensive noise: a decode fault on subprocess's
@@ -632,4 +662,12 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
         ))
     n_errors = len(data.get("errors", []))
     detail = f"{rt['detail']}; ran configs={configs}; scan errors={n_errors}"
+    if not semgrepignore_off:
+        # Visible, not silent: this semgrep did not accept the flag, so the
+        # scanned tree's own `.semgrepignore` was honoured on this run. The scope
+        # guard above still applies; a reader should know which regime produced
+        # this result.
+        detail += (f"; NOTE this semgrep rejected {_SEMGREPIGNORE_OFF}, so the target's "
+                   "own .semgrepignore was honoured -- scope guard active, but upgrade "
+                   "semgrep for full protection")
     return {"findings": findings, "status": "ok", "detail": detail, "runtime": mode}

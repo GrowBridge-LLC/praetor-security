@@ -512,3 +512,111 @@ def test_count_code_files_counts_code_and_not_prose():
     files = [F("a.py"), F("b.ts"), F("c.md"), F("d.txt"), F("e.go"), F("LICENSE")]
     assert engine_sast.count_code_files(files) == 3
     assert engine_sast.count_code_files([]) == 0
+
+
+# --------------------------------------------------------------------------- #
+# AN EXPERIMENTAL FLAG MUST NOT BREAK THE ENGINE ON EVERY SCAN
+#
+# `_SEMGREPIGNORE_OFF` is `--x-` prefixed and not a stable contract. Measured: a
+# semgrep that does not know it exits 2 with `unknown option` and no stdout, which
+# `run()` reports as `error` -- so EVERY SAST scan returned exit 3 under
+# --fail-on. A hard availability break caused by our own hardening flag, and
+# exactly the shape that earns a tool a `|| true` in someone's CI.
+# --------------------------------------------------------------------------- #
+
+def _semgrep_rejecting_then_accepting(monkeypatch, payload, seen=None):
+    """First call rejects the flag like an older semgrep; second succeeds."""
+    monkeypatch.setattr(engine_sast, "detect_runtime", lambda *a, **kw: {
+        "mode": "native", "prefix": ["semgrep"], "available": True,
+        "detail": "test", "version": "test"})
+    calls = {"n": 0}
+
+    def fake_run_tool(cmd, **kw):
+        calls["n"] += 1
+        if seen is not None:
+            seen.append(list(cmd))
+        if calls["n"] == 1:
+            return _FakeCompleted(
+                "", returncode=2,
+                stderr=f"semgrep scan: unknown option '{engine_sast._SEMGREPIGNORE_OFF}'")
+        return _FakeCompleted(json.dumps(payload))
+
+    monkeypatch.setattr(core, "run_tool", fake_run_tool)
+    return calls
+
+
+def test_a_semgrep_that_rejects_the_flag_does_not_break_every_scan(tmp_path, monkeypatch):
+    """🔴 THE HEADLINE. Before the retry this was `error` -> exit 3 on every scan."""
+    calls = _semgrep_rejecting_then_accepting(
+        monkeypatch, {"results": [], "paths": {"scanned": ["a.py"]}})
+    res = engine_sast.run(str(tmp_path), bundled_rules="", use_registry=False,
+                          extra_configs=["p/ci"], enumerated_code_files=1)
+    assert calls["n"] == 2, "it must retry exactly once, without the flag"
+    assert res["status"] == "ok", (
+        f"an older semgrep must degrade, not break the engine outright; got {res}"
+    )
+
+
+def test_the_retry_drops_only_the_offending_flag(tmp_path, monkeypatch):
+    """The second attempt must be the same scan, minus one argument."""
+    seen = []
+    _semgrep_rejecting_then_accepting(
+        monkeypatch, {"results": [], "paths": {"scanned": ["a.py"]}}, seen)
+    engine_sast.run(str(tmp_path), bundled_rules="", use_registry=False,
+                    extra_configs=["p/ci"], enumerated_code_files=1)
+    first, second = seen
+    assert engine_sast._SEMGREPIGNORE_OFF in first
+    assert engine_sast._SEMGREPIGNORE_OFF not in second
+    assert [a for a in first if a != engine_sast._SEMGREPIGNORE_OFF] == second, (
+        "the retry must change nothing except dropping the rejected flag"
+    )
+
+
+def test_the_degraded_regime_is_visible_in_the_report(tmp_path, monkeypatch):
+    """Silent degradation is the thing this repo keeps being bitten by.
+
+    A reader must be able to tell WHICH regime produced a result.
+    """
+    _semgrep_rejecting_then_accepting(
+        monkeypatch, {"results": [], "paths": {"scanned": ["a.py"]}})
+    res = engine_sast.run(str(tmp_path), bundled_rules="", use_registry=False,
+                          extra_configs=["p/ci"], enumerated_code_files=1)
+    assert ".semgrepignore was honoured" in res["detail"], (
+        f"the fallback must say so in the report; got {res['detail']!r}"
+    )
+
+
+def test_the_scope_guard_still_applies_after_the_fallback(tmp_path, monkeypatch):
+    """DEGRADED IS NOT BLIND.
+
+    Dropping the flag means the tree's ignore file is honoured again -- which is
+    precisely when layer 2 has to carry the weight. It does not depend on the flag.
+    """
+    _semgrep_rejecting_then_accepting(monkeypatch, {"results": [], "paths": {"scanned": []}})
+    res = engine_sast.run(str(tmp_path), bundled_rules="", use_registry=False,
+                          extra_configs=["p/ci"], enumerated_code_files=4)
+    assert res["status"] == "error", (
+        f"after falling back, a scope disagreement must still block; got {res}"
+    )
+
+
+def test_an_unrelated_semgrep_error_is_not_retried(tmp_path, monkeypatch):
+    """KEEP DIRECTION. The retry is for ONE specific rejection, not for failures.
+
+    Retrying a genuine failure would double every broken scan's runtime and could
+    mask the real error behind a second one.
+    """
+    monkeypatch.setattr(engine_sast, "detect_runtime", lambda *a, **kw: {
+        "mode": "native", "prefix": ["semgrep"], "available": True,
+        "detail": "test", "version": "test"})
+    calls = {"n": 0}
+
+    def boom(cmd, **kw):
+        calls["n"] += 1
+        return _FakeCompleted("", returncode=2, stderr="semgrep: config file not found")
+
+    monkeypatch.setattr(core, "run_tool", boom)
+    res = engine_sast.run(str(tmp_path), bundled_rules="", use_registry=False,
+                          extra_configs=["p/ci"], enumerated_code_files=1)
+    assert calls["n"] == 1, "an unrelated failure must not be retried"
+    assert res["status"] == "error"
