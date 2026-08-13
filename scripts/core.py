@@ -595,30 +595,33 @@ def read_text(path: str, max_bytes: int = DEFAULT_MAX_BYTES) -> str:
             data = fh.read(max_bytes + 1)
     except OSError:
         return ""
-    try:
-        return data.decode("utf-8", errors="surrogatepass")
-    except UnicodeDecodeError:
-        # 🔴 ONE BYTE IN THE SCANNED TREE USED TO KILL A WHOLE ENGINE.
-        # `surrogatepass` tolerates lone SURROGATES but still raises on an invalid
-        # UTF-8 START BYTE, and no caller guarded per-file -- so the exception
-        # unwound the entire engine. `is_probably_binary` does not save us: it
-        # sniffs only the first 4096 bytes, so a file that is clean ASCII up front
-        # and has one high byte later passes the filter and then raises.
-        #
-        # Measured 2026-08-13, tree = a live-shaped key in app.py plus a
-        # vendored file of 5000 ASCII bytes then a single 0xa4:
-        #     before: [error] secrets 'utf-8' codec can't decode byte 0xa4
-        #             0 active findings; --fail-on HIGH --allow-degraded -> EXIT 0
-        #     after : [ran]   secrets 3 raw, 1 active HIGH, exit 1
-        # The root-level credential was erased by a byte in a directory the
-        # operator never asked to scan. Found on a real repo too: a file shipped
-        # by `joblib` to TEST encoding handling is deliberately non-UTF-8, so any
-        # target with joblib in a venv lost its entire secrets scan.
-        #
-        # `surrogateescape` never raises and is byte-for-byte reversible, so the
-        # smuggled-code-point guarantee above still holds for the AI-security
-        # engine. Decodable files are untouched: this path runs only where the
-        # old one crashed. ⇒ Same class as the `text=True` subprocess defect this
-        # repo already recorded -- a different door into "the scanned tree can
-        # disable an engine".
-        return data.decode("utf-8", errors="surrogateescape")
+    # 🔴 THIS RAISES ON AN INVALID START BYTE, AND THAT IS THE SAFE DIRECTION.
+    #
+    # A `surrogateescape` fallback was added 2026-08-13 and REVERTED the same day.
+    # It stopped the crash, and in doing so converted a LOUD failure into a SILENT
+    # MISS. Measured by an independent auditor, aisec engine, identical trees but
+    # for one byte inside the word "previous":
+    #
+    #   payload intact            -> exit 1, aisec ok,      1 finding
+    #   payload + 1 invalid byte:
+    #       with the fallback     -> exit 0, aisec **ok**,  0 findings
+    #       without it (here)     -> exit 3, aisec [error] "codec can't decode"
+    #
+    # The bad byte becomes U+DCxx, so a pattern spanning it no longer matches --
+    # while the text stays perfectly legible to a human AND to the agent that
+    # reads the file, which IS the threat model. The operator was told the engine
+    # could not read the file; the fallback told them it looked and found nothing.
+    # ⇒ **Reversibility of the STRING is not preservation of DETECTION**, and that
+    # was the false step in the comment that justified the fallback.
+    #
+    # It also moved a contained engine error into an uncaught UnicodeEncodeError
+    # in the report writer, which left a 0-byte .txt and no .json at all.
+    #
+    # ⚠️ COST, ACCEPTED DELIBERATELY: a target carrying any non-UTF-8 file -- e.g.
+    # any venv with `joblib`, which ships one to TEST encoding handling -- gets
+    # `[error]` and exit 3 rather than a scan. That is a scanner saying "I could
+    # not measure this", which is correct and actionable. The proper fix is to
+    # keep a fallback AND record each decode failure as a per-file fact the report
+    # surfaces, so the engine never reports `ok` about a file it could not read.
+    # Designed, not built: it needs its own audit, not a fourth same-night patch.
+    return data.decode("utf-8", errors="surrogatepass")

@@ -745,37 +745,60 @@ def _tree_with_an_undecodable_vendored_file(tmp_path):
     return str(tmp_path)
 
 
-def test_one_undecodable_byte_cannot_erase_a_real_finding(tmp_path):
-    """🔴 THE HEADLINE. The credential is at the ROOT; the bad byte is vendored."""
-    rc = praetor.main([_tree_with_an_undecodable_vendored_file(tmp_path), "--engines",
-                       "secrets", "--fail-on", "HIGH", "--format", "json", "--quiet"])
-    assert rc == 1, (
-        f"a byte in vendor/ must not erase a root-level credential; got exit {rc}"
-    )
+def test_an_undecodable_byte_fails_LOUDLY_and_never_silently(tmp_path):
+    """🔴 THE ASSERTION THAT REPLACED A WRONG ONE.
 
+    This file first asserted the opposite: that an undecodable byte must not stop
+    the scan finding the credential (exit 1), via a `surrogateescape` fallback.
+    An independent auditor showed that fallback converted a LOUD failure into a
+    SILENT MISS -- the bad byte becomes U+DCxx, a pattern spanning it stops
+    matching, and the engine reports `ok` with 0 findings and exit 0, while the
+    text stays legible to a human and to the agent that reads it.
 
-def test_the_undecodable_byte_does_not_even_degrade_the_engine(tmp_path):
-    """`--allow-degraded` is where this was silent rather than loud.
-
-    Under it the run returned 0 with the credential gone -- a documented flag
-    turning an engine crash into a clean bill of health.
+    ⇒ For a scanner, "I could not read this file" (exit 3) is a CORRECT answer.
+    "I read it and found nothing" is not. The only thing that must never happen
+    is a silent clean, so that is what this pins -- `!= 0`, not `== 1`, because
+    the value that matters is the absence of a false all-clear.
     """
     rc = praetor.main([_tree_with_an_undecodable_vendored_file(tmp_path), "--engines",
-                       "secrets", "--fail-on", "HIGH", "--allow-degraded",
-                       "--format", "json", "--quiet"])
-    assert rc == 1, (
-        f"--allow-degraded must not convert a decode crash into a clean scan; got {rc}"
+                       "secrets", "--fail-on", "HIGH", "--format", "json", "--quiet"])
+    assert rc != 0, (
+        "a file PRAETOR could not decode must never yield a clean bill of health; "
+        f"got exit {rc}, which is indistinguishable from a fully-measured clean scan"
     )
 
 
-def test_read_text_never_raises_on_an_invalid_start_byte(tmp_path):
-    """Root cause, asserted directly so the fix cannot be narrowed to one engine."""
-    p = tmp_path / "x.bin"
-    p.write_bytes(b"hello " + b"\xa4\xff\xfe" + b" world")
-    text = core.read_text(str(p))
-    assert "hello" in text and "world" in text, (
-        "surrounding text must survive an undecodable byte"
+def test_the_engine_status_says_it_could_not_read_rather_than_ok(tmp_path):
+    """The exit code is the gate; the STATUS is what a human reads.
+
+    Reporting `ok` about a file the engine could not decode is the same lie one
+    layer up, and would survive any exit-code-only assertion.
+    """
+    out = tmp_path / "r"
+    praetor.main([_tree_with_an_undecodable_vendored_file(tmp_path), "--engines",
+                  "secrets", "--format", "json", "--out", str(out), "--quiet"])
+    data = json.loads((out / "praetor-report.json").read_text(encoding="utf-8"))
+    status = data["meta"]["engines"]["secrets"]["status"]
+    assert status != "ok", (
+        f"the engine could not read a file in this tree; reporting {status!r} "
+        f"claims work it did not do"
     )
+
+
+def test_the_report_still_writes_both_artifacts(tmp_path):
+    """KEEP DIRECTION, and a regression the fallback caused.
+
+    With the fallback, lone surrogates reached the report writer and raised an
+    uncaught UnicodeEncodeError -- leaving a 0-byte .txt and NO .json, i.e. a
+    pipeline re-reading last run's stale JSON. A degraded scan must still produce
+    a complete, honest report.
+    """
+    out = tmp_path / "r"
+    praetor.main([_tree_with_an_undecodable_vendored_file(tmp_path), "--engines",
+                  "secrets", "--format", "json", "--out", str(out), "--quiet"])
+    txt, js = out / "praetor-report.txt", out / "praetor-report.json"
+    assert js.exists() and js.stat().st_size > 0, "the JSON report must exist"
+    assert txt.exists() and txt.stat().st_size > 0, "the text report must not be truncated"
 
 
 def test_decodable_files_are_untouched_by_the_fallback(tmp_path):

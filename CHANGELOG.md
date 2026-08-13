@@ -12,6 +12,51 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### 🔴 Reverted — the decode fallback traded a loud failure for a silent miss
+
+Added and reverted the same day, on a 2× independent audit. **The fallback made
+PRAETOR worse at the only thing that matters.**
+
+`read_text`'s `surrogateescape` fallback stopped the crash — and in doing so
+turned an undecodable file into one the engine scanned *successfully*. The bad
+byte becomes `U+DCxx`, so a pattern spanning it stops matching, and the engine
+reports **`ok`** with **0 findings** and **exit 0**. Measured on the aisec engine,
+identical trees but for one byte inside the word `previous`:
+
+```
+payload intact                    -> exit 1, aisec ok,      1 finding
+payload + one invalid byte:
+    with the fallback             -> exit 0, aisec **ok**,  0 findings
+    without it (reverted, now)    -> exit 3, aisec [error] "codec can't decode"
+```
+
+The text stays perfectly legible to a human **and to the agent that reads the
+file**, which is aisec's whole threat model. The operator went from being told
+*"the engine could not read this"* to being told *"it looked and found nothing."*
+
+⇒ **Reversibility of the string is not preservation of detection.** That was the
+false step in the comment justifying the fallback, and it is the seventh safety
+claim in this range falsified by an independent reader.
+
+It also **moved the crash rather than removing it**: lone surrogates reached the
+report writer as an uncaught `UnicodeEncodeError`, leaving a **0-byte `.txt` and
+no `.json` at all** — so a pipeline pointed at `--out` silently re-read the
+previous run's stale report.
+
+**Cost, accepted deliberately:** a target carrying any non-UTF-8 file — e.g. any
+venv with `joblib`, which ships one to *test* encoding handling — now gets
+`[error]` and exit 3 rather than a scan. **A scanner saying "I could not measure
+this" is a correct, actionable answer; "I found nothing" is not.**
+
+The proper fix keeps a fallback **and** records each decode failure as a per-file
+fact the report surfaces, so the engine never reports `ok` about a file it could
+not read. Designed, not built — it needs its own audit rather than a fourth
+same-day patch on the same code.
+
+Tests now pin the fail-safe direction: an undecodable file must never yield exit
+0, the engine status must not be `ok`, and both report artifacts must still be
+written. Reinstating the fallback reddens the status test.
+
 ### Added — CI now runs a real semgrep against the scope guarantee
 
 `engine_sast` pins `--x-ignore-semgrepignore-files`, which is what stops a
