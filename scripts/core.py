@@ -162,6 +162,41 @@ def engine_blind_spots(engine_meta: dict) -> list:
     return blind
 
 
+#: Statuses under which an engine actually LOOKED at the target.
+#: 🔴 Strictly narrower than GATE_TRUSTED_STATUSES, and the gap is the point.
+#: `disabled` and `not-applicable` are trustworthy silences -- but they are
+#: silences. An engine can be trusted without having measured anything.
+ENGINE_MEASURED_STATUSES = frozenset({ENGINE_OK})
+
+
+def engines_that_measured(engine_meta: dict) -> list:
+    """Engines that actually examined the target, sorted by name.
+
+    🔴 GATE_TRUSTED_STATUSES ANSWERS A PER-ENGINE QUESTION AND THE GATE ALSO
+    NEEDS A WHOLE-SCAN ONE.
+
+    "Can I trust this engine's silence?" is answered correctly for each engine
+    on its own. "Did anything actually look at this target?" has no per-engine
+    answer at all, and nothing was asking it -- so a scan in which EVERY engine
+    was individually trustworthy and NONE of them ran was a clean bill of health.
+
+    Reached by `--engines ""`, which parses to the empty list: all four engines
+    become `disabled`, every one of them gate-trusted, and a tree containing a
+    live credential exits 0 under `--fail-on INFO`. A CI line reading
+    `--engines "$ENGINES"` with the variable unset is a total silent false clean.
+    Measured; an *invalid* engine name was correctly rejected with exit 2, so the
+    typo was caught and the empty string was not.
+
+    ⚠️ Keyed on the whole-scan property, not on the empty-string spelling that
+    demonstrated it. Any future route to "every engine trusted, none measured"
+    fails the same way. The narrower fix -- rejecting `""` at parse time -- is
+    also applied, because a clear early error beats a correct late one, but it is
+    the diagnostic and this is the guarantee.
+    """
+    return [name for name in sorted(engine_meta or {})
+            if (engine_meta[name] or {}).get("status", "") in ENGINE_MEASURED_STATUSES]
+
+
 # --------------------------------------------------------------------------- #
 # Finding
 # --------------------------------------------------------------------------- #

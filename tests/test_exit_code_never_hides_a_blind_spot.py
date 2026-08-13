@@ -38,7 +38,9 @@ import json
 import pytest
 
 import core
+import engine_aisec
 import engine_sast
+import engine_sca
 import engine_secrets
 import praetor
 import report
@@ -268,3 +270,122 @@ def test_unavailable_no_longer_renders_as_skipped():
         "applies to a step that was legitimately unnecessary"
     )
     assert "[BLIND]" in text
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 EVERY ENGINE TRUSTED, NONE OF THEM MEASURED (found by independent audit,
+# re-derived here before fixing)
+#
+# GATE_TRUSTED_STATUSES answers a PER-ENGINE question -- "can I trust this
+# engine's silence?" -- and answers it correctly. Nothing asked the WHOLE-SCAN
+# question: "did anything actually look?" So a scan in which every engine was
+# individually trustworthy and none of them ran was a clean bill of health.
+#
+# Measured before the fix: `--engines "" --fail-on INFO` on a tree containing a
+# live credential parsed to [], left all four engines `disabled`, and exited 0.
+# An INVALID engine name was correctly rejected with exit 2 -- so the typo was
+# caught and the empty string was not, which is how it would reach CI as
+# `--engines "$ENGINES"` with the variable unset.
+# --------------------------------------------------------------------------- #
+
+def test_an_empty_engine_selection_is_rejected_rather_than_scanned(tmp_path):
+    """`--engines ""` is a usage error, not a scan that found nothing."""
+    for spelling in ("", "   ", ",", " , ,"):
+        rc = _run([_clean_target(tmp_path), "--engines", spelling, "--fail-on", "INFO",
+                   "--format", "json", "--quiet"])
+        assert rc == 2, (
+            f"--engines {spelling!r} selected no engines and returned {rc}. "
+            f"An empty selection scans nothing; 0 would be a false clean."
+        )
+
+
+def test_a_scan_of_only_trusted_silences_cannot_pass_the_gate(tmp_path):
+    """🔴 The guarantee, keyed on the property rather than the spelling.
+
+    `--engines sca` against a target with no dependency manifests leaves sca
+    `not-applicable` and the other three `disabled` -- four individually trusted
+    statuses, zero engines that looked at anything. This route does not involve
+    the empty string at all, which is the point: fixing only `--engines ""`
+    would close the instance the audit demonstrated and leave the class open.
+    """
+    rc = _run([_clean_target(tmp_path), "--engines", "sca", "--fail-on", "INFO",
+               "--format", "json", "--quiet"])
+    assert rc == 3, (
+        f"no engine measured this target and the gate returned {rc}. Every status "
+        f"was trusted; none of them was a measurement."
+    )
+
+
+def test_allow_degraded_is_still_the_only_way_past_the_floor(tmp_path):
+    """The operator can knowingly accept it -- but must say so."""
+    rc = _run([_clean_target(tmp_path), "--engines", "sca", "--fail-on", "INFO",
+               "--allow-degraded", "--format", "json", "--quiet"])
+    assert rc == 0, f"--allow-degraded must opt out of the floor; got {rc}"
+
+
+def test_measuring_is_strictly_narrower_than_being_trusted():
+    """The set relationship IS the defect, so assert it directly.
+
+    If these two sets ever become equal, the whole-scan floor silently stops
+    meaning anything -- it would fire only when the degraded path already had.
+    """
+    assert core.ENGINE_MEASURED_STATUSES < core.GATE_TRUSTED_STATUSES, (
+        "measured statuses must be a PROPER subset of trusted ones; an engine "
+        "can be trustworthy without having measured anything"
+    )
+    all_silent = {name: {"status": core.ENGINE_DISABLED, "detail": "not selected"}
+                  for name in ("sast", "secrets", "sca", "aisec")}
+    assert core.engine_blind_spots(all_silent) == [], "premise: every status is trusted"
+    assert core.engines_that_measured(all_silent) == [], (
+        "four trusted silences are not a measured scan"
+    )
+
+
+def test_the_degraded_path_keeps_its_own_diagnosis(tmp_path, monkeypatch, capsys):
+    """Ordering matters: a broken engine is a different fault from an empty scan.
+
+    Both exit 3, so the exit code alone cannot distinguish them -- the operator
+    needs the message that names which one happened.
+    """
+    _break_secrets(monkeypatch)
+    rc = _run([_clean_target(tmp_path), "--fail-on", "INFO", "--format", "json", "--quiet"])
+    err = capsys.readouterr().err
+    assert rc == 3
+    assert "SCAN DEGRADED" in err, "a broken engine must still be diagnosed as degraded"
+    assert "NOTHING WAS MEASURED" not in err, (
+        "the whole-scan floor must not swallow the degraded path's diagnosis; "
+        "other engines did measure here"
+    )
+
+
+def test_when_both_faults_hold_the_more_specific_diagnosis_wins(tmp_path, monkeypatch, capsys):
+    """🔴 ORDERING. Only testable when BOTH conditions are true at once.
+
+    The test above breaks a single engine, so the others still measure and the
+    whole-scan floor never competes -- it therefore proves nothing about order,
+    and a mutation swapping the two blocks left it green. This is the case that
+    actually distinguishes them: every engine dead means every engine blind AND
+    nothing measured, so both blocks would fire and only the first one speaks.
+
+    `SCAN DEGRADED` must win, because it names WHICH engines failed and why.
+    `NOTHING WAS MEASURED` is true here too and strictly less actionable.
+    """
+    def boom(*a, **kw):
+        raise RuntimeError("simulated engine failure")
+
+    for mod in (engine_secrets, engine_sast, engine_sca, engine_aisec):
+        monkeypatch.setattr(mod, "scan", boom, raising=False)
+        monkeypatch.setattr(mod, "run", boom, raising=False)
+
+    rc = _run([_clean_target(tmp_path), "--fail-on", "INFO", "--format", "json", "--quiet"])
+    err = capsys.readouterr().err
+
+    assert rc == 3, f"every engine failed and the gate returned {rc}"
+    assert "SCAN DEGRADED" in err, (
+        "with every engine dead, both blocks are true -- the degraded path must "
+        "answer, because it names the engines and the floor does not"
+    )
+    assert "NOTHING WAS MEASURED" not in err, (
+        "the floor answered a question the degraded path answers better; the two "
+        "blocks are in the wrong order"
+    )

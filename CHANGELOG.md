@@ -12,6 +12,38 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### 🔴 Security — every engine trusted, none of them measured
+
+Found by independent adversarial audit and re-derived before fixing.
+
+- **A scan in which nothing ran was a clean bill of health.** The gate asked a
+  per-engine question — *"can I trust this engine's silence?"* — and answered it
+  correctly. Nothing asked the whole-scan question: *"did anything actually
+  look?"* `disabled` and `not-applicable` are trustworthy silences, so a scan
+  made entirely of trustworthy silences passed.
+
+  Reached by `--engines ""`, which parsed to the empty list, left all four
+  engines `disabled`, and returned **exit 0** on a tree containing a live
+  credential under `--fail-on INFO`. An *invalid* engine name was correctly
+  rejected with exit 2 — so a typo was caught and the empty string was not, which
+  is exactly how it arrives in CI as `--engines "$ENGINES"` with the variable
+  unset.
+
+  Two fixes, deliberately. An empty selection is now rejected at parse time
+  (**exit 2**) — that is the diagnostic. The guarantee is a whole-scan floor:
+  with `--fail-on`, a scan where **no engine measured** exits **3**, keyed on
+  that property rather than on the empty-string spelling that demonstrated it.
+  `--engines sca` against a target with no manifests reaches the same state by a
+  different route and now fails the same way. `--allow-degraded` still opts out.
+
+  ⚠️ `ENGINE_MEASURED_STATUSES` is a *proper* subset of `GATE_TRUSTED_STATUSES`,
+  and a test asserts the strict relationship: if the two ever become equal the
+  floor silently stops meaning anything, firing only where the degraded path
+  already had.
+
+  The degraded path keeps its own diagnosis when both faults hold at once —
+  `SCAN DEGRADED` names which engines failed; the floor does not.
+
 ### 🔴 CI had been failing on every push, and the obvious fix corrupted a table
 
 - **The invariants workflow was red on every push for two days.** It pinned

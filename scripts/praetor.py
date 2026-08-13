@@ -374,6 +374,19 @@ def main(argv=None):
         if e not in ALL_ENGINES:
             sys.stderr.write(f"praetor: unknown engine '{e}' (valid: {', '.join(ALL_ENGINES)})\n")
             return 2
+    # An empty selection is not a scan. `--engines ""` used to parse to [], leave
+    # every engine `disabled` -- a gate-TRUSTED status -- and exit 0 on a tree
+    # containing a live credential. A typo was rejected here; the empty string
+    # sailed through, so `--engines "$ENGINES"` with the variable unset was a
+    # silent false clean. This is the diagnostic; the guarantee is the
+    # measured-engine floor in the exit-code block below.
+    if not engines:
+        sys.stderr.write(
+            f"praetor: --engines selected nothing (valid: {', '.join(ALL_ENGINES)}, or 'all').\n"
+            "  An empty selection scans nothing and is never a clean result. If a CI "
+            "variable expanded to empty here, that is the bug.\n"
+        )
+        return 2
 
     _log(args.quiet, f"praetor {VERSION}: scanning {target}")
 
@@ -534,6 +547,28 @@ def main(argv=None):
                 "  A zero from an engine that did not run is not a clean result. "
                 "Re-run once the engine is available, or pass --allow-degraded to "
                 "gate on findings alone.\n"
+            )
+            return 3
+        # 🔴 A whole-scan floor, not a per-engine one. Reached only when every
+        # engine holds an individually TRUSTED status and none of them looked at
+        # anything -- `disabled` and `not-applicable` are trustworthy silences,
+        # and a scan made entirely of trustworthy silences is not a measured
+        # scan. Checked AFTER the degraded path so that case keeps its own
+        # diagnosis. Keyed on the property, not on `--engines ""`, the spelling
+        # that demonstrated it, so any future route to this state fails too.
+        if not core.engines_that_measured(engine_meta) and not args.allow_degraded:
+            sys.stderr.write(
+                "praetor: NOTHING WAS MEASURED -- no engine examined this target, so "
+                "--fail-on has no basis to pass.\n"
+            )
+            for name in sorted(engine_meta or {}):
+                info = engine_meta[name] or {}
+                sys.stderr.write(
+                    f"  [{info.get('status', '?')}] {name}: {info.get('detail', '')}\n"
+                )
+            sys.stderr.write(
+                "  Every engine's silence was individually trustworthy and none of "
+                "them ran. That is not a clean result.\n"
             )
             return 3
     return 0
