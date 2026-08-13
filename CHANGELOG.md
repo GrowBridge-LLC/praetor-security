@@ -12,6 +12,33 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### 🔴 Two more things CI could not see, found by fixing the one masking them
+
+- **`_win_to_wsl` read the drive letter *after* `os.path.abspath`**
+  (`scripts/engine_sast.py`). `abspath` is platform-dependent: a non-Windows
+  interpreter does not recognise `C:\projects\X` as absolute and prepends the
+  current directory, so the `p[1] == ":"` branch never ran and the function
+  returned a path anchored under the caller's cwd. Anyone running
+  `--semgrep-runtime wsl` from a non-Windows host got a wrong `file` on every
+  finding — the key four later passes use to reopen the source. The drive letter
+  is now read from the input, before any `abspath`.
+
+  This test had been red on Linux since it was written, hidden behind the Unicode
+  failures. **No Windows run could ever have seen it.**
+
+- **CI silently collected six fewer tests than any developer machine.**
+  `test_bundled_ruleset_is_wellformed.py` opens with
+  `pytest.importorskip("yaml")`, and the workflow installed pytest alone —
+  `collected 188 items / 1 skipped`. So nothing in CI validated the bundled
+  offline ruleset, which *is* the SAST engine's entire coverage under
+  `--no-registry`. PyYAML is test-only (PRAETOR still has **no runtime
+  dependencies**); it is now installed in CI and declared in the `dev` extra.
+  **An undeclared test dependency does not fail — it skips.**
+
+  CI now **fails on any skip or deselection**, mirroring the rule
+  `tests/precommit.sh` has always enforced: *a skipped test is indistinguishable
+  from a passing one.* That asymmetry is why the missing module went unnoticed.
+
 ### 🔴 Security — suppression on PATH ALONE; renaming a file disarmed the gate
 
 Found by independent adversarial audit, re-derived before fixing.

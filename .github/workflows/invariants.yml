@@ -40,8 +40,27 @@ jobs:
       # Deliberately no requirements install: the invariant tests must not need
       # the tools they guard. They capture argv without executing anything, which
       # is the same property they assert about PRAETOR itself.
-      - name: Install pytest
-        run: python -m pip install --upgrade pip pytest
+      #
+      # PyYAML is not one of those tools and not a runtime dependency -- PRAETOR
+      # has none, on purpose. It parses the bundled ruleset so
+      # test_bundled_ruleset_is_wellformed.py can validate it. Without it that
+      # module hit `pytest.importorskip` and CI silently collected SIX FEWER
+      # TESTS than either developer machine ("collected 188 items / 1 skipped"),
+      # so nothing verified the offline ruleset that IS the SAST engine's
+      # coverage under --no-registry.
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip pytest pyyaml
 
       - name: Run invariant tests
-        run: python -m pytest tests/ -v
+        # 🔴 A SKIPPED TEST IS INDISTINGUISHABLE FROM A PASSING ONE.
+        # tests/precommit.sh has always failed on any skip; CI did not, which is
+        # how a whole module went missing here unnoticed. Mirrored, so the next
+        # importorskip costs a red build instead of silent coverage.
+        run: |
+          set -o pipefail
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/ -v 2>&1 | tee pytest.out
+          if grep -qE '[0-9]+ (skipped|deselected)' pytest.out; then
+            echo "::error::Tests were skipped or deselected. A skipped test is indistinguishable from a passing one -- install what it needs, or delete it."
+            grep -E '[0-9]+ (skipped|deselected)|SKIPPED' pytest.out || true
+            exit 1
+          fi

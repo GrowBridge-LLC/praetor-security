@@ -37,7 +37,11 @@ dependencies = []
 # as `unavailable` rather than silently reporting zero findings.
 sast = ["semgrep"]
 sca = ["pip-audit"]
-dev = ["pytest>=7"]
+# pyyaml is TEST-ONLY: it parses the bundled ruleset for
+# test_bundled_ruleset_is_wellformed.py. It was undeclared, so CI installed
+# pytest alone, that module hit `pytest.importorskip`, and six tests silently
+# vanished from the run. An undeclared test dependency does not fail -- it skips.
+dev = ["pytest>=7", "pyyaml"]
 
 [project.scripts]
 praetor = "praetor:main"

@@ -41,8 +41,33 @@ _SEMGREP_TIMEOUT = 900  # seconds, overall
 
 
 def _win_to_wsl(path: str) -> str:
+    """Map a Windows path to the /mnt/<drive> form WSL reports under.
+
+    🔴 THE DRIVE LETTER MUST BE READ BEFORE `abspath`, NOT AFTER.
+
+    `os.path.abspath` is platform-dependent, and on a NON-Windows interpreter it
+    does not recognise `C:\\projects\\X` as absolute -- it treats the whole thing
+    as a relative name and prepends the current directory:
+
+        Windows: abspath('C:\\projects\\P') -> 'C:\\projects\\P'      -> /mnt/c/projects/P
+        Linux:   abspath('C:\\projects\\P') -> '/home/runner/…/C:\\projects\\P'
+
+    So `p[1] == ":"` was False on Linux, the drive branch never ran, and the
+    function silently returned a path anchored under the caller's cwd. Every
+    finding's `file` would then be wrong for anyone running `--semgrep-runtime
+    wsl` from a non-Windows host, and `_relative_to_report_root` would hand the
+    raw path straight through -- which four later passes read as a file to open.
+
+    Found by CI, on the push that fixed the failure masking it: this test had
+    been red on Linux since it was written and no Windows run could see it.
+    Same shape as the interpreter pin it sat behind -- a gate that only ever runs
+    on the platform where the assertion happens to hold is not a check.
+    """
+    raw = path.replace("\\", "/")
+    if len(raw) >= 2 and raw[1] == ":" and raw[0].isalpha():
+        return f"/mnt/{raw[0].lower()}{raw[2:]}"
     p = os.path.abspath(path).replace("\\", "/")
-    if len(p) >= 2 and p[1] == ":":
+    if len(p) >= 2 and p[1] == ":" and p[0].isalpha():
         return f"/mnt/{p[0].lower()}{p[2:]}"
     return p
 
