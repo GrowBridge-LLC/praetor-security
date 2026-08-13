@@ -397,46 +397,118 @@ def test_the_semgrepignore_disabling_flag_reaches_the_command_line(tmp_path, mon
     )
 
 
-def test_zero_files_scanned_with_an_in_tree_ignore_file_is_not_a_clean_result(tmp_path, monkeypatch):
+def test_a_scope_disagreement_between_the_two_walkers_is_not_a_clean_result(tmp_path, monkeypatch):
     """🔴 LAYER 2 -- THE ONE THAT SURVIVES THE FLAG BECOMING A NO-OP.
 
     `--x-` flags are experimental. If semgrep keeps this one but stops honouring
-    it, semgrep still exits 0 and nothing errors. Only the count notices.
+    it, semgrep still exits 0 and nothing errors. Only the two counts disagreeing
+    notices.
     """
     _semgrep_returning(monkeypatch, {"results": [], "paths": {"scanned": []}})
     res = engine_sast.run(_target_with_ignore_file(tmp_path), bundled_rules="",
-                          use_registry=False, extra_configs=["p/ci"])
+                          use_registry=False, extra_configs=["p/ci"],
+                          enumerated_code_files=3)
     assert res["status"] == "error", (
-        f"0 files opened + a tree-controlled ignore file must not be `ok`; got {res}"
+        f"PRAETOR found 3 code files and semgrep opened 0; that is not `ok`. got {res}"
     )
-    assert ".semgrepignore" in res["detail"], "the detail must name the file responsible"
+    assert "scope disagreement" in res["detail"]
+
+
+def test_the_guard_does_not_depend_on_finding_an_ignore_file(tmp_path, monkeypatch):
+    """🔴 THE CORRECTION THAT IS THE WHOLE LESSON.
+
+    The first version of this guard fired on "opened nothing" AND "a file named
+    `.semgrepignore` exists inside the target". An independent auditor found two
+    TOTAL-shrink routes it missed within hours, both with NO such file inside the
+    target:
+
+      * `.semgrepignore` at the GIT ROOT, above the scan target -- the ordinary
+        CI shape `praetor $REPO/src`.
+      * code in a directory semgrep ignores by default -- no attacker file at all.
+
+    The measurement was real; it was GATED BEHIND AN ENUMERATION OF SPELLINGS,
+    which made it an enumeration. This test pins the ungated form: NO ignore file
+    anywhere, and the disagreement alone must still block.
+    """
+    (tmp_path / "app.py").write_text(
+        "import os" + chr(10) + "os.system('x' + y)" + chr(10), encoding="utf-8")
+    assert not list(tmp_path.glob(".semgrepignore")), "premise: no ignore file in the target"
+    _semgrep_returning(monkeypatch, {"results": [], "paths": {"scanned": []}})
+    res = engine_sast.run(str(tmp_path), bundled_rules="", use_registry=False,
+                          extra_configs=["p/ci"], enumerated_code_files=1)
+    assert res["status"] == "error", (
+        f"a scope disagreement with no ignore file present must still block; got {res}"
+    )
+
+
+def test_a_tree_with_no_code_does_not_false_alarm(tmp_path, monkeypatch):
+    """KEEP DIRECTION. A docs-only repo legitimately gives 0 on BOTH sides.
+
+    A gate that cries wolf on every repo semgrep has no language for gets
+    disabled by whoever it blocks, and then it protects nobody.
+    """
+    _semgrep_returning(monkeypatch, {"results": [], "paths": {"scanned": []}})
+    res = engine_sast.run(_target_with_ignore_file(tmp_path), bundled_rules="",
+                          use_registry=False, extra_configs=["p/ci"],
+                          enumerated_code_files=0)
+    assert res["status"] == "ok", (
+        f"0 code files on our side too is agreement, not a disagreement; got {res}"
+    )
 
 
 def test_a_scan_that_opened_files_is_still_ok_with_an_ignore_file_present(tmp_path, monkeypatch):
-    """KEEP DIRECTION. A repo may legitimately carry `.semgrepignore`.
-
-    Narrowing the gate and jamming it shut look identical from outside.
-    """
+    """KEEP DIRECTION. A repo may legitimately carry `.semgrepignore`."""
     _semgrep_returning(monkeypatch, {"results": [], "paths": {"scanned": ["a.py", "b.py"]}})
     res = engine_sast.run(_target_with_ignore_file(tmp_path), bundled_rules="",
-                          use_registry=False, extra_configs=["p/ci"])
-    assert res["status"] == "ok", (
-        f"semgrep opened files, so the ignore file did not decide the scope; got {res}"
-    )
+                          use_registry=False, extra_configs=["p/ci"],
+                          enumerated_code_files=2)
+    assert res["status"] == "ok", f"semgrep opened files; got {res}"
 
 
 def test_an_absent_scanned_list_is_not_read_as_zero(tmp_path, monkeypatch):
     """`-1` for absent, never `0`.
 
     If a future semgrep drops `paths.scanned`, reading that as 0 would flip every
-    scan of a repo carrying `.semgrepignore` to `error` -- a gate that fails shut
-    on a format change gets disabled by whoever it blocks, which is how a real
-    guard dies.
+    scan to `error` -- a gate that fails shut on a format change gets disabled by
+    whoever it blocks, which is how a real guard dies.
     """
     assert engine_sast._scanned_count({"results": []}) == -1
     assert engine_sast._scanned_count({"paths": {}}) == -1
     assert engine_sast._scanned_count({"paths": {"scanned": []}}) == 0
     _semgrep_returning(monkeypatch, {"results": []})
     res = engine_sast.run(_target_with_ignore_file(tmp_path), bundled_rules="",
-                          use_registry=False, extra_configs=["p/ci"])
+                          use_registry=False, extra_configs=["p/ci"],
+                          enumerated_code_files=5)
     assert res["status"] == "ok", f"absent != zero; got {res}"
+
+
+def test_the_flag_does_not_silently_widen_scope_into_vendored_code(tmp_path, monkeypatch):
+    """🔴 THE REGRESSION THE FLAG INTRODUCED, caught by an independent auditor.
+
+    `--x-ignore-semgrepignore-files` disables `.semgrepignore` AND semgrep's
+    BUILT-IN default ignores. Measured: scanned 7 -> 14, pulling in node_modules,
+    vendor, dist and .venv -- directories PRAETOR's own walker refuses to open.
+    The engines disagreed about scope again, inverted, and third-party code was
+    reported as the target's own (1 finding -> 3001 on a synthetic node_modules).
+
+    So the skip list must be restored explicitly, from PRAETOR's side.
+    """
+    argv = []
+    _semgrep_returning(monkeypatch, {"results": [], "paths": {"scanned": ["a.py"]}}, argv)
+    engine_sast.run(str(tmp_path), bundled_rules="", use_registry=False,
+                    extra_configs=["p/ci"], enumerated_code_files=1)
+    excluded = {argv[i + 1] for i, a in enumerate(argv) if a == "--exclude" and i + 1 < len(argv)}
+    for d in ("node_modules", "vendor", "dist", ".venv"):
+        assert d in excluded, (
+            f"{d!r} must be excluded explicitly -- the flag removed semgrep's own "
+            f"default that used to do it. excluded={sorted(excluded)}"
+        )
+
+
+def test_count_code_files_counts_code_and_not_prose():
+    """The other half of the comparison."""
+    class F:
+        def __init__(self, r): self.relpath = r
+    files = [F("a.py"), F("b.ts"), F("c.md"), F("d.txt"), F("e.go"), F("LICENSE")]
+    assert engine_sast.count_code_files(files) == 3
+    assert engine_sast.count_code_files([]) == 0

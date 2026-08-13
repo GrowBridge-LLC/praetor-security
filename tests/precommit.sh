@@ -52,7 +52,7 @@ echo "== PRAETOR pre-commit gate =="
 # somebody raising the number without looking -- which is how a pin becomes a
 # rubber stamp. A floor cannot fall silently, and `SKIPPED == 0` is what actually
 # catches the disappearing-test class.
-MIN_PY=204
+MIN_PY=208
 PYOUT="$(PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 py -3.14 -m pytest tests/ -q 2>&1)"
 PYPASS="$(printf '%s' "$PYOUT" | grep -oE '[0-9]+ passed' | tail -1 | grep -oE '^[0-9]+')"
 PYSKIP="$(printf '%s' "$PYOUT" | grep -oE '[0-9]+ (skipped|deselected|xfailed)' | grep -oE '^[0-9]+' | awk '{s+=$1} END{print s+0}')"

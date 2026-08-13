@@ -81,7 +81,7 @@ Exit codes: `0` no active findings at or above `--fail-on` — **`NO FINDING`, n
 at/above `--fail-on`, `2` usage/internal error, `3` an engine **could not
 measure** under `--fail-on` (errored or unavailable).
 
-🔴 **Never report exit `3` as a clean scan.** It means an engine did not run, so
+🔴 **Never report exit `3` as a clean scan.** It means the scan was not measured — an engine did not run, **or nothing was examined**, **or two components disagreed about what was in scope** — so
 its zero findings say nothing about the target. Read the `engines` block in the
 report, fix the runtime, and scan again — or pass `--allow-degraded` if the
 blind spot is knowingly accepted.

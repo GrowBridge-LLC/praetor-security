@@ -53,7 +53,38 @@ _SEMGREP_TIMEOUT = 900  # seconds, overall
 _SEMGREPIGNORE_OFF = "--x-ignore-semgrepignore-files"
 
 #: Ignore files that live in the SCANNED TREE and can shrink semgrep's scope.
+#: ⚠️ Used ONLY to enrich an error message. It is deliberately NOT part of the
+#: scope guard's condition any more -- gating the guard on this list is exactly
+#: what made the first version miss two total-shrink routes. See the guard.
 _TARGET_CONTROLLED_IGNORE_FILES = (".semgrepignore",)
+
+#: Extensions for files semgrep plausibly has a language for. Used only to ask
+#: "did PRAETOR find code here?" before accusing semgrep of having opened none.
+#:
+#: ⚠️ A DELIBERATE NARROWING WITH A KNOWN DIRECTION. A language missing from this
+#: set means a repo written only in that language does not get the scope check --
+#: it does not mean a false alarm. So the failure mode is losing layer 2 for an
+#: exotic language, with layer 1 (the flag) still in place; not blocking a
+#: legitimate scan. Add to it freely.
+_CODE_EXTENSIONS = frozenset({
+    ".py", ".pyi", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".java", ".kt",
+    ".kts", ".go", ".rb", ".php", ".cs", ".c", ".h", ".cc", ".cpp", ".hpp",
+    ".cxx", ".rs", ".swift", ".scala", ".sh", ".bash", ".sol", ".ex", ".exs",
+    ".lua", ".dart", ".m", ".mm", ".clj", ".cljs", ".hcl", ".tf", ".vue",
+})
+
+
+def count_code_files(scan_files) -> int:
+    """How many of PRAETOR's own enumerated files semgrep could plausibly open.
+
+    One half of the scope guard's two counts. Takes anything with `.relpath`.
+    """
+    n = 0
+    for sf in (scan_files or []):
+        path = getattr(sf, "relpath", None) or getattr(sf, "abspath", "") or str(sf)
+        if os.path.splitext(path)[1].lower() in _CODE_EXTENSIONS:
+            n += 1
+    return n
 
 
 def _target_ignore_files(target: str) -> list:
@@ -383,7 +414,8 @@ def _source_line(path: str, line_no: int, cache: dict) -> str:
 
 def run(target: str, bundled_rules: str, use_registry: bool = True,
         extra_configs=None, prefer: str = "auto", wsl_distro: str = "Ubuntu",
-        timeout: int = _SEMGREP_TIMEOUT, excludes=None) -> dict:
+        timeout: int = _SEMGREP_TIMEOUT, excludes=None,
+        enumerated_code_files: int = -1) -> dict:
     """
     Returns {findings: [...], status: 'ok'|'unavailable'|'error', detail: str,
              runtime: str}.
@@ -443,6 +475,23 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
     for pat in (excludes or []):
         common += ["--exclude", pat]
 
+    # 🔴 `_SEMGREPIGNORE_OFF` DOES NOT ONLY DISABLE `.semgrepignore`. It also
+    # disables semgrep's BUILT-IN default ignore set, which is how `node_modules`,
+    # `vendor`, `dist`, `build` and `.venv` stop being scanned. Measured on the
+    # tree that motivated the flag: scanned went 7 -> 14, and on a synthetic
+    # 3000-file `node_modules`, findings went 1 -> 3001 with elapsed 1.6s -> 4.1s.
+    #
+    # That is the SAME defect the `--no-git-ignore` note above describes, inverted:
+    # PRAETOR's own walker skips these directories (core.DEFAULT_SKIP_DIRS), so
+    # semgrep was scanning a tree the other engines refuse to open, and the report
+    # printed one `Files (text): N` header over findings from both. Third-party
+    # vendored code was being reported as the target's own.
+    #
+    # ⇒ Restore the scope explicitly, from PRAETOR's list rather than semgrep's,
+    # so exactly one component decides what is in scope and the engines agree.
+    for d in sorted(core.DEFAULT_SKIP_DIRS):
+        common += ["--exclude", d]
+
     if mode == "native":
         cfg_args = []
         for c in configs:
@@ -493,28 +542,44 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
     except json.JSONDecodeError:
         return {"findings": [], "status": "error", "detail": "unparseable semgrep JSON", "runtime": mode}
 
-    # 🔴 THE GUARANTEE FOR SCOPE, AND IT IS A COUNT -- see _SEMGREPIGNORE_OFF.
-    # The flag above closes the vector known on 2026-08-13, but semgrep ignores
-    # unknown `--x-` flags SILENTLY (exit 0, no warning), so the flag alone would
-    # fail open the day it is renamed. `scanned` is what semgrep says it actually
-    # opened. If it opened NOTHING while the target carries an ignore file semgrep
-    # honours, the tree chose the scope and a zero here means nothing.
+    # 🔴 THE GUARANTEE FOR SCOPE: TWO INDEPENDENT COUNTS THAT MUST NOT DISAGREE.
+    # `enumerated_code_files` is what PRAETOR's OWN walker found here.
+    # `scanned` is what semgrep says it actually opened. If ours is positive and
+    # semgrep's is zero, something decided the scope that neither of us chose,
+    # and the SAST engine's silence carries no information.
     #
-    # Deliberately NOT keyed on the filename `.semgrepignore`: keyed on the
-    # conjunction "opened nothing" AND "the tree carries a scope-shrinking file",
-    # so a future ignore mechanism added to _TARGET_CONTROLLED_IGNORE_FILES is
-    # covered by the same branch. ⚠️ It does NOT cover a mechanism that shrinks
-    # scope PARTIALLY -- an ignore file excluding one directory still leaves
-    # scanned > 0 and passes here. That gap is real and is stated rather than
-    # left for a later audit to find.
+    # ⚠️ THIS REPLACED A CONJUNCTION THAT WAS THE BUG, and the correction is the
+    # whole lesson. The first version fired on "opened nothing" AND "a file named
+    # `.semgrepignore` exists INSIDE the target" -- and a comment claimed its only
+    # gap was PARTIAL shrink. An independent auditor found two TOTAL-shrink routes
+    # it missed, hours later:
+    #   * `.semgrepignore` at the GIT ROOT, above the scan target -- the ordinary
+    #     CI shape `praetor $REPO/src`. The walk inside `target` cannot see it.
+    #   * code living in a directory semgrep ignores by default -- no attacker
+    #     file exists anywhere, so there was nothing for the walk to find.
+    # ⇒ The measurement was real; it was GATED BEHIND AN ENUMERATION OF SPELLINGS,
+    # which made it an enumeration. Same defect as `engines_that_measured` reading
+    # a status word, one commit later, in a different file. **The conjunction was
+    # the bug.** Comparing the two counts needs no filename and covers all three.
+    #
+    # `> 0` on our side, not `>= 0`: a genuinely empty or docs-only tree gives 0
+    # on both sides and must stay quiet, or the guard false-alarms on every repo
+    # semgrep has no language for -- and a gate that cries wolf gets disabled by
+    # whoever it blocks.
+    #
+    # ⚠️ STATED GAP, still real: this catches scope shrunk to NOTHING. An ignore
+    # rule that removes only PART of a tree leaves scanned > 0 and passes here.
     scanned = _scanned_count(data)
-    ignore_files = _target_ignore_files(target)
-    if ignore_files and scanned == 0:
-        rels = ", ".join(os.path.relpath(p, target) for p in ignore_files[:5])
+    if scanned == 0 and enumerated_code_files > 0:
+        ignore_files = _target_ignore_files(target)
+        because = ""
+        if ignore_files:
+            rels = ", ".join(os.path.relpath(p, target) for p in ignore_files[:5])
+            because = f" the target carries an ignore file semgrep honours ({rels});"
         return {"findings": [], "status": "error",
-                "detail": ("semgrep opened 0 files and the target carries an ignore file "
-                           f"it honours ({rels}); the scanned tree decided the scope, so a "
-                           "zero here is not a clean result"),
+                "detail": (f"scope disagreement: PRAETOR enumerated {enumerated_code_files} "
+                           f"code file(s) here and semgrep opened 0.{because} a zero from an "
+                           "engine that opened nothing is not a clean result"),
                 "runtime": mode}
 
     findings = []

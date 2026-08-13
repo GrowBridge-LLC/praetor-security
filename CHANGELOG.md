@@ -12,6 +12,53 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### 🔴 Security — the scope guard shipped hours earlier was an enumeration, not a guarantee
+
+Found by independent adversarial audit, re-derived before fixing. **Both findings
+were in the fix for the previous entry.**
+
+**1. The guard covered one of three total-shrink routes.** It fired on *"semgrep
+opened nothing"* **AND** *"a file named `.semgrepignore` exists inside the
+target"*, and its comment claimed the only gap was *partial* shrink. Two **total**
+shrink routes evaded it, measured with the flag rendered an accepted no-op:
+
+```
+(a) .semgrepignore in the target root          -> exit 3   caught
+(b) .semgrepignore at the GIT ROOT, scan src/  -> exit 0   MISSED
+(c) code only in a default-ignored directory   -> exit 0   MISSED
+```
+
+(b) is the ordinary CI shape `praetor $REPO/src`; the walk inside the target
+cannot see a file above it. (c) needs no attacker file at all.
+
+⇒ **The measurement was real; it was gated behind an enumeration of spellings,
+which made it an enumeration.** Exactly the defect `engines_that_measured` had —
+one commit later, in a different file. **The conjunction was the bug.**
+
+The guard now compares **two independent counts**: how many code files PRAETOR's
+own walker found here, against how many files semgrep says it opened. Ours
+positive and semgrep's zero means something decided the scope that neither
+component chose. It needs no filename and covers all three routes. A tree with no
+code gives 0 on both sides and stays quiet, so a docs-only repo carrying a
+perfectly ordinary `.semgrepignore` is no longer accused of choosing the scope.
+
+**2. The flag silently widened scope into vendored code.**
+`--x-ignore-semgrepignore-files` disables `.semgrepignore` **and semgrep's
+built-in default ignores**. Measured: files scanned 7 → 14, pulling in
+`node_modules`, `vendor`, `dist`, `.venv`; on a synthetic 3000-file
+`node_modules`, findings went **1 → 3001**. PRAETOR's own walker skips those
+directories, so the engines disagreed about scope again — inverted — and
+third-party code was reported as the target's own under a single
+`Files (text): N` header. The skip list is now restored explicitly from
+`core.DEFAULT_SKIP_DIRS`, so exactly one component decides scope.
+
+### Fixed — exit `3` was documented as "an engine could not measure"
+
+It now has three routes: an engine failed, **zero files were examined**, or
+**components disagreed about scope**. `README.md`, `SKILL.md`, `--help` and the
+module docstring all said only the first. The previous entry corrected the exit-`0`
+sentence in those same files and invalidated the exit-`3` sentence in the same edit.
+
 ### 🔴 Security — a file in the scanned repository silently disabled the entire SAST engine
 
 `--no-git-ignore` (added 2026-08-12, with a comment about not letting semgrep

@@ -32,9 +32,14 @@ Exit codes:
      (without --fail-on, nothing fails the run: report-only by request)
   1  active findings at/above --fail-on
   2  usage / internal error
-  3  --fail-on was requested but an engine COULD NOT MEASURE (errored or was
-     unavailable), so "no findings" does not mean "nothing there". Suppress with
-     --allow-degraded if you knowingly gate on a partial scan.
+  3  --fail-on was requested and THE SCAN WAS NOT MEASURED, so "no findings"
+     does not mean "nothing there". Three routes, all reported on stderr:
+       * an engine errored or its runtime was unavailable;
+       * zero files were examined (a byte cap or --exclude emptied the tree);
+       * two components disagreed about scope -- PRAETOR enumerated code and
+         semgrep opened none of it, which is how a file in the scanned repo
+         switched an engine off.
+     Suppress with --allow-degraded if you knowingly gate on a partial scan.
 
   🔴 1 outranks 3: real findings are the more actionable signal. Both are
   non-zero, so a gate that only tests `if rc != 0` fails safe either way.
@@ -129,7 +134,8 @@ def parse_args(argv):
     p.add_argument("--fail-on", default="",
                    choices=["", "INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"],
                    help="Exit 1 if any active finding is at/above this severity (default: never fail). "
-                        "Exit 3 if an engine could not measure at all -- see --allow-degraded.")
+                        "Exit 3 if the scan was not measured: an engine failed, zero files were "
+                        "examined, or components disagreed about scope. See --allow-degraded.")
     p.add_argument("--allow-degraded", action="store_true",
                    help="With --fail-on, do NOT exit 3 when an engine errored or was unavailable. "
                         "Gates on findings alone, knowingly accepting an unmeasured blind spot.")
@@ -464,6 +470,11 @@ def main(argv=None):
                 extra_configs=args.semgrep_config,
                 prefer=args.semgrep_runtime, wsl_distro=args.wsl_distro,
                 excludes=args.exclude,
+                # PRAETOR's own count of code here, so the engine can compare it
+                # against what semgrep says it opened. Two independent counts
+                # disagreeing is the only signal that survives semgrep changing
+                # how it decides scope -- see the scope guard in engine_sast.
+                enumerated_code_files=engine_sast.count_code_files(scan_files),
             )
             all_findings.extend(res["findings"])
             engine_meta["sast"] = {"status": res["status"],

@@ -74,7 +74,7 @@ jobs:
           # this was cheap.
           COLLECTED="$(grep -oE 'collected [0-9]+ items' pytest.out | grep -oE '[0-9]+' | head -1)"
           COLLECTED="${COLLECTED:-0}"
-          MIN_CI=204
+          MIN_CI=208
           if [ "$COLLECTED" -lt "$MIN_CI" ]; then
             echo "::error::collected $COLLECTED tests, floor is $MIN_CI -- tests disappeared. Raise MIN_CI deliberately if they were removed on purpose."
             exit 1
