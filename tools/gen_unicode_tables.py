@@ -76,6 +76,67 @@ MAX_CP = 0x110000
 
 OUT_PATH = Path(__file__).resolve().parent.parent / "rust" / "praetor-core" / "src" / "unicode_tables.rs"
 
+# 🔴 CONTENT EQUALITY CANNOT TELL THE TWO OPPOSITE FAILURES APART.
+#
+# This table is a function of the interpreter that generated it, so "committed
+# != rendered" has two causes that demand OPPOSITE actions:
+#
+#   the table is behind the interpreter  -> Unicode advanced.  REGENERATE.
+#   the interpreter is behind the table  -> wrong Python.      REFUSE.
+#
+# For two days CI reported the second as the first. The remediation it printed
+# named `py -3.14` -- the WINDOWS launcher, which does not exist on the Linux
+# runner emitting the message -- so the reachable substitute was the operator's
+# own older `python`. Measured: that regenerates against the older database,
+# exits 0, prints "wrote ...", and the downgraded table then PASSES its own
+# --check. 353 lines of code points silently discarded, every gate green.
+#
+# The version was already being recorded in the generated file, under a comment
+# saying it existed "so a mismatch is diagnosable rather than mysterious".
+# Nothing read it. That is what these three helpers fix.
+_RECORDED_VERSION_RE = re.compile(r'pub const UNICODE_VERSION: &str = "([^"]+)";')
+
+
+def recorded_version(text: str):
+    """The Unicode version a generated table says it came from, or None.
+
+    None on an unparseable or hand-mangled file. Callers must treat None as
+    "cannot prove the direction" and fall back to the stale path, which is the
+    safe one: it asks for a deliberate regeneration rather than refusing.
+    """
+    m = _RECORDED_VERSION_RE.search(text)
+    return m.group(1) if m else None
+
+
+def _version_tuple(v: str):
+    return tuple(int(p) for p in v.split(".") if p.isdigit())
+
+
+def interpreter_is_behind(committed: str) -> bool:
+    """True when the COMMITTED table was built from a NEWER Unicode than ours.
+
+    This is the case where regenerating destroys data, so it is the case the
+    generator refuses. Unprovable (no recorded version, unparseable) returns
+    False -- deliberately, so an unreadable header cannot block a legitimate
+    regeneration. The cost of a wrong False is a diagnosable stale message; the
+    cost of a wrong True is a table nobody can update.
+    """
+    recorded = recorded_version(committed)
+    if recorded is None:
+        return False
+    return _version_tuple(recorded) > _version_tuple(unicodedata.unidata_version)
+
+
+def required_interpreter_hint(recorded: str) -> str:
+    """Remediation that RUNS ON THE MACHINE PRINTING IT.
+
+    Naming a launcher is what broke the old message. Name the requirement --
+    the Unicode version -- and let the reader pick the interpreter carrying it.
+    """
+    launcher = "py -3.14" if sys.platform == "win32" else "python3.14"
+    return (f"Use an interpreter whose unicodedata.unidata_version is {recorded} "
+            f"or newer (on this platform, typically `{launcher}`).")
+
 
 def script_of(cp: int) -> str:
     """The exact rule from `engine_aisec._script_of`, by code point.
@@ -157,11 +218,14 @@ def render() -> str:
     return f"""//! GENERATED FILE -- DO NOT EDIT BY HAND.
 //!
 //! Produced by `tools/gen_unicode_tables.py` from Python's `unicodedata`
-//! {unicodedata.unidata_version}, which is the authority the Python engine uses. Regenerate with:
+//! {unicodedata.unidata_version}, which is the authority the Python engine uses.
 //!
-//! ```text
-//! py -3.14 tools/gen_unicode_tables.py
-//! ```
+//! ⚠️ Regenerate only with an interpreter whose `unicodedata.unidata_version` is
+//! {unicodedata.unidata_version} or newer. The generator REFUSES to run on an older one:
+//! regenerating there silently discards code points, and the downgraded table
+//! then passes every check including its own. Name the Unicode version, not a
+//! launcher -- `py` is Windows-only and the message that assumed it was being
+//! printed by a Linux CI runner where it could not run.
 //!
 //! 🔴 Editing this file by hand creates a second, divergent definition of "what
 //! is a letter" and "what script is this" -- the precise class of drift the
@@ -199,21 +263,48 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--check", action="store_true",
                     help="exit non-zero if the committed file is not what this generator produces")
+    ap.add_argument("--allow-downgrade", action="store_true",
+                    help="regenerate even though this interpreter's Unicode database is OLDER "
+                         "than the committed table's. This DISCARDS code points. Only correct "
+                         "if you are deliberately moving the project back a Unicode version.")
     args = ap.parse_args()
 
+    running = unicodedata.unidata_version
     text = render()
+    committed = OUT_PATH.read_text(encoding="utf-8") if OUT_PATH.exists() else None
+
     if args.check:
-        if not OUT_PATH.exists():
+        if committed is None:
             print(f"MISSING: {OUT_PATH}", file=sys.stderr)
             return 1
-        current = OUT_PATH.read_text(encoding="utf-8")
-        if current != text:
-            print(f"STALE: {OUT_PATH} does not match the generator output.\n"
-                  f"Unicode version now {unicodedata.unidata_version}. "
-                  f"Re-run: py -3.14 tools/gen_unicode_tables.py", file=sys.stderr)
-            return 1
-        print(f"OK: {OUT_PATH.name} is current (Unicode {unicodedata.unidata_version})")
-        return 0
+        if committed == text:
+            print(f"OK: {OUT_PATH.name} is current (Unicode {running})")
+            return 0
+        if interpreter_is_behind(committed):
+            recorded = recorded_version(committed)
+            print(f"WRONG INTERPRETER: {OUT_PATH} is NOT stale -- YOU are behind it.\n"
+                  f"  table was generated from Unicode {recorded}\n"
+                  f"  this interpreter carries Unicode {running} (Python "
+                  f"{sys.version.split()[0]})\n"
+                  f"{required_interpreter_hint(recorded)}\n"
+                  f"Do NOT regenerate here: it would discard code points and still "
+                  f"pass every check.", file=sys.stderr)
+            return 2
+        print(f"STALE: {OUT_PATH} does not match the generator output.\n"
+              f"Unicode version now {running}. Regenerate deliberately: "
+              f"{OUT_PATH.name} is generated, never hand-edited.", file=sys.stderr)
+        return 1
+
+    if committed is not None and interpreter_is_behind(committed) and not args.allow_downgrade:
+        recorded = recorded_version(committed)
+        print(f"REFUSING TO DOWNGRADE {OUT_PATH.name}.\n"
+              f"  committed table: Unicode {recorded}\n"
+              f"  this interpreter: Unicode {running} (Python {sys.version.split()[0]})\n"
+              f"{required_interpreter_hint(recorded)}\n"
+              f"Regenerating here would silently discard code points, and the result "
+              f"would pass --check. Pass --allow-downgrade only if that is genuinely "
+              f"what you intend.", file=sys.stderr)
+        return 2
 
     OUT_PATH.write_text(text, encoding="utf-8")
     print(f"wrote {OUT_PATH} (Unicode {unicodedata.unidata_version}, "

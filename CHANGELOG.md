@@ -12,6 +12,39 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### 🔴 CI had been failing on every push, and the obvious fix corrupted a table
+
+- **The invariants workflow was red on every push for two days.** It pinned
+  Python 3.12 while `tests/precommit.sh` pins `py -3.14`, and
+  `rust/praetor-core/src/unicode_tables.rs` is *generated* from Python's
+  `unicodedata` — so its content is a function of the interpreter. CI's 15.0.0
+  could not reproduce a table built from 16.0.0.
+
+  The workflow is the one guarding "PRAETOR never executes the code it scans". A
+  check that is always red carries no information: had the never-execute test
+  started failing, the signal would have been identical. **A local gate that pins
+  the interpreter making it pass is a tautology, not a verification.**
+
+- **`--check` could not tell "you are stale" from "you are ahead of me"**
+  (`tools/gen_unicode_tables.py`). It compared content only, and those two
+  conditions demand opposite actions — regenerate, or refuse. It reported both as
+  `STALE`, with a remediation naming `py -3.14`: the **Windows launcher**, which
+  does not exist on the Linux runner printing the message. The reachable
+  substitute regenerated against the older database, exited 0, printed
+  `wrote ...`, discarded 353 lines of code points, and the downgraded table then
+  **passed its own `--check`**. The wrong action was rewarded with green.
+
+  The generator now reads the `UNICODE_VERSION` constant it has always emitted —
+  under a comment saying it existed "so a mismatch is diagnosable", which nothing
+  read — and branches on **direction**: an older interpreter gets
+  `WRONG INTERPRETER` and **exit 2**, and the write path refuses outright unless
+  `--allow-downgrade` is passed. An unreadable header falls back to the stale
+  path, so a mangled header cannot block a legitimate regeneration.
+
+  ⚠️ The cross-language differential gate did not catch the downgrade either —
+  not because its cases miss the shifted code points, but because its only corpus
+  is line-splitting. **There is no homoglyph corpus for these tables at all.**
+
 ### 🔴 Security — three suppressions the scanned tree could trigger itself
 
 Found by independent adversarial audit, re-verified from source. **None was

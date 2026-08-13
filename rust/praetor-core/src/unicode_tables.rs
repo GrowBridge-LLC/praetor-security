@@ -1,11 +1,14 @@
 //! GENERATED FILE -- DO NOT EDIT BY HAND.
 //!
 //! Produced by `tools/gen_unicode_tables.py` from Python's `unicodedata`
-//! 16.0.0, which is the authority the Python engine uses. Regenerate with:
+//! 16.0.0, which is the authority the Python engine uses.
 //!
-//! ```text
-//! py -3.14 tools/gen_unicode_tables.py
-//! ```
+//! ⚠️ Regenerate only with an interpreter whose `unicodedata.unidata_version` is
+//! 16.0.0 or newer. The generator REFUSES to run on an older one:
+//! regenerating there silently discards code points, and the downgraded table
+//! then passes every check including its own. Name the Unicode version, not a
+//! launcher -- `py` is Windows-only and the message that assumed it was being
+//! printed by a Linux CI runner where it could not run.
 //!
 //! 🔴 Editing this file by hand creates a second, divergent definition of "what
 //! is a letter" and "what script is this" -- the precise class of drift the

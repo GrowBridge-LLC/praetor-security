@@ -22,7 +22,20 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          # 🔴 MUST MATCH tests/precommit.sh, WHICH PINS py -3.14.
+          #
+          # rust/praetor-core/src/unicode_tables.rs is GENERATED from Python's
+          # unicodedata, so its content is a function of the interpreter. This
+          # job pinned 3.12 (Unicode 15.0.0) while the committed table is 16.0.0,
+          # so the parity tests failed on EVERY push for two days -- and a check
+          # that is always red carries no information: had the never-execute
+          # invariant test started failing, the signal would have been identical.
+          #
+          # A local gate that pins the interpreter making it pass is a tautology,
+          # not a verification. If these two pins ever drift again the generator
+          # now says WRONG INTERPRETER rather than STALE, which is the difference
+          # between "regenerate" and "regenerating destroys 353 code points".
+          python-version: '3.14'
 
       # Deliberately no requirements install: the invariant tests must not need
       # the tools they guard. They capture argv without executing anything, which
