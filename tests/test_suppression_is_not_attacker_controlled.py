@@ -625,7 +625,7 @@ def test_an_unrelated_semgrep_error_is_not_retried(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------- #
 # THE SKIP LIST IS AN ATTACKER-CONTROLLED SCOPE BOUNDARY
 #
-# core.DEFAULT_SKIP_DIRS is 30 directory names the walker will not enter, and the
+# core.DEFAULT_SKIP_DIRS is 36 directory names the walker will not enter, and the
 # SCANNED TREE CHOOSES ITS OWN DIRECTORY NAMES. Measured 2026-08-13, all engines,
 # live-shaped credential:
 #     credential in vendor/, nothing else    -> exit 3   (the whole-scan floor)

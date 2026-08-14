@@ -65,7 +65,18 @@ _TARGET_CONTROLLED_IGNORE_FILES = (".semgrepignore",)
 #: set means a repo written only in that language does not get the scope check --
 #: it does not mean a false alarm. So the failure mode is losing layer 2 for an
 #: exotic language, with layer 1 (the flag) still in place; not blocking a
-#: legitimate scan. Add to it freely.
+#: legitimate scan.
+#:
+#: 🔴 "ADD TO IT FREELY" WAS THE WRONG REMEDY AND POINTED AT THE WRONG GATE.
+#: `count_code_files` only ever sees what `core.walk_files` yielded, and that is
+#: gated on `core.TEXT_EXTS`. Six extensions ALREADY IN THIS SET are absent from
+#: TEXT_EXTS and can therefore never be counted:
+#:     .clj  .cljs  .cxx  .ex  .exs  .sol
+#: So a Solidity or Elixir repo has `enumerated_code_files == 0` permanently and
+#: the two-count scope guard is DISABLED for it -- while `.sol` sitting in this
+#: list reads as coverage. An entry here is inert unless TEXT_EXTS has it too.
+#: ⇒ To extend, add to BOTH, and prefer deriving this set from TEXT_EXTS so the
+#: two cannot drift again. Found by an independent reviewer.
 _CODE_EXTENSIONS = frozenset({
     ".py", ".pyi", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".java", ".kt",
     ".kts", ".go", ".rb", ".php", ".cs", ".c", ".h", ".cc", ".cpp", ".hpp",

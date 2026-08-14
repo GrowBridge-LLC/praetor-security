@@ -135,6 +135,25 @@ Two costs, roughly equal, and **neither is "too many files"**:
 had just been walked) while the 790 s walk was **cold**. Cold/warm differs ~10×, so
 per-open cost dominates more than the warm numbers suggest.
 
+🔴 **THESE ABSOLUTE FIGURES DO NOT REPRODUCE, AND THE FAULT IS THIS DOCUMENT'S.**
+An independent fact-verification pass re-ran the same code against the same repo
+hours later and got materially different numbers:
+
+| quantity | recorded here | re-measured |
+|---|---|---|
+| traversal entries | 267,311 / 2.06 s | **296,302 / 5.28 s** |
+| wide walk | 111,605 files / 790.35 s | **190,599 / 1,472.18 s** |
+| narrow walk | 2,341 files | **8,253** |
+
+**The target's revision was never recorded**, so the drift cannot be separated from
+a measurement error — and this file's whole stated purpose is that these are "the
+expensive part" not worth re-deriving. ⇒ **A measurement without the revision it was
+taken at is an anecdote.** Pin the target sha next time.
+
+✅ **The DIRECTION is unaffected and in fact stronger**: git-tracked selection is
+190,599 → 2,001, i.e. **95×**, not 56×. The ratios quoted elsewhere ("45× the
+files") should be read as order-of-magnitude, not as figures.
+
 ### 🔴 The better fix: select files by a PROPERTY, not by directory name
 
 The threat is a credential **committed** to the repository. Installed dependencies

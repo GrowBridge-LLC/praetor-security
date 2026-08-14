@@ -87,6 +87,15 @@ def main():
               "got %d findings, rc=%d" % (n, p.returncode))
         if n < 1:
             print("  (arming failed -- refusing to report the rest as meaningful)")
+            # 🔴 PRINT THE MARKER BEFORE RETURNING. The CI step greps for
+            # "LIVE CHECK FAILURES" as a second belt, precisely because this box
+            # loses exit codes. Returning here without printing it made BOTH
+            # halves of that gate silent on the ARMING path -- the worst case,
+            # since a failed arming means the planted vulnerability was not found
+            # and every check below is meaningless. Found by an independent
+            # reviewer; the fifth recorded instance in this repo of a check that
+            # reports where it was believed to gate.
+            print("== LIVE CHECK FAILURES: " + ", ".join(failures) + " ==")
             return 1
 
         # 2. THE GUARANTEE. A file the scanned tree controls must not silence it.

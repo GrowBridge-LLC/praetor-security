@@ -33,12 +33,15 @@ Exit codes:
   1  active findings at/above --fail-on
   2  usage / internal error
   3  --fail-on was requested and THE SCAN WAS NOT MEASURED, so "no findings"
-     does not mean "nothing there". Three routes, all reported on stderr:
+     does not mean "nothing there". FOUR routes, all reported on stderr:
        * an engine errored or its runtime was unavailable;
        * zero files were examined (a byte cap or --exclude emptied the tree);
        * two components disagreed about scope -- PRAETOR enumerated code and
          semgrep opened none of it, which is how a file in the scanned repo
-         switched an engine off.
+         switched an engine off;
+       * every engine held a TRUSTED status and none of them measured
+         ("NOTHING WAS MEASURED") -- the `--engines ""` family.
+     (This list said THREE until an independent reviewer counted the fourth.)
      Suppress with --allow-degraded if you knowingly gate on a partial scan.
 
   🔴 1 outranks 3: real findings are the more actionable signal. Both are
@@ -430,7 +433,7 @@ def main(argv=None):
     # Enumerate scannable text files exactly once (shared by secrets + aisec).
     scan_files = core.walk_files(target, max_bytes=args.max_file_size, extra_excludes=args.exclude)
     # 🔴 A SECOND, WIDER WALK FOR SECRETS ONLY -- see core.SECRETS_SKIP_DIRS.
-    # `core.DEFAULT_SKIP_DIRS` is 30 directory names, and the SCANNED TREE CHOOSES
+    # `core.DEFAULT_SKIP_DIRS` is 36 directory names, and the SCANNED TREE CHOOSES
     # ITS OWN DIRECTORY NAMES, so it is an attacker-controlled scope boundary.
     # Skipping `vendor/` for SAST is right (its findings are third-party noise and
     # scanning it explodes semgrep's target count). Skipping it for SECRETS is
@@ -633,7 +636,7 @@ def main(argv=None):
         #   credential in vendor/, nothing else       -> exit 3   (floor fires)
         #   same tree + ONE README.md at the root     -> exit 0   file_count=1
         #   same credential at the top level          -> exit 1
-        # `core.DEFAULT_SKIP_DIRS` is 30 directory names the walker will not enter,
+        # `core.DEFAULT_SKIP_DIRS` is 36 directory names the walker will not enter,
         # and THE SCANNED TREE CHOOSES ITS OWN DIRECTORY NAMES. So hiding code in a
         # directory called `vendor` and leaving one unrelated file at the root
         # satisfies this floor completely.

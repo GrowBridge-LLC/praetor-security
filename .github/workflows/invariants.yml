@@ -35,13 +35,14 @@ jobs:
       - name: Install semgrep
         run: python -m pip install --upgrade pip semgrep
       - name: Live scope-guarantee check against a real semgrep
-        # 🔴 BOTH the exit code AND the output marker. The exit path could not be
-        # verified on the machine that wrote this script -- that box's WSL
-        # invocation loses exit codes entirely (a control `sys.exit(7)` reported
-        # 0), so "it exits non-zero on failure" was UNPROVEN there. Checking the
-        # marker too means a broken exit path cannot silently pass this job.
-        # Belt and braces costs one grep; this repo has shipped three checks that
-        # reported without gating.
+        # BOTH the exit code AND the output marker, as defence in depth.
+        # ⚠️ THE ORIGINAL JUSTIFICATION HERE WAS FALSE. It claimed the author's box
+        # "loses exit codes through WSL". It does not -- that control was broken by
+        # its own double-quoting, which let the outer shell expand $? before wsl
+        # ran. Verified since: the script exits 1 on failure and 0 on success.
+        # The redundancy is still worth one grep -- and it now also matches a bare
+        # '  FAIL  ' line, because the arming path returns before the summary
+        # marker is printed -- but it is redundancy, not a workaround.
         run: |
           set -o pipefail
           python tests/semgrep_live_check.py 2>&1 | tee live.out
@@ -50,7 +51,7 @@ jobs:
             echo "::error::live semgrep check exited $rc"
             exit 1
           fi
-          if grep -q 'LIVE CHECK FAILURES' live.out; then
+          if grep -q 'LIVE CHECK FAILURES' live.out || grep -q '  FAIL  ' live.out; then
             echo "::error::live semgrep check reported failures but exited 0 -- the check is not gating"
             exit 1
           fi

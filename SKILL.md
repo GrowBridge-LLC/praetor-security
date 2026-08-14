@@ -78,8 +78,9 @@ Key options (see `--help` for all): `--engines`, `--format {text,json,both}`,
 `--semgrep-runtime {auto,native,wsl,docker}`, `--no-registry`, `--exclude REGEX`.
 
 Exit codes: `0` no active findings at or above `--fail-on` — **`NO FINDING`, never `SAFE`**, and *without* `--fail-on` it does not assert that anything was measured at all, `1` findings
-at/above `--fail-on`, `2` usage/internal error, `3` an engine **could not
-measure** under `--fail-on` (errored or unavailable).
+at/above `--fail-on`, `2` usage/internal error, `3` **the scan was not
+measured** under `--fail-on` — an engine errored or was unavailable, zero files were
+examined, or components disagreed about scope.
 
 🔴 **Never report exit `3` as a clean scan.** It means the scan was not measured — an engine did not run, **or nothing was examined**, **or two components disagreed about what was in scope** — so
 its zero findings say nothing about the target. Read the `engines` block in the

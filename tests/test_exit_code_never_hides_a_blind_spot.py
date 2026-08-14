@@ -593,7 +593,11 @@ def test_the_wide_secrets_walk_does_not_run_when_secrets_is_not_selected(tmp_pat
         _run([str(tmp_path), "--engines", "aisec", "--format", "json",
               "--out", str(out), "--quiet"])
 
-    wide = [w for w in walks if w is core.SECRETS_SKIP_DIRS]
+    # `==`, not `is`. An independent reviewer mutation-proved the identity form
+    # evadable: re-introduce the defect but pass `set(core.SECRETS_SKIP_DIRS)`
+    # (a copy) and the test goes GREEN while 111k files are opened for an engine
+    # that never runs. Comparing by value cannot be dodged that way.
+    wide = [w for w in walks if w == core.SECRETS_SKIP_DIRS]
     assert not wide, (
         f"the wide secrets walk ran for --engines aisec; {len(walks)} walk(s) total. "
         f"On a real repo that is 111,605 files opened for an engine that never runs."

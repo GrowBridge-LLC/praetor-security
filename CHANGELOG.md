@@ -186,7 +186,12 @@ On a real repo this fired for real: a file **shipped by `joblib`** to test encod
 handling is deliberately non-UTF-8, so any target with joblib in a venv lost its
 entire secrets scan — measured **82 active findings → 0**.
 
-Fixed at the root: `read_text` falls back to `surrogateescape`, which never raises
+🔴 **SUPERSEDED — REVERTED THE SAME DAY** (see the `revert(core)` entry above).
+The fallback traded a loud failure for a SILENT MISS. The `after` row below is **no
+longer current**; at HEAD the same tree produces the `before` row, and the joblib
+regression is back BY DESIGN. Kept for the measurement.
+
+Was: fixed at the root: `read_text` falls back to `surrogateescape`, which never raises
 and is byte-for-byte reversible, so the smuggled-code-point guarantee still holds.
 Decodable files are untouched — the fallback runs only where the old path crashed.
 
@@ -197,13 +202,19 @@ only content was an `os.system` concat under `vendor/` went from **exit 3 to exi
 0**, and under `--engines sast` the floor was suppressed by a walk belonging to an
 engine the operator had switched **off**.
 
-⇒ **A floor may only be satisfied by work a SELECTED engine actually did.**
+⇒ **INTENT: a floor should only be satisfied by work a SELECTED engine actually
+did.** ⚠️ **THE SHIPPED FLOOR DOES NOT IMPLEMENT THIS.** It keys on `scan_files`,
+computed unconditionally, with no reference to engine selection. Demonstrated both
+ways: a `README.md` the SAST engine never opened satisfies the floor under
+`--engines sast`; and `--engines secrets` on a vendor-only tree prints "NOTHING WAS
+EXAMINED" while the same run reports `secret_file_count: 1` and `secrets: ok`.
+Recorded as intent, not as behaviour.
 Reverted, and now pinned by a test — the clause had none in either direction, so
 mutating it back left the whole suite green.
 
 ### 🔴 Security — the skip list was an attacker-controlled scope boundary
 
-`core.DEFAULT_SKIP_DIRS` is 30 directory names the walker will not enter, and
+`core.DEFAULT_SKIP_DIRS` is 36 directory names the walker will not enter, and
 **the scanned tree chooses its own directory names.** Measured, all engines, on a
 live-shaped credential:
 
