@@ -558,3 +558,48 @@ def test_the_report_carries_both_file_counts(tmp_path):
         f"vs {meta['file_count']}"
     )
     assert data["findings"], "premise: the vendored credential must be found"
+
+
+def test_the_wide_secrets_walk_does_not_run_when_secrets_is_not_selected(tmp_path):
+    """Found by an independent reviewer, not by this suite.
+
+    The wide walk opens every vendored and build file in the tree. Doing it for
+    `--engines sast` was pure waste -- measured at 111,605 files / 1,739 MB on a
+    real repo, to produce a number nothing consumed -- and it made the report
+    claim `secret_file_count` for an engine that never ran.
+
+    `None`, not 0: "the engine read nothing" and "the engine was not asked" are
+    different facts, and reporting 0 for the second is the same one-word-two-facts
+    defect as `unavailable` was before it was split.
+    """
+    (tmp_path / "vendor").mkdir()
+    (tmp_path / "vendor" / "a.py").write_text("x = 1" + chr(10), encoding="utf-8")
+    (tmp_path / "app.py").write_text("y = 2" + chr(10), encoding="utf-8")
+    out = tmp_path / "o"
+
+    # Count the WALKS, not just the reported number. A first version of this test
+    # asserted only `secret_file_count is None` -- and a mutation that made the
+    # walk run unconditionally left it GREEN, because the count is set by a
+    # separate expression. The waste is the walk; assert the walk.
+    walks = []
+    real_walk = core.walk_files
+
+    def counting_walk(target, **kw):
+        walks.append(kw.get("skip_dirs"))
+        return real_walk(target, **kw)
+
+    import unittest.mock as _m
+    with _m.patch.object(core, "walk_files", counting_walk):
+        _run([str(tmp_path), "--engines", "aisec", "--format", "json",
+              "--out", str(out), "--quiet"])
+
+    wide = [w for w in walks if w is core.SECRETS_SKIP_DIRS]
+    assert not wide, (
+        f"the wide secrets walk ran for --engines aisec; {len(walks)} walk(s) total. "
+        f"On a real repo that is 111,605 files opened for an engine that never runs."
+    )
+    meta = json.loads((out / "praetor-report.json").read_text(encoding="utf-8"))["meta"]
+    assert meta["secret_file_count"] is None, (
+        f"secrets was not selected, so there is no count to report; got "
+        f"{meta['secret_file_count']!r}"
+    )

@@ -227,6 +227,13 @@ def test_the_runtime_probes_never_receive_the_target_at_all(monkeypatch):
             stderr = ""
         return _R()
 
+    # 🔴 STUB `which` TOO, or this test is HOST-DEPENDENT. Every probe sits behind
+    # `shutil.which(...)`, so on a machine with no semgrep/wsl/docker -- i.e. every
+    # CI runner, since the invariants job installs no tools -- detect_runtime makes
+    # ZERO calls and the arming assertion below fails. Found by an independent
+    # reviewer before this ever ran in CI; the suite is green locally only because
+    # this box happens to have wsl.
+    monkeypatch.setattr(engine_sast.shutil, "which", lambda name: "/usr/bin/" + name)
     monkeypatch.setattr(_core, "run_tool", fake_run_tool)
     for prefer in ("native", "wsl", "docker", "auto"):
         try:

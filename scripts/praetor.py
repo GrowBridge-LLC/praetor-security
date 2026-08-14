@@ -436,8 +436,16 @@ def main(argv=None):
     # scanning it explodes semgrep's target count). Skipping it for SECRETS is
     # not: a credential committed there is disclosed exactly as much as one at the
     # root. Same target, same excludes, same size cap -- only the skip list differs.
-    secret_files = core.walk_files(target, skip_dirs=core.SECRETS_SKIP_DIRS,
-                                   max_bytes=args.max_file_size, extra_excludes=args.exclude)
+    # ⚠️ ONLY WHEN THE ENGINE THAT USES IT IS SELECTED. This walk opens every
+    # vendored and build file in the tree; doing it for `--engines sast` was pure
+    # waste, and it also made the report claim `secret_file_count` for an engine
+    # that never ran. Measured on a real repo: 111,605 files / 1,739 MB walked to
+    # produce a number nothing consumed.
+    secret_files = (
+        core.walk_files(target, skip_dirs=core.SECRETS_SKIP_DIRS,
+                        max_bytes=args.max_file_size, extra_excludes=args.exclude)
+        if "secrets" in engines else []
+    )
     _log(args.quiet, f"  enumerated {len(scan_files)} text file(s)"
                      f" ({len(secret_files)} for secrets)")
 
@@ -554,7 +562,10 @@ def main(argv=None):
         "timestamp": report.now_iso(),
         "version": VERSION,
         "file_count": len(scan_files),
-        "secret_file_count": len(secret_files),
+        # None, not 0, when secrets did not run: "the engine read nothing" and
+        # "the engine was not asked" are different facts, and reporting 0 for the
+        # second is the same one-word-two-facts defect as `unavailable` was.
+        "secret_file_count": (len(secret_files) if "secrets" in engines else None),
         "engines": engine_meta,
         "min_severity": args.min_severity,
     }
