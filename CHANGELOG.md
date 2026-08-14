@@ -12,6 +12,33 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Added — an external code reviewer, and what it caught immediately
+
+Six independent adversarial audit passes ran over this range across three rounds.
+An external reviewer's **first** pass found two defects none of them reported:
+
+- **A test that only passed on a host with the tools installed.** Every runtime
+  probe sits behind `shutil.which(...)`, so on a machine with none — i.e. every CI
+  runner, since the invariants job installs no tools by design — `detect_runtime`
+  makes **zero** calls and the arming assertion fails. Measured: 0 probe calls
+  without the stub, 6 with it. **This would have turned CI red on the first push;**
+  the suite was green locally only because this box happens to have WSL.
+- **A wide walk for an engine that never ran.** The secrets walk opens every
+  vendored and build file in the tree, and ran even for `--engines sast` — measured
+  at 111,605 files / 1,739 MB to produce a number nothing consumed. It also reported
+  `secret_file_count` for an engine that had not scanned. That count is now `None`
+  rather than `0`: *"read nothing"* and *"was not asked"* are different facts, and
+  reporting `0` for the second is the same one-word-two-facts defect as
+  `unavailable` before it was split.
+
+Two further findings are recorded and **open**: `--exclude` is compiled as a regex
+by PRAETOR and passed as a glob to semgrep (two pattern languages, one user input),
+and reporting `ok` after the ignore-flag fallback is indefensible because scope is
+target-controlled by construction at that point.
+
+⇒ The full record, with reproductions and the scope/cost measurements behind it, is
+`references/audits/2026-08-13-scope-and-cost-research.md`.
+
 ### 🔴 Reverted — the decode fallback traded a loud failure for a silent miss
 
 Added and reverted the same day, on a 2× independent audit. **The fallback made
