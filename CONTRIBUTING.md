@@ -12,7 +12,7 @@ get wrong — particularly why secrets are exempt from context-based suppression
 ## Setup
 
 ```bash
-git clone https://github.com/GrowDev1/praetor-security
+git clone https://github.com/GrowBridge-LLC/praetor-security
 cd praetor-security
 pip install -e ".[dev]"
 python -m pytest tests/ -q

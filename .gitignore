@@ -38,3 +38,8 @@ dist/
 # Cargo.lock IS committed on purpose -- this workspace ships a binary, and a
 # security tool's users should be able to reproduce the exact dependency set
 # that was audited. (Libraries conventionally omit it; applications do not.)
+# Machine-local Codex configuration and generated hook state.
+/.codex/config.toml
+/.codex/hooks/*.log
+/.codex/hooks/.*checkpoint
+/.codex/hooks/*-status.json

@@ -48,7 +48,7 @@ the name is unregistered. (Do not reach for `pip install praetor` either: that n
 to an unrelated project.) Install from source:
 
 ```bash
-git clone https://github.com/GrowDev1/praetor-security
+git clone https://github.com/GrowBridge-LLC/praetor-security
 cd praetor-security
 pip install .          # provides the `praetor` command
 praetor --version

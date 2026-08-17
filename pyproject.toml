@@ -47,8 +47,8 @@ dev = ["pytest>=7", "pyyaml"]
 praetor = "praetor:main"
 
 [project.urls]
-Repository = "https://github.com/GrowDev1/praetor-security"
-Issues = "https://github.com/GrowDev1/praetor-security/issues"
+Repository = "https://github.com/GrowBridge-LLC/praetor-security"
+Issues = "https://github.com/GrowBridge-LLC/praetor-security/issues"
 
 [tool.setuptools]
 package-dir = { "" = "scripts" }
