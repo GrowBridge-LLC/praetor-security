@@ -210,6 +210,48 @@ def test_a_marker_inside_a_string_literal_does_not_suppress(tmp_path):
     assert doc["findings"], "a marker inside a string literal is not an authored suppression"
 
 
+def test_a_markdown_heading_is_not_a_code_comment(tmp_path):
+    """A heading is rendered agent-facing content, not an inert code comment."""
+    (tmp_path / "heading.md").write_text("# " + _PAYLOAD + "\n", encoding="utf-8")
+
+    rc, doc = _scan(tmp_path, "--engines", "aisec", "--fail-on", "HIGH")
+    active = [f for f in doc["findings"] if f["rule_id"] == "agent-directed-imperative"]
+    reasons = [f.get("filter_reason", "") for f in doc["filtered"]]
+
+    assert "behavioural pattern appears in a code comment, which cannot execute" not in reasons, (
+        "a Markdown heading must not receive the code-comment suppression reason; "
+        f"filtered reasons={reasons}"
+    )
+    assert active, (
+        "SUPPRESSION PRIMITIVE: a Markdown heading was classified as a code comment, "
+        "so an agent-facing imperative vanished from active findings. "
+        f"filtered reasons={reasons}"
+    )
+    assert rc == 1, f"the active HIGH heading finding must fail the gate, got {rc}"
+
+
+def test_a_yaml_url_path_cannot_carry_an_inline_ignore_marker(tmp_path):
+    """YAML has `#`, never `//`; a URL is data rather than an ignore comment."""
+    (tmp_path / "workflow.yml").write_text(
+        "command: " + _PAYLOAD + " via https://ci.example/nosec/run\n",
+        encoding="utf-8",
+    )
+
+    rc, doc = _scan(tmp_path, "--engines", "aisec", "--fail-on", "HIGH")
+    active = [f for f in doc["findings"] if f["rule_id"] == "agent-directed-imperative"]
+    reasons = [f.get("filter_reason", "") for f in doc["filtered"]]
+
+    assert "suppressed by inline ignore marker on the flagged line" not in reasons, (
+        "a URL path is not a YAML comment and must not receive the inline-ignore reason; "
+        f"filtered reasons={reasons}"
+    )
+    assert active, (
+        "SUPPRESSION PRIMITIVE: `/nosec/` inside a YAML URL was interpreted as a "
+        f"comment marker. filtered reasons={reasons}"
+    )
+    assert rc == 1, f"the active HIGH YAML finding must fail the gate, got {rc}"
+
+
 # --------------------------------------------------------------------------- #
 # 3. walker reachability
 # --------------------------------------------------------------------------- #

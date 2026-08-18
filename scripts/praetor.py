@@ -215,7 +215,7 @@ def _apply_inline_ignores(findings, target, read_text):
             # Only the COMMENT part of the line can carry a marker, and only as a
             # whole word. lexctx owns what a comment is -- praetor.py must not
             # grow a second, divergent idea of comment syntax.
-            comment = lexctx.comment_text(lines[f.line - 1])
+            comment = lexctx.comment_text(lines[f.line - 1], f.file)
             if comment and _IGNORE_WORD_RE.search(comment):
                 f.filtered = True
                 f.filter_reason = "suppressed by inline ignore marker on the flagged line"
@@ -376,7 +376,7 @@ def _apply_lexical_context(findings, target, read_text):
         ap = os.path.join(target, f.file.replace("/", os.sep))
         if ap not in cache:
             cache[ap] = read_text(ap) or ""
-        ctx = lexctx.context_of(cache[ap], f.line)
+        ctx = lexctx.context_of(cache[ap], f.line, f.file)
         reason = _LEXCTX_REASONS.get(ctx)
         if reason:
             f.filtered = True

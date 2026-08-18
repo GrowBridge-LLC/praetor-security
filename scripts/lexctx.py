@@ -80,10 +80,46 @@ def _strip_inline_strings(line: str) -> str:
 #: ini/asm (`; nosec`), MATLAB/TeX (`% nosec`) or VB (`' nosec`) is NOT honoured
 #: and the finding is KEPT. That is the safe direction, and it is the whole
 #: reason those are absent.
-COMMENT_INTRODUCERS = ("#", "//", "/*", "<!--")
+_HASH_COMMENT_EXTENSIONS = frozenset({
+    ".py", ".pyi", ".pyw", ".sh", ".bash", ".zsh", ".fish", ".ps1",
+    ".yml", ".yaml", ".toml", ".ini", ".cfg", ".conf", ".env",
+    ".rb", ".pl", ".r",
+})
+_SLASH_COMMENT_EXTENSIONS = frozenset({
+    ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".cs", ".go",
+    ".java", ".js", ".jsx", ".ts", ".tsx", ".kt", ".kts", ".php",
+    ".rs", ".swift",
+})
+_MARKUP_COMMENT_EXTENSIONS = frozenset({".html", ".htm", ".xml", ".svg", ".md", ".mdx"})
+_PYTHON_EXTENSIONS = frozenset({".py", ".pyi", ".pyw"})
 
 
-def comment_text(line: str, introducers=COMMENT_INTRODUCERS) -> str:
+def _extension(file_identity: str) -> str:
+    """Return a lower-case suffix without touching the scanned path."""
+    name = str(file_identity or "").replace("\\", "/").rsplit("/", 1)[-1]
+    return "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
+
+
+def comment_introducers(file_identity: str) -> tuple:
+    """Comment introducers this conservative lexer can prove for this file type.
+
+    File identity is mandatory: deciding from the text alone made a Markdown
+    heading and a YAML URL look like inert code comments. Unknown formats return
+    no introducers, so ambiguous text is CODE and its finding is kept. Block
+    comments are intentionally not recognised for C-like files because this
+    line-oriented lexer cannot prove where a multi-line block ends.
+    """
+    ext = _extension(file_identity)
+    if ext in _HASH_COMMENT_EXTENSIONS:
+        return ("#",)
+    if ext in _SLASH_COMMENT_EXTENSIONS:
+        return ("//",)
+    if ext in _MARKUP_COMMENT_EXTENSIONS:
+        return ("<!--",)
+    return ()
+
+
+def comment_text(line: str, file_identity: str) -> str:
     """Return the COMMENT portion of a single line, or "" if it has none.
 
     String literals are blanked first, so a marker inside a string -- `x = "# nosec"`,
@@ -93,25 +129,28 @@ def comment_text(line: str, introducers=COMMENT_INTRODUCERS) -> str:
     """
     bare = _strip_inline_strings(line)
     first = None
-    for intro in introducers:
+    for intro in comment_introducers(file_identity):
         idx = bare.find(intro)
         if idx != -1 and (first is None or idx < first):
             first = idx
     return "" if first is None else bare[first:]
 
 
-def classify_lines(text: str, comment_prefixes=("#",)) -> list:
+def classify_lines(text: str, file_identity: str) -> list:
     """
     Return a per-line context label for `text` (1 label per line, index 0 = line 1).
 
-    Handles the two structures that actually matter for this scanner's noise:
-      * whole-line and trailing `#` comments
-      * triple-quoted blocks (treated as DOCSTRING wherever they appear)
+    Handles the structures the file type can support safely: its proven
+    single-line comment introducer, plus triple-quoted docstrings for Python
+    files only. A line that needs a richer grammar is CODE and its finding is
+    kept rather than suppressed.
 
     ⚠️ Approximate by construction, in the SAFE direction: anything it cannot
     confidently prove is inert is labelled CODE, so an unclear case is KEPT
     rather than suppressed. Nested/escaped exotica resolves to CODE.
     """
+    comment_prefixes = comment_introducers(file_identity)
+    allow_docstrings = _extension(file_identity) in _PYTHON_EXTENSIONS
     labels, in_triple, delim = [], False, None
 
     # 🔴 split_lines, never str.splitlines. This list is indexed BY LINE NUMBER
@@ -128,10 +167,11 @@ def classify_lines(text: str, comment_prefixes=("#",)) -> list:
         stripped = raw.strip()
 
         opened = None
-        for t in _TRIPLES:
-            if t in raw:
-                opened = t
-                break
+        if allow_docstrings:
+            for t in _TRIPLES:
+                if t in raw:
+                    opened = t
+                    break
 
         if opened is not None:
             # A triple-quote that opens and closes on the same line is a
@@ -158,9 +198,9 @@ def classify_lines(text: str, comment_prefixes=("#",)) -> list:
     return labels
 
 
-def context_of(text: str, lineno: int, comment_prefixes=("#",)) -> str:
+def context_of(text: str, lineno: int, file_identity: str) -> str:
     """Context label for a single 1-based line. Out-of-range resolves to CODE."""
-    labels = classify_lines(text, comment_prefixes)
+    labels = classify_lines(text, file_identity)
     if not (1 <= lineno <= len(labels)):
         return CODE
     return labels[lineno - 1]

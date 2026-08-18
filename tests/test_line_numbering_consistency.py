@@ -105,7 +105,7 @@ def _one_finding(line):
     """A minimal stand-in for a real finding at a \\n-based line number."""
     return core.Finding(engine="aisec", rule_id="invisible-unicode",
                         title="t", severity=core.Severity.MEDIUM,
-                        file="evil.txt", line=line)
+                        file="evil.py", line=line)
 
 
 def test_ignore_marker_on_an_unrelated_line_cannot_suppress_a_finding():
@@ -160,7 +160,7 @@ def test_lexical_labels_line_up_with_newline_based_line_numbers():
     """
     text = "# a comment" + _LS + "# another comment" + _NL + "run_payload()" + _NL
 
-    labels = lexctx.classify_lines(text)
+    labels = lexctx.classify_lines(text, "sample.py")
     assert len(labels) == 2, (
         f"classify_lines produced {len(labels)} labels for a 2-line file; it is splitting "
         f"on something other than \\n, so every label is offset from its line number"

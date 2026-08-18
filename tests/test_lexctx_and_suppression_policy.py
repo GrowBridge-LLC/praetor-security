@@ -37,7 +37,7 @@ def test_whole_line_and_trailing_comments_are_comments():
         f"# {_PIPE}\n"
         f"y = 2  # {_PIPE}\n"
     )
-    labels = lexctx.classify_lines(src)
+    labels = lexctx.classify_lines(src, "sample.py")
     assert labels[0] == lexctx.CODE
     assert labels[1] == lexctx.COMMENT
     assert labels[2] == lexctx.COMMENT
@@ -51,7 +51,7 @@ def test_triple_quoted_block_is_docstring_throughout():
         '    """\n'
         '    return 1\n'
     )
-    labels = lexctx.classify_lines(src)
+    labels = lexctx.classify_lines(src, "sample.py")
     assert labels[1] == lexctx.DOCSTRING
     assert labels[2] == lexctx.DOCSTRING
     assert labels[4] == lexctx.CODE
@@ -60,12 +60,12 @@ def test_triple_quoted_block_is_docstring_throughout():
 def test_hash_inside_a_string_is_not_a_comment():
     """A `#` inside a literal must not turn live code into an inert-looking line."""
     src = 'url = "https://example.test/#fragment"\n'
-    assert lexctx.classify_lines(src)[0] == lexctx.CODE
+    assert lexctx.classify_lines(src, "sample.py")[0] == lexctx.CODE
 
 
 def test_out_of_range_line_resolves_to_code_not_crash():
     """Fail safe: an unknown line is KEPT, never suppressed."""
-    assert lexctx.context_of("x = 1\n", 99) == lexctx.CODE
+    assert lexctx.context_of("x = 1\n", 99, "sample.py") == lexctx.CODE
 
 
 # --------------------------------------------------------------------------- #

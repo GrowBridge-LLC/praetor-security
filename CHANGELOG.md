@@ -12,6 +12,12 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+- **Comment-based suppression is now file-type-aware.** Markdown headings and
+  YAML URL paths can no longer impersonate comments to hide an AI-security
+  finding. Inline-ignore and lexical-context decisions receive the finding's
+  file identity; unknown syntax remains code and keeps the finding. Real Python
+  `#` comments retain their explicit, auditable suppression behavior.
+
 - **Breaking report-only exit behavior: an enabled engine error now exits `3`
   even without `--fail-on`.** This closes `praetor . && deploy` proceeding after
   the scanner itself broke. A missing runtime remains the deliberate report-only

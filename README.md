@@ -216,6 +216,11 @@ anything:
 | **reachability** | the matched string provably never reaches a dangerous sink (`exec`, shell, filesystem, network). Python, intra-file |
 | **heuristics** | example/template env files, integrity hashes in lockfiles, low-confidence phrasing in docs |
 
+Comment syntax is selected from the flagged file's type, never inferred from a
+line alone: a Markdown heading and `//` within a YAML URL are content, not an
+authorization to suppress. Unknown file types fail safe to code and keep the
+finding.
+
 Nothing is deleted. Suppressed findings move to the **FILTERED** bucket carrying
 the reason, so you can audit every suppression rather than trust it.
 

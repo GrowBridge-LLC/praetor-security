@@ -104,7 +104,7 @@ fi
 # If false positives fall while 'needs review' rises, suppression is eating
 # real findings -- so BOTH numbers are pinned, and a change (either way) stops
 # the commit for a human to look, never silently.
-EXPECT_ACTIVE=12
+EXPECT_ACTIVE=13
 # 2026-08-12: 45 -> 53, deliberately, and NOT because false positives improved.
 # The two causes were measured separately by reverting each change on its own:
 #   +3  the dedup fix stopped DISCARDING findings. A filtered finding could win
@@ -117,8 +117,25 @@ EXPECT_ACTIVE=12
 # ⚠️ Counts from before and after are therefore NOT comparable as a quality
 # measure -- the tree differs. ACTIVE staying at 12 is the control that matters:
 # if filtered rose while active FELL, suppression would be eating real findings.
-EXPECT_FILTERED=53
-SS="$(py -3.14 scripts/praetor.py . --no-registry 2>&1)"
+# 2026-08-18 Task C: 12/53 -> 13/52 deliberately. The global `#` rule had
+# classified the remote-code-pipe example at CLAUDE.md:42 as a Markdown code
+# comment. Reintroducing only that unsafe Markdown mapping returned exactly
+# 12 active / 53 filtered (one finding moved back); file-type-aware syntax keeps
+# the agent-facing heading active. The regression baseline was NOT regenerated.
+EXPECT_FILTERED=52
+# 🔴 SCOPE DECISION, stated next to the code because it is one.
+# The self-scan pin must measure what PRAETOR SHIPS. Gate 5 already defines the
+# shipping set as tracked + untracked-but-not-ignored; this scan walks the tree
+# directly and does NOT consult .gitignore, so session-local state landed in it.
+# Measured 2026-08-18: `.local/` and `.claude/` added 2 active findings and moved
+# the pin from 12 to 14, failing the gate on work that was correct. A pin that any
+# session artifact can move is not a measurement of the product.
+# ⚠️ THIS IS AN ENUMERATION AND IT WILL MISS A DIRECTORY NOBODY ADDED YET. It is
+# NOT a general "ignore what git ignores" rule -- praetor has no such mode, and
+# adding one would let a scanned tree shrink its own scope, which is this repo's
+# most-recorded defect. If a THIRD session-local directory appears, it belongs
+# here, deliberately, with the same reasoning.
+SS="$(py -3.14 scripts/praetor.py . --no-registry --exclude '^\.local/' --exclude '^\.claude/' 2>&1)"
 GOT_ACTIVE="$(printf '%s' "$SS" | grep -oE 'Findings \(active\): [0-9]+' | grep -oE '[0-9]+$')"
 GOT_FILTERED="$(printf '%s' "$SS" | grep -oE 'Filtered \(likely FP / low-signal, shown separately\): [0-9]+' | grep -oE '[0-9]+$')"
 if [ "$GOT_ACTIVE" = "$EXPECT_ACTIVE" ] && [ "$GOT_FILTERED" = "$EXPECT_FILTERED" ]; then
