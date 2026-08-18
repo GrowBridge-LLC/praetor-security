@@ -101,6 +101,20 @@ ENGINE_ERROR = "error"
 GATE_TRUSTED_STATUSES = frozenset({ENGINE_OK, ENGINE_NOT_APPLICABLE, ENGINE_DISABLED})
 
 
+#: Statuses that do not mean the scanner itself malfunctioned. This is a separate
+#: allowlist from GATE_TRUSTED_STATUSES because report-only runs answer a different
+#: question from findings gates: an unavailable runtime is ordinary on Windows and
+#: stays visible as [BLIND], but a launched engine returning error must never let a
+#: report-only `praetor . && deploy` pass. Unknown statuses fail closed here too.
+#:
+#: ENGINE_UNAVAILABLE is deliberately the exception. A missing Semgrep runtime is
+#: a normal environment fact; failing every report-only run would earn a `|| true`
+#: and erase the signal. Under --fail-on it remains a blind spot and blocks.
+NON_MALFUNCTION_STATUSES = frozenset({
+    ENGINE_OK, ENGINE_NOT_APPLICABLE, ENGINE_DISABLED, ENGINE_UNAVAILABLE,
+})
+
+
 def run_tool(cmd: list, timeout: int, cwd: Optional[str] = None):
     """Run an external ANALYSIS tool and capture its output as text.
 
@@ -160,6 +174,23 @@ def engine_blind_spots(engine_meta: dict) -> list:
         if status not in GATE_TRUSTED_STATUSES:
             blind.append((name, status or "?", info.get("detail", "")))
     return blind
+
+
+def engine_malfunctions(engine_meta: dict) -> list:
+    """Engines whose execution broke, independent of a findings gate.
+
+    Returns sorted ``(name, status, detail)`` triples. An engine unavailable on
+    this host is deliberately not a malfunction in a report-only run; an error or
+    an unrecognised future status is. The latter fails closed because no caller has
+    established that a new status is safe to treat as a completed scan.
+    """
+    broken = []
+    for name in sorted(engine_meta or {}):
+        info = engine_meta[name] or {}
+        status = info.get("status", "")
+        if status not in NON_MALFUNCTION_STATUSES:
+            broken.append((name, status or "?", info.get("detail", "")))
+    return broken
 
 
 #: Statuses under which an engine actually LOOKED at the target.

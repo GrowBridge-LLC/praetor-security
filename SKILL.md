@@ -77,10 +77,12 @@ Key options (see `--help` for all): `--engines`, `--format {text,json,both}`,
 `--sca-backend {auto,osv,pip-audit,npm}`,
 `--semgrep-runtime {auto,native,wsl,docker}`, `--no-registry`, `--exclude REGEX`.
 
-Exit codes: `0` no active findings at or above `--fail-on` — **`NO FINDING`, never `SAFE`**, and *without* `--fail-on` it does not assert that anything was measured at all, `1` findings
+Exit codes: `0` no active findings at or above `--fail-on` — **`NO FINDING`, never `SAFE`**, `1` findings
 at/above `--fail-on`, `2` usage/internal error, `3` **the scan was not
-measured** under `--fail-on` — an engine errored or was unavailable, zero files were
-examined, or components disagreed about scope.
+measured enough to pass**. An enabled engine error returns `3` even without
+`--fail-on`; an unavailable runtime remains `[BLIND]` but returns `0` by default,
+then returns `3` under `--fail-on`. Zero files and scope disagreement return `3`
+when a findings gate was requested; an unknown engine status returns `3` in either mode.
 
 🔴 **Never report exit `3` as a clean scan.** It means the scan was not measured — an engine did not run, **or nothing was examined**, **or two components disagreed about what was in scope** — so
 its zero findings say nothing about the target. Read the `engines` block in the

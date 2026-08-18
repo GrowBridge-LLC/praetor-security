@@ -27,14 +27,14 @@ Usage:
 
 Exit codes:
   0  no active findings at/above --fail-on. NOT a certificate of coverage:
-     without --fail-on this is returned even when an engine died or nothing
-     was examined. Only --fail-on enforces the measured-scan floors.
-     (without --fail-on, nothing fails the run: report-only by request)
+     without --fail-on, an unavailable runtime remains visible as [BLIND], but
+     an enabled engine error is a malfunction and exits 3.
   1  active findings at/above --fail-on
   2  usage / internal error
-  3  --fail-on was requested and THE SCAN WAS NOT MEASURED, so "no findings"
-     does not mean "nothing there". FOUR routes, all reported on stderr:
-       * an engine errored or its runtime was unavailable;
+  3  THE SCAN DID NOT COMPLETE safely enough to pass. An enabled engine error or
+     unrecognised status reaches 3 even without --fail-on; an explicit findings gate also returns 3
+     for these blind-spot routes:
+       * an unavailable runtime;
        * zero files were examined (a byte cap or --exclude emptied the tree);
        * two components disagreed about scope -- PRAETOR enumerated code and
          semgrep opened none of it, which is how a file in the scanned repo
@@ -42,7 +42,7 @@ Exit codes:
        * every engine held a TRUSTED status and none of them measured
          ("NOTHING WAS MEASURED") -- the `--engines ""` family.
      (This list said THREE until an independent reviewer counted the fourth.)
-     Suppress with --allow-degraded if you knowingly gate on a partial scan.
+     Suppress with --allow-degraded if you knowingly accept a partial scan.
 
   🔴 1 outranks 3: real findings are the more actionable signal. Both are
   non-zero, so a gate that only tests `if rc != 0` fails safe either way.
@@ -138,10 +138,11 @@ def parse_args(argv):
                    choices=["", "INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"],
                    help="Exit 1 if any active finding is at/above this severity (default: never fail). "
                         "Exit 3 if the scan was not measured: an engine failed, zero files were "
-                        "examined, or components disagreed about scope. See --allow-degraded.")
+                        "examined, or components disagreed about scope. An engine failure also exits "
+                        "3 without --fail-on. See --allow-degraded.")
     p.add_argument("--allow-degraded", action="store_true",
-                   help="With --fail-on, do NOT exit 3 when an engine errored or was unavailable. "
-                        "Gates on findings alone, knowingly accepting an unmeasured blind spot.")
+                   help="Do NOT exit 3 for a degraded scan, with or without --fail-on. "
+                        "Knowingly accepts an unmeasured blind spot.")
     p.add_argument("--sca-backend", default="auto",
                    choices=["auto", "osv", "pip-audit", "npm"],
                    help="SCA backend preference (default: auto = osv -> pip-audit -> npm).")
@@ -427,7 +428,6 @@ def main(argv=None):
             "result. If a CI variable expanded to empty here, that is the bug.\n"
         )
         return 2
-
     _log(args.quiet, f"praetor {VERSION}: scanning {target}")
 
     # Enumerate scannable text files exactly once (shared by secrets + aisec).
@@ -444,6 +444,12 @@ def main(argv=None):
     # waste, and it also made the report claim `secret_file_count` for an engine
     # that never ran. Measured on a real repo: 111,605 files / 1,739 MB walked to
     # produce a number nothing consumed.
+    #
+    # Git status is deliberately NOT a secrets scope boundary. An ignored file is
+    # a common place for a live credential, and `.gitignore` is target-controlled;
+    # narrowing this walk to Git's tracked/unignored list turned a detectable
+    # ignored config file into a successful clean result. The cost is real, but
+    # recall is not an implicit speed trade an operator has authorized.
     secret_files = (
         core.walk_files(target, skip_dirs=core.SECRETS_SKIP_DIRS,
                         max_bytes=args.max_file_size, extra_excludes=args.exclude)
@@ -681,6 +687,24 @@ def main(argv=None):
             sys.stderr.write(
                 "  Every engine's silence was individually trustworthy and none of "
                 "them ran. That is not a clean result.\n"
+            )
+            return 3
+    elif not args.allow_degraded:
+        # Report-only means findings do not choose the exit code. It does not mean
+        # an enabled engine that launched and broke can be reported as a successful
+        # run: `praetor . && deploy` must stop on that malfunction. Do NOT reuse
+        # engine_blind_spots here -- an unavailable runtime is the deliberate normal
+        # Windows carve-out in core.NON_MALFUNCTION_STATUSES and stays visible in
+        # the report without forcing every report-only scan non-zero.
+        broken = core.engine_malfunctions(engine_meta)
+        if broken:
+            sys.stderr.write("praetor: ENGINE MALFUNCTION -- the scan did not complete.\n")
+            for name, status, detail in broken:
+                sys.stderr.write(f"  [{status}] {name}: {detail}\n")
+            sys.stderr.write(
+                "  This is a report-only run, not permission to treat a broken engine "
+                "as a successful scan. Re-run after repair, or pass --allow-degraded "
+                "to knowingly accept the blind spot.\n"
             )
             return 3
     return 0

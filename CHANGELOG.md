@@ -12,6 +12,19 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+- **Breaking report-only exit behavior: an enabled engine error now exits `3`
+  even without `--fail-on`.** This closes `praetor . && deploy` proceeding after
+  the scanner itself broke. A missing runtime remains the deliberate report-only
+  carve-out (`[BLIND]`, exit `0`) because it is normal on many Windows hosts; it
+  still exits `3` under `--fail-on`. `--allow-degraded` is the explicit opt-out
+  for either mode.
+
+- **Wide secrets scans retain the complete source/config-like file scope.** A
+  target-controlled `.gitignore` is not a scope boundary: ordinary ignored files
+  remain eligible because live credentials commonly live in local configuration.
+  The wide walk runs only when the secrets engine is selected, so other engines
+  do not pay this cost.
+
 ### Added — an external code reviewer, and what it caught immediately
 
 Six independent adversarial audit passes ran over this range across three rounds.

@@ -126,7 +126,7 @@ python scripts/praetor.py /path/to/target --fail-on HIGH --format json
 | `--out DIR` | Write `praetor-report.txt` / `.json` to DIR |
 | `--min-severity` | Hide active findings below this level |
 | `--fail-on` | Exit 1 if any active finding is at/above this level; exit 3 if the scan was not measured |
-| `--allow-degraded` | With `--fail-on`, gate on findings alone and accept an unmeasured engine |
+| `--allow-degraded` | Accept a degraded scan's blind spot instead of exit 3, with or without `--fail-on` |
 | `--sca-backend` | `auto` (default), `osv`, `pip-audit`, `npm` |
 | `--semgrep-runtime` | `auto` (default), `native`, `wsl`, `docker` |
 | `--no-registry` | Bundled Semgrep rules only; no network fetch |
@@ -134,9 +134,8 @@ python scripts/praetor.py /path/to/target --fail-on HIGH --format json
 | `--exclude REGEX` | Exclude matching relative paths (repeatable) |
 | `--max-file-size` | Skip files larger than N bytes (default 3 MB) |
 
-Exit codes: `0` no active findings at or above `--fail-on` — **`NO FINDING`, never `SAFE`**, and *without* `--fail-on` it does not assert that anything was measured at all, `1` findings
-at/above `--fail-on`, `2` usage/internal error, `3` `--fail-on` was requested but
-the scan **was not measured**. That covers more than a dead engine: an engine errored or its runtime was unavailable; **or zero files were examined** (a byte cap or exclude pattern emptied the tree); **or PRAETOR and semgrep disagreed about scope** — we enumerated code here and semgrep opened none of it. In every case the stderr names which, and what to change.
+Exit codes: `0` no active findings at or above `--fail-on` — **`NO FINDING`, never `SAFE`**, `1` findings
+at/above `--fail-on`, `2` usage/internal error, `3` the scan **was not measured enough to pass**. An enabled engine error or unrecognised status exits `3` even without `--fail-on`: report-only automation must not proceed after the scanner itself broke. An unavailable runtime is the deliberate report-only carve-out (it remains `[BLIND]` and exits `0` by default), but it still exits `3` under `--fail-on`. Zero files examined and PRAETOR/Semgrep scope disagreement also exit `3` under `--fail-on`. In every case the stderr names which and what to change.
 
 🔴 **`3` exists because "no findings" and "nothing ran" are not the same result.**
 An engine that dies produces zero findings for a reason that has nothing to do

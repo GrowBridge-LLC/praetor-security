@@ -64,6 +64,16 @@ def _break_secrets(monkeypatch):
     monkeypatch.setattr(engine_secrets, "scan", boom)
 
 
+def _set_sast_status(monkeypatch, status, detail="simulated SAST status"):
+    """Return a status through the real SAST-to-engine-meta wiring."""
+    monkeypatch.setattr(
+        engine_sast,
+        "run",
+        lambda *a, **kw: {"findings": [], "status": status, "detail": detail,
+                           "runtime": "test-double"},
+    )
+
+
 def _run(argv):
     return praetor.main(argv)
 
@@ -94,6 +104,64 @@ def test_errored_engine_does_not_return_a_passing_exit_code(tmp_path, monkeypatc
     assert rc == 3, f"expected exit 3 (scan degraded), got {rc}"
 
 
+def test_errored_engine_fails_without_fail_on(tmp_path, monkeypatch, capsys):
+    """LF-2: a report-only run must not pass when an enabled engine breaks."""
+    _break_secrets(monkeypatch)
+    rc = _run([_clean_target(tmp_path), "--engines", "secrets", "--format", "json", "--quiet"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["meta"]["engines"]["secrets"]["status"] == core.ENGINE_ERROR, (
+        "fixture did not create a malfunction, so the default-exit assertion is vacuous"
+    )
+    assert rc == 3, (
+        "LF-2 REGRESSION: a report-only run with a broken enabled engine must return "
+        f"3 rather than deploy after a false exit {rc}"
+    )
+
+
+def test_unavailable_runtime_does_not_fail_a_report_only_run(tmp_path, monkeypatch, capsys):
+    """The missing-runtime carve-out remains visible but non-fatal by default."""
+    _set_sast_status(monkeypatch, core.ENGINE_UNAVAILABLE, "no SAST runtime")
+    rc = _run([_clean_target(tmp_path), "--engines", "sast", "--format", "text", "--quiet"])
+    text = capsys.readouterr().out
+
+    assert rc == 0, f"a report-only unavailable runtime is the deliberate carve-out, got {rc}"
+    assert "[BLIND]" in text, "the unavailable carve-out must be visible, not silent"
+
+
+def test_unavailable_runtime_still_blocks_a_gated_run(tmp_path, monkeypatch, capsys):
+    """The default carve-out does not weaken an operator-requested findings gate."""
+    _set_sast_status(monkeypatch, core.ENGINE_UNAVAILABLE, "no SAST runtime")
+    rc = _run([_clean_target(tmp_path), "--engines", "sast", "--fail-on", "INFO",
+               "--format", "json", "--quiet"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["meta"]["engines"]["sast"]["status"] == core.ENGINE_UNAVAILABLE, (
+        "fixture did not reach the unavailable-runtime path"
+    )
+    assert rc == 3, f"an unavailable runtime must block an explicit gate, got {rc}"
+
+
+def test_unknown_status_is_a_malfunction_by_default(tmp_path, monkeypatch, capsys):
+    """An unrecognised future status is fail-closed in the default exit path."""
+    _set_sast_status(monkeypatch, "partial", "future engine returned a partial result")
+    rc = _run([_clean_target(tmp_path), "--engines", "sast", "--format", "json", "--quiet"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["meta"]["engines"]["sast"]["status"] == "partial", (
+        "fixture did not preserve the future status through engine metadata"
+    )
+    assert rc == 3, f"an unknown status must not receive a default passing exit, got {rc}"
+
+
+def test_allow_degraded_suppresses_the_default_malfunction_exit(tmp_path, monkeypatch):
+    """The explicit opt-out also applies to LF-2's report-only malfunction exit."""
+    _break_secrets(monkeypatch)
+    rc = _run([_clean_target(tmp_path), "--engines", "secrets", "--allow-degraded",
+               "--format", "json", "--quiet"])
+    assert rc == 0, f"--allow-degraded must explicitly opt out of LF-2, got {rc}"
+
+
 def test_fully_measured_clean_scan_still_exits_zero(tmp_path):
     """THE KEEP DIRECTION. Without this, the fix and a broken gate look the same."""
     rc = _run([_clean_target(tmp_path), "--engines", "secrets", "--fail-on", "HIGH",
@@ -103,6 +171,48 @@ def test_fully_measured_clean_scan_still_exits_zero(tmp_path):
         "A gate that fails on everything gets switched off, which is the same "
         "outcome as no gate at all."
     )
+
+
+def test_gitignored_ordinary_config_file_stays_in_wide_secrets_scope(tmp_path, monkeypatch, capsys):
+    """A target's `.gitignore` must not decide whether a credential is examined.
+
+    Git narrowing would make this ordinary ignored config file disappear while
+    reporting a successful clean secrets scan. The test drives the real CLI and
+    asserts both the actionable exit and the finding's path; merely unit-testing
+    a filename predicate would not prove the secrets engine received the file.
+    """
+    (tmp_path / ".gitignore").write_text("vendor/runtime.tfvars\n", encoding="utf-8")
+    (tmp_path / "tracked.py").write_text("answer = 42\n", encoding="utf-8")
+    (tmp_path / "vendor").mkdir()
+    (tmp_path / "vendor" / "runtime.tfvars").write_text(
+        "database_url = \"postgres://admin:" + "S3cur3" + "Value9@db.example/app\"\n",
+        encoding="utf-8",
+    )
+    calls = []
+
+    class _GitResult:
+        returncode = 0
+        stdout = "tracked.py\x00"
+        stderr = ""
+
+    def git_lists_only_tracked(*args, **kwargs):
+        calls.append((args, kwargs))
+        return _GitResult()
+
+    monkeypatch.setattr(core, "run_tool", git_lists_only_tracked)
+    rc = _run([str(tmp_path), "--engines", "secrets", "--fail-on", "INFO",
+               "--format", "json", "--quiet"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert any(f["file"] == "vendor/runtime.tfvars" for f in payload["findings"]), (
+        "FALSE-CLEAN REGRESSION: an ordinary gitignored config file was omitted from "
+        "the wide secrets engine even though it contains a detectable credential"
+    )
+    assert not calls, (
+        "the secrets scope must not delegate to Git: target-controlled ignore rules "
+        "cannot decide whether an ordinary config file is examined"
+    )
+    assert rc == 1, f"a reported INFO-or-higher secret must fail this gate, got {rc}"
 
 
 def test_real_findings_outrank_degradation(tmp_path, monkeypatch, capsys):
