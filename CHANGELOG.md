@@ -31,6 +31,24 @@ Because PRAETOR is a security scanner, entries say what a change means for
   The wide walk runs only when the secrets engine is selected, so other engines
   do not pay this cost.
 
+### Added — a ninth pre-commit gate, and CodeRabbit coverage
+
+Process/tooling changes, not detection changes — recorded here because they
+landed in the same range as the entries above.
+
+- **`tests/precommit.sh` gained a ninth gate**: asserts no file under `.local/`
+  (session-local working notes — drafts, assignments, the Claude/Codex pair
+  record) is ever tracked by git, checking both the index and `HEAD` so a path
+  committed earlier and later removed from the index still trips it. `.gitignore`
+  expresses the intent; this gate enforces it, since an ignore rule alone is one
+  `git add -f` away from being wrong.
+- **Added `.coderabbit.yaml`.** This repo previously had no CodeRabbit config at
+  all, which is indistinguishable from "reviewed and clean" from the outside — a
+  reviewer that is never reached is silent in exactly the same way as one that
+  read everything and approved. `profile: assertive`, not the `chill` default,
+  because a defect here is a scanner reporting nothing found while something is
+  there.
+
 ### Added — an external code reviewer, and what it caught immediately
 
 Six independent adversarial audit passes ran over this range across three rounds.
