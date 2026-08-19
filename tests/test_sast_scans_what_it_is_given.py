@@ -20,6 +20,7 @@ command PRAETOR would run without running it, so the test does not depend on
 semgrep being installed.
 """
 
+import json
 import subprocess
 
 import engine_sast
@@ -32,7 +33,7 @@ class _FakeCompleted:
         self.stderr = ""
 
 
-def _capture_argv(monkeypatch, tmp_path):
+def _capture_argv(monkeypatch, tmp_path, scan_payload='{"results": [], "errors": []}'):
     """
     Route semgrep through a fake exec and record every argv it is handed.
 
@@ -48,7 +49,7 @@ def _capture_argv(monkeypatch, tmp_path):
         calls.append(list(cmd))
         if "--version" in cmd:
             return _FakeCompleted("1.170.0\n")
-        return _FakeCompleted('{"results": [], "errors": []}')
+        return _FakeCompleted(scan_payload)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(engine_sast.shutil, "which",
@@ -82,16 +83,78 @@ def test_semgrep_is_told_not_to_apply_gitignore(tmp_path, monkeypatch):
     )
 
 
-def test_caller_exclusions_are_still_forwarded(tmp_path, monkeypatch):
-    """Scope stays the caller's decision -- disabling git's filter is not 'scan everything'."""
+def test_caller_regex_exclusions_are_not_forwarded_as_semgrep_globs(tmp_path, monkeypatch):
+    """One option cannot mean regex to PRAETOR and glob to Semgrep.
+
+    SAST still receives the target for static analysis, then applies the caller's
+    documented regex to normalized findings. Passing it to Semgrep would make a
+    regex anchor a no-op and make a valid glob an invalid PRAETOR argument.
+    """
     (tmp_path / "t.py").write_text("import os\n", encoding="utf-8")
     rules = tmp_path / "r.yaml"
     rules.write_text("rules: []\n", encoding="utf-8")
     calls = _capture_argv(monkeypatch, tmp_path)
 
-    engine_sast.run(str(tmp_path), str(rules), use_registry=False, excludes=["node_modules"])
+    exclusion = r"^generated/"
+    engine_sast.run(str(tmp_path), str(rules), use_registry=False, excludes=[exclusion])
 
     argv = _scan_argv(calls)
-    assert "--exclude" in argv and "node_modules" in argv, (
-        f"caller exclusions must still reach semgrep: {argv}"
+    assert exclusion not in argv, (
+        "caller regexes must not be handed to Semgrep's glob-only --exclude; "
+        f"argv was: {argv}"
     )
+
+
+def test_caller_regex_exclusions_filter_normalized_sast_findings(tmp_path, monkeypatch):
+    """KEEP DIRECTION: removing Semgrep forwarding must not expose excluded findings."""
+    generated = tmp_path / "generated"
+    generated.mkdir()
+    source = generated / "app.py"
+    source.write_text("unsafe()\n", encoding="utf-8")
+    rules = tmp_path / "r.yaml"
+    rules.write_text("rules: []\n", encoding="utf-8")
+    payload = json.dumps({
+        "results": [{
+            "path": str(source),
+            "check_id": "test.rule",
+            "start": {"line": 1}, "end": {"line": 1},
+            "extra": {"severity": "WARNING", "message": "test finding", "metadata": {}},
+        }],
+        "paths": {"scanned": ["generated/app.py"]},
+    })
+    _capture_argv(monkeypatch, tmp_path, payload)
+
+    control = engine_sast.run(str(tmp_path), str(rules), use_registry=False,
+                               enumerated_code_files=1)
+    excluded = engine_sast.run(str(tmp_path), str(rules), use_registry=False,
+                                excludes=[r"^generated/"], enumerated_code_files=1)
+
+    assert control["findings"], "arming control: Semgrep result was not normalized"
+    assert excluded["findings"] == [], (
+        "the documented regex exclusion must remove the same SAST finding from "
+        f"the report; got {excluded['findings']}"
+    )
+
+
+def test_semgrep_file_errors_are_not_certified_as_a_clean_sast_scan(tmp_path, monkeypatch):
+    """A parser error is missing SAST coverage, not an ordinary zero finding."""
+    source = tmp_path / "settings.py"
+    source.write_bytes(b"\x00x = 1\n")
+    rules = tmp_path / "r.yaml"
+    rules.write_text("rules: []\n", encoding="utf-8")
+    payload = json.dumps({
+        "results": [],
+        "errors": [{"type": "ParseError", "path": str(source), "message": "invalid source"}],
+        "paths": {"scanned": ["settings.py"]},
+    })
+    _capture_argv(monkeypatch, tmp_path, payload)
+
+    res = engine_sast.run(str(tmp_path), str(rules), use_registry=False,
+                          enumerated_code_files=1)
+
+    assert res["findings"] == [], "fixture premise: Semgrep returned no findings"
+    assert res["status"] == "error", (
+        "Semgrep reported a file it could not parse, so SAST cannot claim an ok "
+        f"scan; got {res['status']!r} ({res['detail']})"
+    )
+    assert "scan errors=1" in res["detail"], "the operator needs the error count"

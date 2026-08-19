@@ -105,6 +105,48 @@ def test_fully_measured_clean_scan_still_exits_zero(tmp_path):
     )
 
 
+def test_gitignored_ordinary_config_file_stays_in_wide_secrets_scope(tmp_path, monkeypatch, capsys):
+    """A target's `.gitignore` must not decide whether a credential is examined.
+
+    Git narrowing would make this ordinary ignored config file disappear while
+    reporting a successful clean secrets scan. The test drives the real CLI and
+    asserts both the actionable exit and the finding's path; merely unit-testing
+    a filename predicate would not prove the secrets engine received the file.
+    """
+    (tmp_path / ".gitignore").write_text("vendor/runtime.tfvars\n", encoding="utf-8")
+    (tmp_path / "tracked.py").write_text("answer = 42\n", encoding="utf-8")
+    (tmp_path / "vendor").mkdir()
+    (tmp_path / "vendor" / "runtime.tfvars").write_text(
+        "database_url = \"postgres://admin:" + "S3cur3" + "Value9@db.example/app\"\n",
+        encoding="utf-8",
+    )
+    calls = []
+
+    class _GitResult:
+        returncode = 0
+        stdout = "tracked.py\x00"
+        stderr = ""
+
+    def git_lists_only_tracked(*args, **kwargs):
+        calls.append((args, kwargs))
+        return _GitResult()
+
+    monkeypatch.setattr(core, "run_tool", git_lists_only_tracked)
+    rc = _run([str(tmp_path), "--engines", "secrets", "--fail-on", "INFO",
+               "--format", "json", "--quiet"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert any(f["file"] == "vendor/runtime.tfvars" for f in payload["findings"]), (
+        "FALSE-CLEAN REGRESSION: an ordinary gitignored config file was omitted from "
+        "the wide secrets engine even though it contains a detectable credential"
+    )
+    assert not calls, (
+        "the secrets scope must not delegate to Git: target-controlled ignore rules "
+        "cannot decide whether an ordinary config file is examined"
+    )
+    assert rc == 1, f"a reported INFO-or-higher secret must fail this gate, got {rc}"
+
+
 def test_real_findings_outrank_degradation(tmp_path, monkeypatch, capsys):
     """1 beats 3: the actionable signal wins when both are true."""
     (tmp_path / "leak.py").write_text(
@@ -446,6 +488,20 @@ def test_an_empty_exclude_pattern_cannot_produce_a_clean_bill_of_health(tmp_path
     assert rc == 2, (
         f"an empty --exclude excludes the whole tree and must be rejected, got {rc}"
     )
+
+
+def test_an_invalid_exclude_regex_is_a_usage_error_not_a_finding_exit(tmp_path, capsys):
+    """`*.min.js` is a Semgrep glob, not PRAETOR's documented regex syntax.
+
+    A bare regex traceback exits 1, which this CLI reserves for security
+    findings. The operator must instead receive a clear exit-2 usage error.
+    """
+    rc = _run([_target_with_a_real_finding(tmp_path), "--engines", "secrets",
+               "--fail-on", "INFO", "--exclude", "*.min.js", "--format", "json", "--quiet"])
+    err = capsys.readouterr().err
+
+    assert rc == 2, f"an invalid --exclude regex must be usage error 2, got {rc}"
+    assert "invalid --exclude regex" in err, f"the error must name the option; stderr={err!r}"
 
 
 def test_the_floor_catches_a_route_it_was_not_written_against(tmp_path):

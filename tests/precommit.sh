@@ -118,7 +118,19 @@ EXPECT_ACTIVE=12
 # measure -- the tree differs. ACTIVE staying at 12 is the control that matters:
 # if filtered rose while active FELL, suppression would be eating real findings.
 EXPECT_FILTERED=53
-SS="$(py -3.14 scripts/praetor.py . --no-registry 2>&1)"
+# 🔴 SCOPE DECISION, stated next to the code because it is one.
+# The self-scan pin must measure what PRAETOR SHIPS. Gate 5 already defines the
+# shipping set as tracked + untracked-but-not-ignored; this scan walks the tree
+# directly and does NOT consult .gitignore, so session-local state landed in it.
+# Measured 2026-08-18: `.local/` and `.claude/` added 2 active findings and moved
+# the pin from 12 to 14, failing the gate on work that was correct. A pin that any
+# session artifact can move is not a measurement of the product.
+# ⚠️ THIS IS AN ENUMERATION AND IT WILL MISS A DIRECTORY NOBODY ADDED YET. It is
+# NOT a general "ignore what git ignores" rule -- praetor has no such mode, and
+# adding one would let a scanned tree shrink its own scope, which is this repo's
+# most-recorded defect. If a THIRD session-local directory appears, it belongs
+# here, deliberately, with the same reasoning.
+SS="$(py -3.14 scripts/praetor.py . --no-registry --exclude '^\.local/' --exclude '^\.claude/' 2>&1)"
 GOT_ACTIVE="$(printf '%s' "$SS" | grep -oE 'Findings \(active\): [0-9]+' | grep -oE '[0-9]+$')"
 GOT_FILTERED="$(printf '%s' "$SS" | grep -oE 'Filtered \(likely FP / low-signal, shown separately\): [0-9]+' | grep -oE '[0-9]+$')"
 if [ "$GOT_ACTIVE" = "$EXPECT_ACTIVE" ] && [ "$GOT_FILTERED" = "$EXPECT_FILTERED" ]; then
@@ -211,6 +223,32 @@ else
   # "DIVERGED" sends the reader to the wrong file, so print the real output.
   fail "differential gate FAILED -- run: py -3.14 $DIFF_RUNNER"
   printf '%s\n' "$DIFFOUT" | sed 's/^/      /'
+fi
+
+# ---- 9. Session-local artifacts never enter the repo -----------------------
+#
+# This repo is PUBLIC and carries private working notes locally (drafts,
+# assignments, working state). `.gitignore` expresses the intent; it does not
+# enforce it -- `git add -f` overrides an ignore rule without complaint, and an
+# edit to `.gitignore` itself silently un-ignores the whole directory.
+#
+# 🔴 THIS GATE ASSERTS TRACKED STATUS, NEVER FILE EXISTENCE. The directory is
+# SUPPOSED to exist on disk; a check on existence would fail on every clean run,
+# and a gate that fails when nothing is wrong is a gate somebody deletes.
+#
+# Both the index and HEAD are checked: `git ls-files` alone would miss a path
+# committed earlier and since removed from the index, which still ships in
+# history. (`verify-history-not-just-worktree` -- a scrubbed file at HEAD still
+# publishes its earlier commits.)
+LOCAL_DIR=".local"
+IDX_LOCAL="$(git ls-files -- "$LOCAL_DIR" 2>/dev/null)"
+HEAD_LOCAL="$(git ls-tree -r --name-only HEAD -- "$LOCAL_DIR" 2>/dev/null)"
+if [ -n "$IDX_LOCAL" ] || [ -n "$HEAD_LOCAL" ]; then
+  fail "session-local artifact is TRACKED -- it must never enter this public repo"
+  printf '%s\n%s\n' "$IDX_LOCAL" "$HEAD_LOCAL" | grep -v '^$' | head -5 | sed 's/^/          /'
+  note "untrack with: git rm --cached -r $LOCAL_DIR   (and check history if it was committed)"
+else
+  pass "no session-local artifact tracked ($LOCAL_DIR/)"
 fi
 
 echo "== $([ "$FAILED" = 0 ] && echo 'ALL GATES PASSED' || echo 'GATE(S) FAILED') =="

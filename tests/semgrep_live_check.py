@@ -38,6 +38,8 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 PRAETOR = os.path.join(HERE, "..", "scripts", "praetor.py")
 RULES = os.path.join(HERE, "..", "rules", "semgrep-praetor.yaml")
+sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
+import engine_sast
 
 # Assembled from fragments so this file does not itself trip the engine it
 # exercises -- the repo rule is "fix the fixture, not the rules".
@@ -62,6 +64,58 @@ def check(name, ok, detail=""):
     print(("  PASS  " if ok else "  FAIL  ") + name + (("  -- " + detail) if detail else ""))
     if not ok:
         failures.append(name)
+
+
+def _scanned_top_dirs(payload, root, candidates):
+    """Top-level candidate directories Semgrep says it opened in this corpus."""
+    paths = ((payload.get("paths") or {}).get("scanned") or [])
+    found = set()
+    for path in paths:
+        rel = os.path.relpath(path, root) if os.path.isabs(path) else path
+        top = rel.replace("\\", "/").split("/", 1)[0]
+        if top in candidates:
+            found.add(top)
+    return found
+
+
+def _measure_default_ignores():
+    """Measure Semgrep defaults; an upgrade must not silently change scope."""
+    candidates = set(engine_sast.SEMGREP_DEFAULT_IGNORE_DIRS)
+    # Include every directory PRAETOR's own source walk names as noise. The
+    # expected set is intentionally a subset: widening the explicit restore to
+    # this whole list was the original regression.
+    candidates |= set(engine_sast.core.DEFAULT_SKIP_DIRS)
+    with tempfile.TemporaryDirectory() as td:
+        for directory in candidates:
+            d = os.path.join(td, directory)
+            os.makedirs(d, exist_ok=True)
+            with open(os.path.join(d, "probe.py"), "w", encoding="utf-8") as fh:
+                fh.write("x = 1" + chr(10))
+        base = ["semgrep", "--config", RULES, "--json", "--quiet", "--metrics", "off",
+                "--disable-version-check", "--no-git-ignore"]
+        normal = subprocess.run(base + [td], capture_output=True, text=True,
+                                encoding="utf-8", errors="replace")
+        widened = subprocess.run(base + [engine_sast._SEMGREPIGNORE_OFF, td],
+                                 capture_output=True, text=True, encoding="utf-8",
+                                 errors="replace")
+        if normal.returncode not in (0, 1) or widened.returncode not in (0, 1):
+            return None, (
+                "Semgrep measurement failed: normal rc=%d (%s); flag rc=%d (%s)" %
+                (normal.returncode, (normal.stderr or "").strip()[-180:],
+                 widened.returncode, (widened.stderr or "").strip()[-180:])
+            )
+        try:
+            normal_doc = json.loads(normal.stdout or "{}")
+            widened_doc = json.loads(widened.stdout or "{}")
+        except json.JSONDecodeError as exc:
+            return None, "Semgrep measurement returned invalid JSON: %s" % exc
+        normal_dirs = _scanned_top_dirs(normal_doc, td, candidates)
+        widened_dirs = _scanned_top_dirs(widened_doc, td, candidates)
+        # A candidate omitted in both runs is not evidence of a default ignore;
+        # e.g. a future Semgrep might reject a directory structurally. Require it
+        # to be visible with the experimental flag before treating the difference
+        # as a restorable default.
+        return {d for d in candidates if d in widened_dirs and d not in normal_dirs}, ""
 
 
 def main():
@@ -130,6 +184,18 @@ def main():
             check("this semgrep accepts the scope flag (no fallback)",
                   "rejected" not in detail,
                   ("detail said: ..." + detail[-110:]) if "rejected" in detail else "")
+
+        # 4. MEASURE THE FLAG'S OTHER EFFECT. It disables Semgrep's built-in
+        # defaults as well as `.semgrepignore`; the wrapper restores exactly the
+        # measured set. This is intentionally live rather than a pytest fixture:
+        # a mocked Semgrep cannot tell us what a newer Semgrep actually ignores.
+        observed, measurement_error = _measure_default_ignores()
+        if observed is None:
+            check("Semgrep default-ignore measurement completed", False, measurement_error)
+        else:
+            expected = set(engine_sast.SEMGREP_DEFAULT_IGNORE_DIRS)
+            check("Semgrep default-ignore set matches PRAETOR restore", observed == expected,
+                  "observed=%s expected=%s" % (sorted(observed), sorted(expected)))
 
     print("== %s ==" % ("ALL LIVE CHECKS PASSED" if not failures
                         else "LIVE CHECK FAILURES: " + ", ".join(failures)))

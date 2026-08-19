@@ -482,7 +482,7 @@ def test_an_absent_scanned_list_is_not_read_as_zero(tmp_path, monkeypatch):
     assert res["status"] == "ok", f"absent != zero; got {res}"
 
 
-def test_the_flag_does_not_silently_widen_scope_into_vendored_code(tmp_path, monkeypatch):
+def test_the_flag_restores_only_measured_semgrep_default_ignores(tmp_path, monkeypatch):
     """🔴 THE REGRESSION THE FLAG INTRODUCED, caught by an independent auditor.
 
     `--x-ignore-semgrepignore-files` disables `.semgrepignore` AND semgrep's
@@ -491,18 +491,21 @@ def test_the_flag_does_not_silently_widen_scope_into_vendored_code(tmp_path, mon
     The engines disagreed about scope again, inverted, and third-party code was
     reported as the target's own (1 finding -> 3001 on a synthetic node_modules).
 
-    So the skip list must be restored explicitly, from PRAETOR's side.
+    The correct restore is Semgrep's measured defaults only, not PRAETOR's much
+    broader policy list. Adding the other directory names would silently remove
+    SAST coverage Semgrep had previously provided; omitting one of these ten
+    widens scope into third-party/build noise. `semgrep_live_check.py` measures
+    this set against a real installed Semgrep before release.
     """
     argv = []
     _semgrep_returning(monkeypatch, {"results": [], "paths": {"scanned": ["a.py"]}}, argv)
     engine_sast.run(str(tmp_path), bundled_rules="", use_registry=False,
                     extra_configs=["p/ci"], enumerated_code_files=1)
     excluded = {argv[i + 1] for i, a in enumerate(argv) if a == "--exclude" and i + 1 < len(argv)}
-    for d in ("node_modules", "vendor", "dist", ".venv"):
-        assert d in excluded, (
-            f"{d!r} must be excluded explicitly -- the flag removed semgrep's own "
-            f"default that used to do it. excluded={sorted(excluded)}"
-        )
+    assert excluded == engine_sast.SEMGREP_DEFAULT_IGNORE_DIRS, (
+        "the flag must restore exactly Semgrep's measured default-ignore set, not "
+        "PRAETOR's broader walker policy; got " + repr(sorted(excluded))
+    )
 
 
 def test_count_code_files_counts_code_and_not_prose():
@@ -546,14 +549,37 @@ def _semgrep_rejecting_then_accepting(monkeypatch, payload, seen=None):
 
 
 def test_a_semgrep_that_rejects_the_flag_does_not_break_every_scan(tmp_path, monkeypatch):
-    """🔴 THE HEADLINE. Before the retry this was `error` -> exit 3 on every scan."""
+    """An older Semgrep retries, but cannot certify attacker-controlled scope."""
     calls = _semgrep_rejecting_then_accepting(
         monkeypatch, {"results": [], "paths": {"scanned": ["a.py"]}})
     res = engine_sast.run(str(tmp_path), bundled_rules="", use_registry=False,
                           extra_configs=["p/ci"], enumerated_code_files=1)
     assert calls["n"] == 2, "it must retry exactly once, without the flag"
-    assert res["status"] == "ok", (
-        f"an older semgrep must degrade, not break the engine outright; got {res}"
+    assert res["status"] == "error", (
+        "the retry is useful, but it again honours target-controlled .semgrepignore; "
+        f"that is not an `ok` scan. got {res}"
+    )
+
+
+def test_fallback_cannot_pass_a_fail_on_gate(tmp_path, monkeypatch):
+    """The real CLI must turn fallback scope uncertainty into exit 3.
+
+    This is deliberately end-to-end: a direct engine-status assertion would not
+    prove that the gate reads the status rather than merely serialising it.
+    """
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    calls = _semgrep_rejecting_then_accepting(
+        monkeypatch, {"results": [], "paths": {"scanned": ["a.py"]}})
+
+    rc, doc = _scan(tmp_path, "--engines", "sast", "--no-registry", "--fail-on", "HIGH")
+
+    assert calls["n"] == 2, "fixture must reach the flag-rejection fallback"
+    assert doc["meta"]["engines"]["sast"]["status"] == "error", (
+        "the fallback result must be marked unmeasured in the emitted report"
+    )
+    assert doc["findings"] == [], "fixture assumption: the retry found nothing"
+    assert rc == 3, (
+        f"a fallback scan with no findings must not pass --fail-on; got exit {rc}"
     )
 
 
@@ -816,3 +842,74 @@ def test_decodable_files_are_untouched_by_the_fallback(tmp_path):
            + "'" + chr(10)).encode("utf-8")
     p.write_bytes(raw)
     assert core.read_text(str(p)) == raw.decode("utf-8", errors="surrogatepass")
+
+
+# --------------------------------------------------------------------------- #
+# NUL BYTES IN SOURCE-NAMED FILES MUST NOT BECOME A SILENT EXCLUSION
+#
+# `is_probably_binary` used to treat every NUL in its initial sniff as binary.
+# That is sound for a byte-oriented media file, but `walk_files` has already
+# established that a `.py` / `.env` / config-like name is a text target. A NUL
+# inside such a target is decodable UTF-8 and the built-in text engines can
+# inspect it. Dropping it silently made a leading NUL an attacker-controlled
+# exclusion primitive: a real credential in the only file produced zero files,
+# an `ok` secrets engine, and a passing gate.
+#
+# Keep the two decisions distinct: extension/name decides whether a file enters
+# the text-scanner universe; binary sniffing rejects only genuinely unreadable
+# or control-heavy content. The report must retain the NUL observation so an
+# operator knows a third-party parser may see unusual source text.
+# --------------------------------------------------------------------------- #
+
+_NUL_KEY = "sk-" + "ant-" + "api03-" + ("N" * 80)
+
+
+def test_a_nul_bearing_source_file_is_scanned_and_reported(tmp_path):
+    source = tmp_path / "settings.py"
+    source.write_bytes(("\x00API_KEY = \"" + _NUL_KEY + "\"\n").encode("utf-8"))
+    out = tmp_path / "r"
+
+    rc = praetor.main([str(tmp_path), "--engines", "secrets", "--fail-on", "HIGH",
+                       "--format", "json", "--out", str(out), "--quiet"])
+    data = json.loads((out / "praetor-report.json").read_text(encoding="utf-8"))
+    text = (out / "praetor-report.txt").read_text(encoding="utf-8")
+
+    assert rc == 1, (
+        "a NUL inside a source-named file must not hide a live credential behind "
+        f"a passing gate; got exit {rc}"
+    )
+    assert any(f["file"] == "settings.py" for f in data["findings"]), (
+        "the source file contained a provider-shaped credential but no finding "
+        "identified it; the NUL must not exclude it from secrets"
+    )
+    assert data["meta"]["nul_text_file_count"] == 1, (
+        "the JSON report must record that the scanned text universe contained a "
+        "NUL-bearing file; otherwise a clean-looking report conceals parser risk"
+    )
+    assert "NUL-bearing text files: 1 (retained for text scanning)" in text, (
+        "the human report must surface the unusual source text, not hide the "
+        "observation only in a machine-only field"
+    )
+
+
+def test_nul_does_not_turn_a_binary_named_file_into_text_scope(tmp_path):
+    """KEEP DIRECTION: scanning source-like NUL files is not a media-file scan."""
+    (tmp_path / "settings.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "payload.png").write_bytes(b"\x00" + _NUL_KEY.encode("ascii"))
+
+    scanned = core.walk_files(str(tmp_path))
+    assert {sf.relpath for sf in scanned} == {"settings.py"}, (
+        "a binary-named file must remain outside the text scanner's scope even "
+        "when it has a NUL byte and credential-like data"
+    )
+
+
+def test_c1_control_heavy_text_is_binary_evidence(tmp_path):
+    """The binary sniff promises C1 controls, not merely C0 and decode errors."""
+    source = tmp_path / "control.py"
+    source.write_text(chr(0x85) * 100 + "x = 1\n", encoding="utf-8")
+
+    assert core.is_probably_binary(str(source)), (
+        "U+0085 is a C1 control; a control-heavy source-named file must not be "
+        "certified as ordinary text merely because it is valid UTF-8"
+    )

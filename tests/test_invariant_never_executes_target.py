@@ -16,6 +16,7 @@ flag stops reaching the command line, not merely when a comment changes.
 Every new SCA backend widens this surface. Add a test here when you add one.
 """
 
+import os
 import subprocess
 
 import engine_sca
@@ -291,3 +292,26 @@ def test_the_target_is_passed_as_data_never_as_a_program(tmp_path, monkeypatch):
                 f"{mode}: argv[0]={argv[0]!r} lies inside the scanned tree -- that "
                 f"is executing the target, not reading it"
             )
+
+
+def test_file_selection_never_follows_a_symlinked_file(tmp_path, monkeypatch):
+    """`followlinks=False` must cover direct targets and directory entries.
+
+    A file symlink is not a directory, so `os.walk(..., followlinks=False)` still
+    lists it. Calling `isfile`, `getsize`, or `open` afterward follows the link
+    outside the requested target. That violates the scanner's read-only *scope*
+    boundary and can disclose host data in report snippets. Model a symlink at the
+    predicate boundary so the test is portable to Windows hosts without symlink
+    privileges, then exercise both selection paths.
+    """
+    source = tmp_path / "linked.py"
+    source.write_text("TOKEN = 'host data'\n", encoding="utf-8")
+    real_islink = _core.os.path.islink
+    source_abs = os.path.abspath(source)
+    monkeypatch.setattr(
+        _core.os.path, "islink",
+        lambda path: os.path.abspath(path) == source_abs or real_islink(path),
+    )
+
+    assert _core.walk_files(str(source)) == [], "a direct symlink target must be refused"
+    assert _core.walk_files(str(tmp_path)) == [], "the normal walker must refuse file symlinks"

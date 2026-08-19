@@ -66,7 +66,8 @@ def test_remote_or_unpinned_source_escalates():
     cfg = '{"mcpServers": {"x": {"command": "npx", "args": ["-y", "some-server@latest"]}}}'
     found = _scan(cfg, ".mcp.json")
     assert "mcp-server-autostart-remote" in _ids(found)
-    assert found[0].severity.name == "HIGH"
+    remote = next(f for f in found if f.rule_id == "mcp-server-autostart-remote")
+    assert remote.severity.name == "HIGH"
 
 
 def test_credential_env_is_flagged_separately():

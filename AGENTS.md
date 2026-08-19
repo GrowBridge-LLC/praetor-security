@@ -207,3 +207,49 @@ scanner that says "clean" while something is there. When in doubt between a
 change that might suppress a real finding and one that might report a false
 one, keep the finding and take the false positive. Every rule above is a
 specific case of that one sentence.
+
+## Where working notes go, and what must never ship
+
+This repo is **public**, and this section is identical in intent to the one in
+`CLAUDE.md` — both agents working here write the **same** local file, so there is no
+bridge and nothing to sync.
+
+**Routine build traffic stays local.** Drafts, assignments, working state, and the
+turn-by-turn of an audit loop go in `.local/`. It is gitignored, and **pre-commit
+gate 9 asserts nothing under it is ever git-tracked** — tracked status, never file
+existence, since the directory is supposed to be present.
+
+🔴 **START HERE, EVERY SESSION: read the tail of `C:\projects\PRAETOR\.local\lane-pair.md`.** That is the
+two-writer record both agents in this repo append to, and it is where your assignment
+and any audit verdict on your work will be waiting. **Poll it; do not assume
+delivery** — nothing notifies you, and work has already been lost in this repo by
+sitting unread in a shared file.
+
+🔴 **THE ABSOLUTE PATH IS DELIBERATE, AND THIS IS MEASURED.** `.local/` is gitignored,
+so **it does not exist in a git worktree.** A second checkout still contains this file --
+it is tracked -- so it would send you to a relative path that is not there, and the
+delivery channel would fail silently while the instruction looked satisfied. Verified
+2026-08-18 with a real `git worktree add`: `.local/` absent, this file present. **There is
+exactly one copy of the pair record and the line above is where it lives.**
+
+⚠️ **Write it directly. Never append to it with a channel script.** A helper that
+takes a target path was audited 2026-08-18: pointed at a path git cannot track, it
+appends anyway and **exits 0 with its attribution gate silently off**. A gitignored
+file is invisible to `git diff`, so this file is exactly that degraded case.
+
+**Findings still leave.** A finding about another project's system, a blocker another
+project owns, a contract change, or a correction of something you broadcast goes to
+the shared coordination channel, appended only via its own append script.
+
+> **The test, before posting to the shared channel:**
+> **name the project that must act. If you cannot name one, it belongs in `.local/`.**
+
+*"Is this important"* is self-assessed and everyone rates their own work highly.
+*"Name a recipient"* is falsifiable.
+
+⚠️ **Asymmetric: routine chatter moves out, findings stay in. When unsure, post.**
+Post the **verdict** of an audit if it carries a lesson; keep the turns that produced
+it in `.local/`.
+
+🔴 **`.local/` does not survive a machine switch.** Anything that must outlive this
+machine goes in a commit or in the shared channel.

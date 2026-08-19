@@ -12,6 +12,30 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+- **Wide secrets scans retain the complete source/config-like file scope.** A
+  target-controlled `.gitignore` is not a scope boundary: ordinary ignored files
+  remain eligible because live credentials commonly live in local configuration.
+  The wide walk runs only when the secrets engine is selected, so other engines
+  do not pay this cost.
+
+- **SAST now restores only Semgrep's measured built-in ignore set.** Disabling
+  target-controlled `.semgrepignore` also disables Semgrep defaults; restoring
+  PRAETOR's broader walker list silently removed SAST coverage. A live Semgrep
+  check measures the ten restored directories and fails if an engine upgrade
+  changes that scope.
+
+- **NUL bytes in source-named files no longer create a silent exclusion.** The
+  shared text walker records a NUL observed in its existing bounded sniff but
+  retains source/config-like files for text scanning; binary-named files remain
+  outside that scope. The binary heuristic also counts the full C1 control range,
+  so control-heavy valid UTF-8 does not masquerade as ordinary source. Text and
+  JSON reports surface the NUL count, so unusual source text cannot disappear
+  behind an ordinary-looking file total.
+
+- **SAST no longer certifies runs that Semgrep says had analysis errors.** Semgrep
+  findings are retained as leads, but a non-empty JSON `errors` list now produces
+  SAST status `error`, so `--fail-on` cannot pass partial parser coverage.
+
 ### Added — an external code reviewer, and what it caught immediately
 
 Six independent adversarial audit passes ran over this range across three rounds.
@@ -31,10 +55,19 @@ An external reviewer's **first** pass found two defects none of them reported:
   reporting `0` for the second is the same one-word-two-facts defect as
   `unavailable` before it was split.
 
-Two further findings are recorded and **open**: `--exclude` is compiled as a regex
-by PRAETOR and passed as a glob to semgrep (two pattern languages, one user input),
-and reporting `ok` after the ignore-flag fallback is indefensible because scope is
-target-controlled by construction at that point.
+`--exclude` now has one meaning: PRAETOR validates it as the documented regex
+before scanning, uses it for its own file walks, and filters normalized SAST
+findings with the same regex. It no longer passes caller patterns to Semgrep's
+incompatible glob-only `--exclude`. Semgrep can still statically read an excluded
+file, but PRAETOR does not report its finding; extra coverage is safer than a
+second pattern language silently narrowing one engine's scope. Invalid regexes now
+return usage exit 2 instead of a traceback that impersonates a findings exit.
+
+The ignore-flag fallback is now fail-safe: if an older Semgrep rejects the flag,
+PRAETOR retries to preserve whatever findings it can obtain but records SAST as
+`error`, never `ok`. A target-controlled `.semgrepignore` can hide only part of a
+tree while leaving a positive scanned count, so no count threshold can certify the
+result. Under `--fail-on` that status yields exit 3 rather than a false clean.
 
 ⇒ The full record, with reproductions and the scope/cost measurements behind it, is
 `references/audits/2026-08-13-scope-and-cost-research.md`.
