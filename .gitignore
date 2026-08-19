@@ -43,3 +43,9 @@ dist/
 /.codex/hooks/*.log
 /.codex/hooks/.*checkpoint
 /.codex/hooks/*-status.json
+
+# Session-local working notes, drafts and assignments.
+# This repo is PUBLIC. These are private working artifacts that must never ship,
+# so they are ignored here AND asserted absent from the index by the pre-commit
+# gate -- an ignore rule alone is one git add -f away from being wrong.
+/.local/

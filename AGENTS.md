@@ -65,7 +65,7 @@ Full reasoning lives in `CLAUDE.md` and `CONTRIBUTING.md`. Compressed:
 bash tests/precommit.sh
 ```
 
-Eight gates. It exits non-zero on the first failure. **Read the exit code, not
+Nine gates. It exits non-zero on the first failure. **Read the exit code, not
 the output** — this repo has been committed over a red gate at least three
 times because a piped `grep` matched the word `FAIL` and returned 0 anyway.
 Capture `$?` and branch on it; never `precommit.sh | grep ... && git commit`.
@@ -199,6 +199,23 @@ authorized-or-open design decisions with no code behind them yet:
   directory-name-evasion hole a hardcoded skip-list can't.
 - Restoring Semgrep's real default-ignore set — measured at ten directories,
   not the thirty currently hardcoded in this repo.
+
+## Where working notes go, and what must never ship
+
+This repo is public. Routine build traffic, drafts, assignments, and working
+state stay under .local/. That directory is intentionally ignored and pre-commit
+gate 9 asserts that no .local artifact is tracked.
+
+Read the tail of C:\\projects\\PRAETOR\\.local\\lane-pair.md at the start of
+every session. The absolute path is deliberate: .local is absent from worktrees,
+so a relative path can silently lose coordination traffic.
+
+Write pair traffic directly to that file; do not use a channel wrapper. A helper
+aimed at an ignored path can append while its attribution check is inoperative.
+Findings for another project, blockers owned elsewhere, and contract corrections
+belong in the shared coordination channel; otherwise keep routine traffic local.
+
+The .local directory is machine-local and must never enter this public repository.
 
 ## One line, if you read nothing else above
 

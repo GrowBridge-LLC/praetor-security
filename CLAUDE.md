@@ -86,7 +86,7 @@ not the reassurance.
 bash tests/precommit.sh
 ```
 
-That is the gate, not a convenience wrapper: 8 checks, it exits non-zero on any
+That is the gate, not a convenience wrapper: 9 checks, it exits non-zero on any
 failure and names the one that failed.
 
 🔴 **Read its EXIT CODE, never its output.** A session chained
@@ -184,3 +184,20 @@ filter happened to be in place.
 | `tools/classify_baseline.py` | assigns a predicate to each self-scan finding |
 | `rules/` | bundled offline Semgrep rules |
 | `references/` | architecture, limits, the self-scan baseline, test corpus |
+
+## Where working notes go, and what must never ship
+
+This repo is public. Routine build traffic, drafts, assignments, and working
+state stay under .local/. That directory is intentionally ignored and pre-commit
+gate 9 asserts that no .local artifact is tracked.
+
+Read the tail of C:\\projects\\PRAETOR\\.local\\lane-pair.md at the start of
+every session. The absolute path is deliberate: .local is absent from worktrees,
+so a relative path can silently lose coordination traffic.
+
+Write pair traffic directly to that file; do not use a channel wrapper. A helper
+aimed at an ignored path can append while its attribution check is inoperative.
+Findings for another project, blockers owned elsewhere, and contract corrections
+belong in the shared coordination channel; otherwise keep routine traffic local.
+
+The .local directory is machine-local and must never enter this public repository.

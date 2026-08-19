@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
+#
+# CodeRabbit configuration for PRAETOR.
+#
+# WHY THIS FILE EXISTS, measured rather than assumed. Two sibling repos in this
+# org were found reviewing NOTHING: one reported "Review skipped ... due to path
+# filters" on the first pull request it ever had, and a second had no coverage at
+# all -- no filter bug, because there was no filter. Neither absence looked like a
+# failure from outside. A reviewer that was never reached is silent in exactly the
+# same way as one that read every line and approved.
+#
+# The GitHub App is installed on the organization and reviews do run; what was
+# missing here was this file.
+#
+# ⚠️ READ FROM THE PULL REQUEST'S HEAD BRANCH, not from the base. That is
+# deliberate and useful: a change to this config takes effect on the very pull
+# request that introduces it, so it can be tested without merging first.
+#
+# 🔴 DO NOT "FIX" A PENDING REQUIRED CHECK BY SETTING `commit_status: true`.
+# It already defaults to true AND is inert, because `review_progress` also
+# defaults to true and suppresses it. Setting it alone does nothing at all, and it
+# is the obvious move when a required status never appears. There are three
+# entangled ways CodeRabbit signals "done" -- a check run, review progress, and the
+# legacy commit status -- and choosing the wrong one is why a required check can
+# sit pending forever. Settle that question before wiring branch protection.
+#
+# Key reference:    https://docs.coderabbit.ai/reference/configuration
+# Machine-readable: https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
+language: en-US
+
+reviews:
+  # `assertive` rather than the `chill` default: this repository is a security
+  # scanner, so a defect here is not a broken feature -- it is a scanner that
+  # reports "nothing found" while something is there. Prefer the noisier reviewer.
+  profile: assertive
+  auto_review:
+    enabled: true
+    base_branches:
+      - main
