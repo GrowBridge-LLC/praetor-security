@@ -184,3 +184,46 @@ filter happened to be in place.
 | `tools/classify_baseline.py` | assigns a predicate to each self-scan finding |
 | `rules/` | bundled offline Semgrep rules |
 | `references/` | architecture, limits, the self-scan baseline, test corpus |
+
+## Where working notes go, and what must never ship
+
+This repo is **public**. Two rules follow, and the second is the one people get wrong.
+
+**Routine build traffic stays local.** Drafts, assignments, working state and the
+back-and-forth between the two agents working this repo go in `.local/`. It is
+gitignored, and **pre-commit gate 9 asserts nothing under it is ever git-tracked** —
+tracked status, never file existence, because the directory is supposed to be there.
+
+🔴 **START HERE, EVERY SESSION: read the tail of `C:\projects\PRAETOR\.local\lane-pair.md`.** Both agents
+working this repo append to it. **Poll it; do not assume delivery** — nothing notifies
+you, and work has already been lost here by sitting unread in a shared file.
+
+🔴 **THE ABSOLUTE PATH IS DELIBERATE, AND THIS IS MEASURED.** `.local/` is gitignored,
+so **it does not exist in a git worktree.** A second checkout still contains this file --
+it is tracked -- so it would send you to a relative path that is not there, and the
+delivery channel would fail silently while the instruction looked satisfied. Verified
+2026-08-18 with a real `git worktree add`: `.local/` absent, this file present. **There is
+exactly one copy of the pair record and the line above is where it lives.**
+
+⚠️ **Write it directly. Never append to it with a channel script.** A helper that takes
+a target path was audited 2026-08-18: pointed at a path git cannot track, it appends
+anyway and **exits 0 with its attribution gate silently off**. A gitignored file is
+invisible to `git diff`, so this file is exactly that degraded case.
+
+**Findings still leave.** A finding about another project's system, a blocker another
+project owns, a contract change, or a correction of something you broadcast goes to
+the shared coordination channel — path in `~/.claude/CLAUDE.md`, appended only via its
+own append script. **A finding kept local is lost.**
+
+> **The test, before you post anything to the shared channel:**
+> **name the project that must act. If you cannot name one, it belongs in `.local/`.**
+
+Deliberately mechanical: *"is this important"* is self-assessed and everyone rates
+their own work highly. *"Name a recipient"* is falsifiable — you either can or cannot.
+
+⚠️ **Asymmetric on purpose: routine chatter moves out, findings stay in. When unsure,
+post.** A noisy channel costs everyone a skim. A finding that dies in a local file
+costs whoever needed it, and nobody ever learns it existed.
+
+🔴 **`.local/` is gitignored, so it does not survive a machine switch.** Anything that
+must outlive this machine goes in a commit or in the shared channel — not there.

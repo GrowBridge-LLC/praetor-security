@@ -15,7 +15,7 @@ get wrong — particularly why secrets are exempt from context-based suppression
 git clone https://github.com/GrowBridge-LLC/praetor-security
 cd praetor-security
 pip install -e ".[dev]"
-python -m pytest tests/ -q
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/ -q
 ```
 
 Optional engines (`semgrep`, `osv-scanner` / `pip-audit` / `npm`) are not needed

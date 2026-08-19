@@ -558,6 +558,20 @@ def test_an_empty_exclude_pattern_cannot_produce_a_clean_bill_of_health(tmp_path
     )
 
 
+def test_an_invalid_exclude_regex_is_a_usage_error_not_a_finding_exit(tmp_path, capsys):
+    """`*.min.js` is a Semgrep glob, not PRAETOR's documented regex syntax.
+
+    A bare regex traceback exits 1, which this CLI reserves for security
+    findings. The operator must instead receive a clear exit-2 usage error.
+    """
+    rc = _run([_target_with_a_real_finding(tmp_path), "--engines", "secrets",
+               "--fail-on", "INFO", "--exclude", "*.min.js", "--format", "json", "--quiet"])
+    err = capsys.readouterr().err
+
+    assert rc == 2, f"an invalid --exclude regex must be usage error 2, got {rc}"
+    assert "invalid --exclude regex" in err, f"the error must name the option; stderr={err!r}"
+
+
 def test_the_floor_catches_a_route_it_was_not_written_against(tmp_path):
     """🔴 THE POINT OF KEYING ON A COUNT.
 

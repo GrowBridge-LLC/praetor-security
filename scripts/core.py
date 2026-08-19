@@ -509,30 +509,52 @@ TEXT_NAMES = GIT_HOOK_NAMES | {
 DEFAULT_MAX_BYTES = 3_000_000  # 3 MB: skip huge minified bundles / data blobs
 
 
-def is_probably_binary(path: str, sniff: int = 4096) -> bool:
+def _binary_and_nul_in_sniff(path: str, sniff: int = 4096) -> tuple[bool, bool]:
     """
     Decide binary-vs-text on DECODED code points, not raw byte values. Valid
     multibyte UTF-8 (including invisible/zero-width/Unicode-Tag characters, which
     are exactly what the AI-security engine hunts for) is text -- an earlier
     raw-byte heuristic wrongly flagged a Tag-smuggled markdown file as binary
-    because its UTF-8 uses high bytes. Binary is signalled by NUL bytes or a high
-    ratio of C0/C1 control characters / decode failures.
+    because its UTF-8 uses high bytes. A source-named file containing NUL is still
+    text for PRAETOR: UTF-8 decodes U+0000 without loss and the built-in engines
+    can inspect it. Binary is signalled by a high ratio of the *other* C0/C1
+    control characters or decode failures.
     """
     try:
         with open(path, "rb") as fh:
             chunk = fh.read(sniff)
     except OSError:
-        return True
+        return True, False
     if not chunk:
-        return False
-    if b"\x00" in chunk:
-        return True
+        return False, False
     text = chunk.decode("utf-8", errors="replace")
     ctrl = sum(
         1 for c in text
-        if (ord(c) < 0x20 and c not in "\t\n\r\f") or ord(c) == 0x7F or ord(c) == 0xFFFD
+        if ((ord(c) < 0x20 and c not in "\x00\t\n\r\f") or
+            0x7F <= ord(c) <= 0x9F or ord(c) == 0xFFFD)
     )
-    return ctrl / max(1, len(text)) > 0.30
+    return ctrl / max(1, len(text)) > 0.30, b"\x00" in chunk
+
+
+def is_probably_binary(path: str, sniff: int = 4096) -> bool:
+    """Whether the bounded static sniff says a file is unreadable/binary-like."""
+    return _binary_and_nul_in_sniff(path, sniff)[0]
+
+
+def has_nul_in_sniff(path: str, sniff: int = 4096) -> bool:
+    """Whether the same static binary sniff observed a NUL byte.
+
+    This is deliberately an observation, not a binary verdict. `walk_files`
+    already admits only source/config-like names; a NUL in one of those files is
+    decodable UTF-8 that the text engines should inspect, while a binary-named
+    image/archive remains out of scope through `scannable()`.
+
+    The walker reports NULs seen in its existing bounded sniff. A NUL after that
+    window was never an exclusion path -- the file already reaches every engine
+    -- so it does not need another whole-file read merely to recreate an avoided
+    exclusion decision.
+    """
+    return _binary_and_nul_in_sniff(path, sniff)[1]
 
 
 def scannable(name: str) -> bool:
@@ -553,6 +575,10 @@ class ScanFile:
     abspath: str
     relpath: str
     size: int
+    # A bounded, static observation from the file-selection sniff. This must not
+    # affect eligibility: it exists so reports can make unusual source text
+    # visible instead of quietly treating it as a binary exclusion.
+    contains_nul: bool = False
 
 
 def walk_files(
@@ -570,6 +596,12 @@ def walk_files(
     target = os.path.abspath(target)
     out: list = []
 
+    # Direct-file mode needs the same boundary as the directory walker. A link
+    # is not a file PRAETOR was asked to scan: opening it reads its referent,
+    # potentially outside the target the caller supplied.
+    if os.path.islink(target):
+        return out
+
     if os.path.isfile(target):
         base = os.path.dirname(target)
         rel = os.path.basename(target)
@@ -577,8 +609,9 @@ def walk_files(
             size = os.path.getsize(target)
         except OSError:
             return out
-        if scannable(rel) and size <= max_bytes and not is_probably_binary(target):
-            out.append(ScanFile(target, rel, size))
+        binary, has_nul = _binary_and_nul_in_sniff(target)
+        if scannable(rel) and size <= max_bytes and not binary:
+            out.append(ScanFile(target, rel, size, has_nul))
         return out
 
     for root, dirs, files in os.walk(target, followlinks=False):
@@ -599,6 +632,10 @@ def walk_files(
         for fn in files:
             ap = os.path.join(root, fn)
             rel = os.path.relpath(ap, target).replace("\\", "/")
+            # `followlinks=False` above prevents descending into linked
+            # directories but still lists linked files. Do not follow either.
+            if os.path.islink(ap):
+                continue
             if any(rx.search(rel) for rx in excludes):
                 continue
             if not scannable(fn):
@@ -609,9 +646,10 @@ def walk_files(
                 continue
             if size > max_bytes:
                 continue
-            if is_probably_binary(ap):
+            binary, has_nul = _binary_and_nul_in_sniff(ap)
+            if binary:
                 continue
-            out.append(ScanFile(ap, rel, size))
+            out.append(ScanFile(ap, rel, size, has_nul))
     return out
 
 

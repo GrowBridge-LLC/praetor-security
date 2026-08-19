@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 
@@ -57,6 +58,17 @@ _SEMGREPIGNORE_OFF = "--x-ignore-semgrepignore-files"
 #: scope guard's condition any more -- gating the guard on this list is exactly
 #: what made the first version miss two total-shrink routes. See the guard.
 _TARGET_CONTROLLED_IGNORE_FILES = (".semgrepignore",)
+
+# `_SEMGREPIGNORE_OFF` disables Semgrep's own default-ignore layer together with
+# `.semgrepignore`. This is the measured Semgrep 1.172.0 default set, not a
+# copy of `core.DEFAULT_SKIP_DIRS`: the latter is PRAETOR's separate policy for
+# its own narrow source walk and contains many directories Semgrep normally
+# scans. `tests/semgrep_live_check.py` re-measures this exact set against a real
+# Semgrep, so an upgrade cannot silently change the restored scope.
+SEMGREP_DEFAULT_IGNORE_DIRS = frozenset({
+    ".git", ".hg", ".svn", ".tox", ".venv", ".yarn", "build", "dist",
+    "node_modules", "vendor",
+})
 
 #: Extensions for files semgrep plausibly has a language for. Used only to ask
 #: "did PRAETOR find code here?" before accusing semgrep of having opened none.
@@ -447,6 +459,19 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
         return {"findings": [], "status": "unavailable",
                 "detail": "no rules available (offline and no bundled rules found)", "runtime": rt["mode"]}
 
+    # `--exclude` is PRAETOR's documented REGEX interface. Semgrep accepts
+    # gitignore-style globs, so forwarding one string to both gave the caller two
+    # incompatible meanings: a regex anchor was a no-op for Semgrep, while a glob
+    # could crash PRAETOR before it scanned anything. Compile the regex for local
+    # result filtering instead. Semgrep may read an excluded file, but only
+    # statically; retaining that extra coverage is safer than silently applying a
+    # different exclusion language to one engine.
+    try:
+        exclude_rxs = [re.compile(p) for p in (excludes or [])]
+    except re.error as exc:
+        return {"findings": [], "status": "error",
+                "detail": f"invalid PRAETOR exclude regex: {exc}", "runtime": rt["mode"]}
+
     mode = rt["mode"]
     common = ["--json", "--quiet", "--metrics", "off", "--disable-version-check",
               "--timeout", "60", "--max-target-bytes", "3000000",
@@ -481,10 +506,9 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
               # relocating cwd helps -- measured: semgrep resolves the ignore file
               # from the SCAN ROOT, not the working directory.
               _SEMGREPIGNORE_OFF]
-    # Semgrep --exclude takes a path/glob pattern; pass each exclude through so
-    # the SAST engine honors the same exclusions as the built-in engines.
-    for pat in (excludes or []):
-        common += ["--exclude", pat]
+    # Do NOT forward caller exclusions here: they are regexes, while Semgrep's
+    # --exclude is glob syntax. Built-in directory exclusions below are our own
+    # literal directory names and remain Semgrep arguments.
 
     # 🔴 `_SEMGREPIGNORE_OFF` DOES NOT ONLY DISABLE `.semgrepignore`. It also
     # disables semgrep's BUILT-IN default ignore set, which is how `node_modules`,
@@ -498,9 +522,11 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
     # printed one `Files (text): N` header over findings from both. Third-party
     # vendored code was being reported as the target's own.
     #
-    # ⇒ Restore the scope explicitly, from PRAETOR's list rather than semgrep's,
-    # so exactly one component decides what is in scope and the engines agree.
-    for d in sorted(core.DEFAULT_SKIP_DIRS):
+    # ⇒ Restore exactly Semgrep's measured default set. `DEFAULT_SKIP_DIRS` is
+    # deliberately broader for PRAETOR's own source walk; forwarding all of it
+    # here silently dropped SAST coverage from directories Semgrep had chosen to
+    # inspect. The live check pins this measurement to the installed Semgrep.
+    for d in sorted(SEMGREP_DEFAULT_IGNORE_DIRS):
         common += ["--exclude", d]
 
     if mode == "native":
@@ -553,10 +579,12 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
     # it is exactly the shape that earns a tool a `|| true` in someone's CI.
     #
     # So: detect that specific rejection and retry once WITHOUT the flag. We then
-    # run with semgrep honouring `.semgrepignore` again -- degraded, not blind,
-    # because the scope guard below compares two independent counts and does not
-    # depend on this flag. The degradation is recorded in `detail` so it is
-    # visible in the report rather than silent.
+    # run with semgrep honouring `.semgrepignore` again. Keep any findings the
+    # retry produces, but never report this as `ok`: an ignore file can hide only
+    # PART of the target while leaving `scanned > 0`, so the zero-count guard
+    # below cannot prove the scope is complete. The degradation is an `error`,
+    # making a --fail-on gate fail closed rather than certify attacker-controlled
+    # partial coverage.
     semgrepignore_off = True
     err_text = (r.stderr or "")
     if r.returncode not in (0, 1) and _SEMGREPIGNORE_OFF in err_text and "unknown option" in err_text:
@@ -641,6 +669,8 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
         md = extra.get("metadata", {}) or {}
         raw_path = res.get("path", "")
         rel = _relative_to_report_root(raw_path, report_root)
+        if any(rx.search(rel) for rx in exclude_rxs):
+            continue
         rid = res.get("check_id", "semgrep-rule")
         short = rid.split(".")[-1]
         refs = md.get("references", []) or []
@@ -683,12 +713,22 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
         ))
     n_errors = len(data.get("errors", []))
     detail = f"{rt['detail']}; ran configs={configs}; scan errors={n_errors}"
+    if n_errors:
+        # Semgrep can return successful JSON and a positive `paths.scanned` count
+        # while admitting that it could not parse or analyse one of those files.
+        # A count proves something was opened; it does not prove every opened file
+        # was measured. Reporting `ok` here would therefore let a NUL-bearing (or
+        # otherwise malformed) source file turn an unmeasured SAST result into a
+        # passing --fail-on gate. Findings that did arrive remain useful, but the
+        # engine status must fail closed until the reported errors are resolved.
+        detail += "; Semgrep reported file/analysis errors -- SAST coverage cannot be certified"
     if not semgrepignore_off:
-        # Visible, not silent: this semgrep did not accept the flag, so the
-        # scanned tree's own `.semgrepignore` was honoured on this run. The scope
-        # guard above still applies; a reader should know which regime produced
-        # this result.
+        # The retry's findings are still useful leads, but the target controlled
+        # the scope. `error` is deliberate: a partial .semgrepignore exclusion
+        # leaves `scanned > 0`, so no count-based check can justify `ok` here.
         detail += (f"; NOTE this semgrep rejected {_SEMGREPIGNORE_OFF}, so the target's "
-                   "own .semgrepignore was honoured -- scope guard active, but upgrade "
-                   "semgrep for full protection")
-    return {"findings": findings, "status": "ok", "detail": detail, "runtime": mode}
+                   "own .semgrepignore was honoured -- scope cannot be certified; upgrade "
+                   "semgrep and re-run")
+    return {"findings": findings,
+            "status": ("ok" if semgrepignore_off and not n_errors else "error"),
+            "detail": detail, "runtime": mode}

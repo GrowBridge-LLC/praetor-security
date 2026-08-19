@@ -428,6 +428,17 @@ def main(argv=None):
             "result. If a CI variable expanded to empty here, that is the bug.\n"
         )
         return 2
+    for pattern in args.exclude or []:
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            sys.stderr.write(f"praetor: invalid --exclude regex {pattern!r}: {exc}\n")
+            sys.stderr.write(
+                "  --exclude uses Python regular expressions over relative paths; "
+                "quote regex metacharacters literally when needed.\n"
+            )
+            return 2
+
     _log(args.quiet, f"praetor {VERSION}: scanning {target}")
 
     # Enumerate scannable text files exactly once (shared by secrets + aisec).
@@ -455,6 +466,12 @@ def main(argv=None):
                         max_bytes=args.max_file_size, extra_excludes=args.exclude)
         if "secrets" in engines else []
     )
+    # NUL is an observation about source-like text, not an exclusion criterion.
+    # Keep a union because the secrets walk is wider; counting both lists would
+    # turn one root file into two report entries and erase that distinction.
+    nul_text_files = {
+        sf.abspath for sf in (scan_files + secret_files) if sf.contains_nul
+    }
     _log(args.quiet, f"  enumerated {len(scan_files)} text file(s)"
                      f" ({len(secret_files)} for secrets)")
 
@@ -575,6 +592,7 @@ def main(argv=None):
         # "the engine was not asked" are different facts, and reporting 0 for the
         # second is the same one-word-two-facts defect as `unavailable` was.
         "secret_file_count": (len(secret_files) if "secrets" in engines else None),
+        "nul_text_file_count": len(nul_text_files),
         "engines": engine_meta,
         "min_severity": args.min_severity,
     }

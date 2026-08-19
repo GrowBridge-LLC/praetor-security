@@ -230,5 +230,31 @@ else
   printf '%s\n' "$DIFFOUT" | sed 's/^/      /'
 fi
 
+# ---- 9. Session-local artifacts never enter the repo -----------------------
+#
+# This repo is PUBLIC and carries private working notes locally (drafts,
+# assignments, working state). `.gitignore` expresses the intent; it does not
+# enforce it -- `git add -f` overrides an ignore rule without complaint, and an
+# edit to `.gitignore` itself silently un-ignores the whole directory.
+#
+# 🔴 THIS GATE ASSERTS TRACKED STATUS, NEVER FILE EXISTENCE. The directory is
+# SUPPOSED to exist on disk; a check on existence would fail on every clean run,
+# and a gate that fails when nothing is wrong is a gate somebody deletes.
+#
+# Both the index and HEAD are checked: `git ls-files` alone would miss a path
+# committed earlier and since removed from the index, which still ships in
+# history. (`verify-history-not-just-worktree` -- a scrubbed file at HEAD still
+# publishes its earlier commits.)
+LOCAL_DIR=".local"
+IDX_LOCAL="$(git ls-files -- "$LOCAL_DIR" 2>/dev/null)"
+HEAD_LOCAL="$(git ls-tree -r --name-only HEAD -- "$LOCAL_DIR" 2>/dev/null)"
+if [ -n "$IDX_LOCAL" ] || [ -n "$HEAD_LOCAL" ]; then
+  fail "session-local artifact is TRACKED -- it must never enter this public repo"
+  printf '%s\n%s\n' "$IDX_LOCAL" "$HEAD_LOCAL" | grep -v '^$' | head -5 | sed 's/^/          /'
+  note "untrack with: git rm --cached -r $LOCAL_DIR   (and check history if it was committed)"
+else
+  pass "no session-local artifact tracked ($LOCAL_DIR/)"
+fi
+
 echo "== $([ "$FAILED" = 0 ] && echo 'ALL GATES PASSED' || echo 'GATE(S) FAILED') =="
 exit "$FAILED"

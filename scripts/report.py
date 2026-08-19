@@ -109,6 +109,9 @@ def render_text(result: dict, meta: dict, redacted: bool = True) -> str:
         out.append(f"Files (text): {_fc}  (secrets scanned {_sfc}, incl. vendored/build dirs)")
     else:
         out.append(f"Files (text): {_fc}")
+    _nfc = meta.get("nul_text_file_count")
+    if _nfc:
+        out.append(f"NUL-bearing text files: {_nfc} (retained for text scanning)")
     out.append(f"PRAETOR ver : {meta.get('version')}")
     out.append("")
     out.extend(_engine_status_block(meta))

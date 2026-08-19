@@ -42,6 +42,7 @@ was recognised. A defect in a shared assumption does not announce which layer
 it is in.
 """
 
+import ast
 import pathlib
 import subprocess
 import sys
@@ -97,31 +98,81 @@ def test_no_engine_calls_subprocess_run_directly():
 
     The behavioural test above cannot fail on a UTF-8 box, so on its own it would
     let this defect back in through any CI that is not Windows. This asserts the
-    property structurally instead: every engine subprocess goes through
-    `core.run_tool`, which fixes the encoding in one place.
+    property structurally instead: every first-level Python program in ``scripts/``
+    is covered, so a newly added engine cannot escape through a hand-maintained
+    filename tuple. Every discovered file is scanned unless it is explicitly named
+    with a reason below; there are currently no such exclusions.
+
+    ``core.py`` is covered too. Its one direct call is the implementation of
+    ``core.run_tool`` itself, sanctioned by its exact source line rather than by
+    excluding the whole file. Moving or duplicating that call fails this test for
+    a deliberate review of the boundary.
 
     Deliberately a source-level guard rather than an assertion about run_tool's
     keyword arguments -- a test that checks a setting cannot notice the setting
     being bypassed by a NEW call site, which is exactly how this arrived.
+
+    Limits, stated rather than implied exhaustive: this catches only the literal
+    ``subprocess.run(...)`` AST form in first-level ``scripts/*.py``.
+    It cannot see aliased/dynamic calls, ``Popen`` or other subprocess APIs,
+    extensionless or nested scripts, generated code, or calls in dependencies.
+    Those boundaries need separate guards if they enter PRAETOR's subprocess path.
     """
     root = pathlib.Path(__file__).resolve().parent.parent
-    offenders = []
-    scanned = 0
-    for rel in ("scripts/engine_sast.py", "scripts/engine_sca.py",
-                "scripts/engine_secrets.py", "scripts/engine_aisec.py",
-                "scripts/praetor.py"):
-        path = root / rel
-        assert path.exists(), f"guard points at a file that does not exist: {rel}"
-        scanned += 1
-        for n, line in enumerate(core.split_lines(path.read_text(encoding="utf-8")), 1):
-            if "subprocess.run(" not in line or line.lstrip().startswith("#"):
-                continue
-            offenders.append(f"{rel}:{n}: {line.strip()}")
+    scripts = root / "scripts"
+    discovered = sorted(scripts.glob("*.py"))
+    relpaths = {path.relative_to(root).as_posix() for path in discovered}
 
-    # Anti-vacuity: a guard that silently scanned nothing passes forever.
-    assert scanned == 5, f"guard scanned {scanned} files, expected 5 -- coverage moved"
+    # An explicit out-of-scope entry must name why it is safe to omit. Empty today
+    # is intentional: every first-level Python program participates in this guard.
+    out_of_scope = {}
+    assert set(out_of_scope).issubset(relpaths), (
+        "an out-of-scope entry no longer names a discovered scripts/*.py file: "
+        + repr(sorted(set(out_of_scope) - relpaths))
+    )
+    scanned_paths = relpaths - set(out_of_scope)
+    assert scanned_paths | set(out_of_scope) == relpaths, (
+        "every discovered scripts/*.py file must be scanned or explicitly named "
+        "out of scope with a reason"
+    )
+    assert len(scanned_paths) >= 10, (
+        "anti-vacuity floor: expected the current scripts/*.py program surface; "
+        f"scanned={sorted(scanned_paths)}"
+    )
+
+    # The one permitted direct call is the wrapper itself. This is a line-level
+    # exception: a second call in core.py is still an offender.
+    sanctioned = {("scripts/core.py", 152): "core.run_tool implementation"}
+    sanctioned_seen = set()
+    offenders = []
+    for path in discovered:
+        rel = path.relative_to(root).as_posix()
+        if rel in out_of_scope:
+            continue
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=rel)
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "run"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "subprocess"
+            ):
+                continue
+            location = (rel, node.lineno)
+            if location in sanctioned:
+                sanctioned_seen.add(location)
+                continue
+            line = core.split_lines(source)[node.lineno - 1].strip()
+            offenders.append(f"{rel}:{node.lineno}: {line}")
+
+    assert sanctioned_seen == set(sanctioned), (
+        "the line-specific core.run_tool exemption moved or disappeared; review "
+        f"the subprocess boundary. expected={sanctioned}, seen={sanctioned_seen}"
+    )
     assert not offenders, (
-        "an engine calls subprocess.run directly. Use core.run_tool: a bare "
-        "`text=True` decodes with the LOCALE codec, and the scanned tree supplies "
-        "the bytes. Offenders:\n  " + "\n  ".join(offenders)
+        "a scripts/*.py program calls subprocess.run directly. Use core.run_tool: "
+        "a bare `text=True` decodes with the LOCALE codec, and the scanned tree "
+        "supplies the bytes. Offenders:\n  " + "\n  ".join(offenders)
     )
