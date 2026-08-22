@@ -30,15 +30,18 @@ contents of `.local/`. State at the time of writing: `main` at `090bf28`, clean,
    `tests/differential/run_differential.py`, and pre-commit gate 8 enforces it. The Rust
    `engine_secrets` port **does not**: `rust/praetor-core/src/` holds `sca.rs`, `text.rs` and
    `unicode_tables.rs`, and no secrets module. Owner: this project.
-   Next action: port **`engine_aisec`** into `rust/praetor-core/src/`, then extend the existing
+   Next action: port **`engine_secrets`** into `rust/praetor-core/src/`, then extend the existing
    differential runner to cover it. **Do not rebuild the harness — it is already there.**
-   🔴 **The engine order is NOT free choice.** `references/ADR-001-engine-language.md` condition 1
-   is binding: `aisec` ports first, because it is pure pattern matching with no external tool
-   dependency and no equivalent elsewhere; `sast` and `sca` stay orchestration wrappers and move
-   last. ↩️ **This entry said `engine_secrets` until 2026-08-22**, inherited from a handoff, and it
-   contradicted the ADR. The builder caught it and stopped rather than building against the wrong
-   order. Condition 2 is also binding and already satisfied: no Rust backend merges before its
-   never-execute invariant test does, which is why `sca.rs` exists as argv construction only.
+   🔴 **The engine order is NOT free choice, and it CHANGED on 2026-08-22.** See ADR-001 Amendment 2:
+   `secrets` ports first and `aisec` is deferred, because condition 1's premise that `aisec` is
+   "pure pattern matching, zero external tool dependencies" is false — it imports `json` and parses
+   MCP manifests structurally. `base64` is authorised for `secrets`; **a JSON crate is NOT, and
+   `aisec` cannot proceed until that separate decision is made.** Condition 2 is unchanged and still
+   binding: no Rust backend merges before its never-execute invariant test does, which is why
+   `sca.rs` exists as argv construction only.
+   ↩️ **This entry has now been wrong twice** — first naming `engine_secrets` against the then-current
+   ADR, then naming `engine_aisec` against an ADR whose own premise had rotted. The builder caught
+   both by trying to execute them.
 4. **Tasks F, E and B.** Owner: this project. Next action: re-read the assignment file under
    `.local/` for their specifications once H clears. The handoff supersedes that file's ordering,
    not its content.

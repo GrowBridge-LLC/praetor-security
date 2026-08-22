@@ -146,3 +146,54 @@ rather than sitting unused in the manifest.
 It authorises the **port**. Nothing else. In particular it says nothing about any
 other project's language choice, and it is not a licence to rewrite working code
 elsewhere to match a preference.
+
+## Amendment 2 (2026-08-22): `praetor-core` takes `base64`, and `secrets` ports before `aisec`
+
+**One decision with two parts, recorded together on purpose.** Ruling them separately is how the
+premise below went stale in the first place.
+
+### Part A — the `base64` crate is authorised
+
+`scripts/engine_secrets.py` calls `base64.b64decode(blob, validate=True)` and inspects the decoded
+bytes for markers. Rust's standard library has no base64 decoder.
+
+Applying Amendment 1's bar — *a dependency is justified only when writing it ourselves would be
+worse for security, not merely slower to build*:
+
+| Option | Verdict |
+|---|---|
+| Hand-write a decoder | **Genuinely borderline, and this record says so rather than pretending otherwise.** Base64 is a fixed alphabet with no recursion and no state machine, so it is far less dangerous to write than a regex or JSON parser, and in Rust its failure mode is mis-decoding rather than memory corruption. It is still bespoke parsing of attacker-controlled input. |
+| Take `base64` | **Adopted, by the operator's own decision 2026-08-22.** |
+
+⚠️ **The bar did not decide this one on its own, and the honest record of a marginal call is more
+useful than a manufactured justification.** Amendment 1's regex case was clear-cut; this one was not,
+and it was escalated rather than absorbed. **A future crate does not inherit this outcome — it gets
+its own decision, exactly as Amendment 1 requires.**
+
+### Part B — the port order changes: `secrets` first, `aisec` deferred
+
+🔴 **Condition 1's stated premise is FALSE and has been for some time.** It orders `aisec` first
+because it is *"pure pattern matching, zero external tool dependencies."* It is not:
+`scripts/engine_aisec.py:28` imports `json`, and `_scan_mcp` at :552 calls `json.loads`, then
+`isinstance(data, dict)`, then `data.get("mcpServers")` — structural parsing of attacker-controlled
+MCP manifests.
+
+`secrets` is 25 regex patterns plus base64, so it now fits condition 1's *rationale* better than
+`aisec` fits its own *name*. The ordering follows the reason, not the label.
+
+**`aisec` is DEFERRED, not cancelled.** Porting it requires a JSON parser, which is a separate
+dependency decision that has NOT been made and must not be assumed to follow from Part A. A bespoke
+JSON parser inside a scanner is new, unaudited parsing code running against attacker-controlled
+input — the case Amendment 1's table exists to catch — so that decision genuinely matters.
+
+**Condition 2 is unchanged and still binding:** no Rust backend merges before its never-execute
+invariant test does. `rust/praetor-core/src/sca.rs` exists for exactly that reason and is argv
+construction only, never execution.
+
+### How the stale premise was found
+
+The builder was assigned the port and refused it, twice: first because the assignment named the wrong
+engine against condition 1, then because condition 1's own premise did not survive contact with the
+code. Neither was caught by review of the ADR — both were caught by someone trying to execute it.
+⇒ **An ADR's premises rot exactly like any other measured claim, and the ordering it derives from
+them rots with them. Re-derive a condition's REASON, not just its instruction.**
