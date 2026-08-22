@@ -12,6 +12,73 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Changed — the direct-subprocess guard now denies by default instead of enumerating
+
+The structural guard that keeps engines away from raw process primitives used to
+walk five hard-coded filenames, so a sixth engine file was simply never scanned.
+It now discovers every `scripts/*.py` by parsing it, and the allowance for the one
+sanctioned call is scoped to a `(file, line)` pair rather than to a whole file, so
+a second call added to that same file is still caught.
+
+It took four rounds to get right, and the shape of the failure is the useful part.
+Round one enumerated files, and a new file evaded it. Round two enumerated
+spellings of one function, and a different function evaded it. Round three
+enumerated functions in one module, and `getoutput` and the `os.spawn` family
+evaded that. Each fix was written immediately after reading the previous finding.
+
+⇒ The check now **inverts** for `subprocess`: any call resolving to that module is
+an offender unless explicitly allowed. The proof that this is an inversion rather
+than a longer list is that `getoutput` and `getstatusoutput` are caught while
+appearing nowhere in the guard. `os` stays a named family, because most of `os` is
+harmless and denying by default there would flag `os.path.join`. **That asymmetry
+is stated in the guard's own docstring rather than left to be inferred.**
+
+Non-executing uses of `subprocess`, such as constructing one of its exceptions,
+are caught deliberately. Nothing in the tree does that today; if something needs
+to, it earns an explicit allowance with a reason rather than slipping past a
+predicate.
+
+### Added — the secrets engine is ported to Rust, with a parity check that can fail
+
+`rust/praetor-core/src/secrets.rs` implements the reference detector, and the
+existing differential runner was extended to cover it.
+
+The acceptance was not a green run. Deliberately diverging the two
+implementations makes the runner report that **they disagree with each other**,
+not merely that one disagrees with a committed contract — the property this
+project previously lacked, when two ports each matched one contract file and were
+never compared to one another. Planting a rule the Rust side has never seen is
+caught by name, so a new reference rule cannot leave a vacuous pass.
+
+`base64` is pinned exactly, with default features disabled: that release enables a
+SIMD feature by default and the crate forbids unsafe code without it. The
+dependency decision is recorded in `ADR-001` Amendment 2, which also records that
+the call was marginal and sets no precedent for a third crate.
+
+### Fixed — the self-scan pin measured a second copy of the repository
+
+A linked build worktree lives inside the tree the self-scan walks, so every
+shipping file was read twice and the pin doubled. The exclusion is scoped to that
+worktree path and **not** to the directory containing it: that directory also
+holds enforcement files that ship, and excluding it wholesale was measured to hide
+a hardcoded credential planted among them. Suppressing a path instead of proving a
+property is this project's most repeated defect, and this is one more instance.
+
+### Changed — coordination traffic moved out of the tracked tree
+
+A tracked conversation file was rejected by two of this project's own pre-commit
+gates within a day. The public-hygiene sweep rejected its first draft. Then the
+self-scan pin went red on ordinary prose about a pre-commit check, which the AI
+security engine correctly read as an instruction to weaken a control.
+
+The finding was correct and the file was in the wrong place. **A security
+scanner's own product tree is the wrong home for prose about security controls**,
+because every future note would have to avoid the detector's vocabulary — and
+writing around your own detector to keep a gate green is how a scanner goes quiet.
+Excluding the directory from the scan was considered and rejected: a credential
+pasted into a note would then go unreported.
+
+
 - **Comment-based suppression is now file-type-aware.** Markdown headings and
   YAML URL paths can no longer impersonate comments to hide an AI-security
   finding. Inline-ignore and lexical-context decisions receive the finding's
