@@ -21,19 +21,20 @@
 //!
 //! ## Status
 //!
-//! **No DETECTOR has been ported yet** — nothing here scans, and the binary
-//! refuses to pretend otherwise.
+//! The `secrets` detector is the first detector port under ADR-001 Amendment 2.
+//! Its `scan()` entry point lives in this crate and is held to the Python
+//! reference by the blocking differential runner. It is not wired into the
+//! binary yet; the binary still refuses to pretend it can scan.
 //!
 //! ⚠️ "Scaffold only" was the earlier wording and it undersold this: `text.rs`
 //! (the shared line definition), `sca.rs` (argv construction plus the
 //! never-execute guard) and `unicode_tables.rs` (a generated script table) are
-//! real, tested, load-bearing code, not stubs. What is absent is any `scan()`
-//! entry point. Corrected after an audit noted a reader skimming the summary
-//! would take the crate for inert.
+//! real, tested, load-bearing code, not stubs. Adding a detector to this crate
+//! does not by itself change CLI capability.
 //!
-//! Port order is fixed by ADR-001: `aisec` first (pure pattern matching, no
-//! external tool dependencies), with `sast`/`sca` last because they own the
-//! subprocess boundary above.
+//! Port order is fixed by ADR-001 Amendment 2: `secrets` first; `aisec` is
+//! deferred until its JSON dependency receives a separate decision; `sast`/`sca`
+//! stay last because they own the subprocess boundary above.
 //!
 //! ## Acceptance
 //!
@@ -44,11 +45,12 @@
 //! a fork.
 
 pub mod sca;
+pub mod secrets;
 pub mod text;
 pub mod unicode_tables;
 
 /// Engines PRAETOR fuses. Present so the differential harness has a stable
-/// vocabulary to compare on before any engine is ported.
+/// vocabulary to compare on while engines are ported incrementally.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Engine {
     Sast,

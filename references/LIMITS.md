@@ -112,9 +112,10 @@ finding as a lead to verify, and every clean result as an incomplete negative.
 
 ## A second implementation exists, and that is itself a risk
 
-A Rust workspace lives under `rust/`. **No detector has been ported**, so nothing
-in this document's coverage claims is affected today — but the risk it introduces
-is worth naming before it materialises rather than after.
+A Rust workspace lives under `rust/`. `secrets` is the first detector port in
+`praetor-core`, but no Rust engine is wired into the CLI; Python remains the only
+implementation users can run. The second implementation therefore already exists
+as code even though it is not yet a user-selectable scanner.
 
 **The failure mode is two implementations that quietly disagree.** A detector
 ported with a subtly different notion of what a "line" is, or of which characters

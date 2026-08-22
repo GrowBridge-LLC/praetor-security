@@ -7,12 +7,18 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
-# 🔴 NO DEPENDENCIES, DELIBERATELY.
+# 🔴 TWO DIRECT DEPENDENCIES, EACH DELIBERATELY AUTHORISED AND EXACTLY PINNED.
 #
-# The Python `core`/`aisec` modules are standard-library only, and that is a
-# property worth preserving rather than an accident: PRAETOR is a security tool,
-# so every crate added here is a crate its users must trust. The port does not
-# get to widen the trust surface that the thing being ported kept narrow.
+# ADR-001 Amendment 1 authorizes `regex` for the detector ports: Rust has no
+# standard-library regex engine, and a bespoke matcher over attacker-controlled
+# text would be a larger security risk than this audited finite-automata engine.
+# Amendment 2 separately authorizes `base64` because the Python reference uses
+# strict base64 decoding and Rust has no standard-library decoder. That ruling is
+# explicitly marginal and creates no precedent for a third crate. Defaults are
+# disabled because 0.23.1 enables `simd-unsafe` by default; the scalar STANDARD
+# engine needs only `std`, and the crate forbids unsafe code without that feature.
 #
 # Adding a dependency is a decision, not a convenience. Record it here when made.
 [dependencies]
+base64 = { version = "=0.23.1", default-features = false, features = ["std"] }
+regex = "=1.13.1"

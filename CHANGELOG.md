@@ -733,8 +733,10 @@ target can trigger makes the scanner an oracle for the attacker.
   `tb_frame` walk out of a sandbox. Scoped to one recognisable shape and rated
   MEDIUM confidence, because "is this sandbox sound" is undecidable.
 - **A Rust workspace** under `rust/`, with the never-execute invariant test ported
-  first. **No detector has been ported**; the binary refuses to scan rather than
-  pretend to. See `references/ADR-001-engine-language.md`.
+  first. This was the status when the workspace landed; `secrets` is now the first
+  detector port under ADR-001 Amendment 2, while the binary still refuses to scan
+  because no engine is wired into the CLI. See
+  `references/ADR-001-engine-language.md`.
 - **A cross-language differential contract** (`references/differential/`). 🔴 The
   `*.expected` files are contracts, not fixtures — never regenerate one to make a
   test pass.
