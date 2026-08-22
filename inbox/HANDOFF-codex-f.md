@@ -208,3 +208,22 @@ advancing anything.
   switching back, `git show --no-patch codex-f/secrets-port-parked` resolves the parked commit and
   `rust/praetor-core/src/secrets.rs` is absent from `codex-f/build`; only this handoff and the Task D
   disclosure remain uncommitted here.
+
+### 2026-08-22 — Task H Amendment 2 ruling and unpark
+
+- Operator ruling is persisted on `main` in ADR-001 Amendment 2: `base64` is authorised for
+  `praetor-core`; the port order changes to secrets first; aisec is deferred until a separate JSON
+  dependency decision. The base64 decision is recorded as marginal and does not create precedent
+  for another crate.
+- Re-armed the required channel watcher after it exited on the ruling. Rebasing the clean builder
+  branch onto current `main` completed without conflict, then local-only parked commit `2b27857` was
+  applied to `codex-f/build` as `7ab13ab`.
+- Initial re-derived state after unpark: the existing differential runner returned exit 0 with both
+  line and secrets contracts equal; `cargo test --manifest-path rust/Cargo.toml -p praetor-core`
+  returned exit 0 with 11 Rust tests and no ignored tests. This is prototype evidence, not Task H
+  acceptance: the code still contains a bespoke base64 decoder, lacks the newly authorised pinned
+  crate, and carries stale parked/no-detector status prose.
+- Required next work: replace the bespoke decoder with pinned `base64`, enumerate its resolved
+  dependency/build-script tree, re-read every ported behavior against the Python reference, update
+  all current status surfaces, mutation-prove direct Python/Rust divergence, run the pinned self-scan
+  and full repository gate, then commit and hand off for independent audit. Nothing pushed.

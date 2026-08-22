@@ -21,19 +21,20 @@
 //!
 //! ## Status
 //!
-//! A `secrets` detector prototype exists on a parked side branch ahead of the
-//! ADR-mandated port order. It is preserved work, not an accepted first port and
-//! not wired into the binary; the binary still refuses to pretend it can scan.
+//! The `secrets` detector is the first detector port under ADR-001 Amendment 2.
+//! Its `scan()` entry point lives in this crate and is held to the Python
+//! reference by the blocking differential runner. It is not wired into the
+//! binary yet; the binary still refuses to pretend it can scan.
 //!
 //! ⚠️ "Scaffold only" was the earlier wording and it undersold this: `text.rs`
 //! (the shared line definition), `sca.rs` (argv construction plus the
 //! never-execute guard) and `unicode_tables.rs` (a generated script table) are
-//! real, tested, load-bearing code, not stubs. The parked detector adds a
-//! `scan()` entry point in this crate only; it does not change CLI capability.
+//! real, tested, load-bearing code, not stubs. Adding a detector to this crate
+//! does not by itself change CLI capability.
 //!
-//! Port order is fixed by ADR-001: `aisec` first (pure pattern matching, no
-//! external tool dependencies), with `sast`/`sca` last because they own the
-//! subprocess boundary above.
+//! Port order is fixed by ADR-001 Amendment 2: `secrets` first; `aisec` is
+//! deferred until its JSON dependency receives a separate decision; `sast`/`sca`
+//! stay last because they own the subprocess boundary above.
 //!
 //! ## Acceptance
 //!

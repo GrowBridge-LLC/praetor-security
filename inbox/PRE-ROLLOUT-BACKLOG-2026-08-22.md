@@ -26,12 +26,11 @@ contents of `.local/`. State at the time of writing: `main` at `090bf28`, clean,
    followed: searching `tests/` for the implementation's identifiers found nothing, because those
    tests assert **exit codes**, not function names — which is exactly the discipline this repository
    asks for. **Re-derive a "not started" claim against the code before assigning it to anyone.**
-3. **Task H — PARTIALLY DONE, re-derived 2026-08-22.** The differential harness **exists**, at
-   `tests/differential/run_differential.py`, and pre-commit gate 8 enforces it. The Rust
-   `engine_secrets` port **does not**: `rust/praetor-core/src/` holds `sca.rs`, `text.rs` and
-   `unicode_tables.rs`, and no secrets module. Owner: this project.
-   Next action: port **`engine_secrets`** into `rust/praetor-core/src/`, then extend the existing
-   differential runner to cover it. **Do not rebuild the harness — it is already there.**
+3. **Task H — IN PROGRESS, re-derived 2026-08-22.** The differential harness exists at
+   `tests/differential/run_differential.py`, and pre-commit gate 8 enforces it. The Rust secrets
+   detector now exists at `rust/praetor-core/src/secrets.rs`; it is not wired into the CLI.
+   Next action: finish differential/mutation acceptance and independent audit. **Do not rebuild the
+   harness — it is already there.**
    🔴 **The engine order is NOT free choice, and it CHANGED on 2026-08-22.** See ADR-001 Amendment 2:
    `secrets` ports first and `aisec` is deferred, because condition 1's premise that `aisec` is
    "pure pattern matching, zero external tool dependencies" is false — it imports `json` and parses

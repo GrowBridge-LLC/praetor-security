@@ -7,6 +7,7 @@
 //! fragment-assembled corpus and must emit identical `(engine, rule_id, file,
 //! line)` sets and match the committed contract.
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
@@ -344,49 +345,13 @@ pub fn is_known_fp_shape(value: &str) -> bool {
         || integrity_hash().is_match(value)
 }
 
-fn decode_base64_strict(value: &str) -> Option<Vec<u8>> {
-    if value.len() % 4 != 0 {
+fn b64_unwrap_hit(blob: &str) -> Option<&'static str> {
+    // Mirror Python's explicit pre-check before `b64decode(validate=True)`.
+    // The crate's STANDARD engine then rejects alphabet/padding errors.
+    if blob.len() % 4 != 0 && !blob.ends_with('=') {
         return None;
     }
-    let mut out = Vec::with_capacity(value.len() / 4 * 3);
-    let bytes = value.as_bytes();
-    for (chunk_index, chunk) in bytes.chunks_exact(4).enumerate() {
-        let last = chunk_index + 1 == bytes.len() / 4;
-        let mut vals = [0u8; 4];
-        let mut padding = 0;
-        for (i, byte) in chunk.iter().copied().enumerate() {
-            vals[i] = match byte {
-                b'A'..=b'Z' => byte - b'A',
-                b'a'..=b'z' => byte - b'a' + 26,
-                b'0'..=b'9' => byte - b'0' + 52,
-                b'+' => 62,
-                b'/' => 63,
-                b'=' if last && i >= 2 => {
-                    padding += 1;
-                    0
-                }
-                _ => return None,
-            };
-        }
-        if padding > 2
-            || (padding == 1 && chunk[3] != b'=')
-            || (padding == 2 && &chunk[2..] != b"==")
-        {
-            return None;
-        }
-        out.push((vals[0] << 2) | (vals[1] >> 4));
-        if padding < 2 {
-            out.push((vals[1] << 4) | (vals[2] >> 2));
-        }
-        if padding == 0 {
-            out.push((vals[2] << 6) | vals[3]);
-        }
-    }
-    Some(out)
-}
-
-fn b64_unwrap_hit(blob: &str) -> Option<&'static str> {
-    let bytes = decode_base64_strict(blob)?;
+    let bytes = STANDARD.decode(blob).ok()?;
     let decoded = String::from_utf8_lossy(&bytes);
     [
         ("-----BEGIN", "PEM private key"),

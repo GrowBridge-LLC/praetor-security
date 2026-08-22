@@ -170,11 +170,11 @@ also a Rust workspace under `rust/`, and a contributor who does not know that wi
 make changes in one implementation that silently diverge from the other.
 
 **Status, stated precisely because "port in progress" is too vague to act on:**
-**no detector has been ported.** `rust/praetor-core/src/` contains `text.rs` (the
-shared line definition), `sca.rs` (argv construction plus the never-execute
-invariant guard) and `unicode_tables.rs` (generated script tables) — real, tested,
-load-bearing code. There is no `scan()` entry point, and the binary exits non-zero
-rather than pretend to scan.
+`secrets` is the first detector port and has a `scan()` entry point in
+`rust/praetor-core/src/secrets.rs`, held to the Python reference by the blocking
+differential runner. `text.rs`, `sca.rs`, and `unicode_tables.rs` remain
+load-bearing shared/invariant code. The Rust CLI does not wire any engine yet and
+exits non-zero rather than pretend to scan.
 
 The decision, its conditions, and the counter-argument that lost are in
 [`ADR-001-engine-language.md`](ADR-001-engine-language.md). Two of its conditions

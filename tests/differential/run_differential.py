@@ -42,6 +42,7 @@ goes quiet when it cannot reach the other implementation reports success at
 exactly the moment it has stopped comparing anything.
 """
 
+import ast
 import os
 import shutil
 import subprocess
@@ -87,6 +88,9 @@ _REQUIRED_SECRET_RULES = {
     "twilio-account-sid-authtoken", "sendgrid-key", "npm-token", "jwt",
     "private-key-pem", "gcp-service-account-key", "db-connection-string-password",
     "hardcoded-secret-assignment", "base64-wrapped-secret", "high-entropy-string",
+}
+_REQUIRED_SECRET_NEGATIVE_PATHS = {
+    "config/placeholder.py", "config/revision.py", "package-lock.json",
 }
 
 
@@ -250,6 +254,33 @@ def python_secrets_signature():
         for finding in findings
     }
     return " ".join(sorted(identities))
+
+
+def python_defined_secret_rules():
+    """Rules the reference engine defines, derived from its real source surface.
+
+    Provider rules are data, while the six non-provider rules are literal
+    `Finding(rule_id=...)` calls. Reading both forms makes adding a Python rule
+    fail this gate until the shared corpus and Rust port reach it; otherwise a
+    new reference rule could leave both ports "equal" only because the corpus
+    never asked either implementation the new question.
+    """
+    rules = {rule_id for rule_id, *_rest in engine_secrets.PROVIDERS}
+    with open(engine_secrets.__file__, encoding="utf-8") as fh:
+        tree = ast.parse(fh.read(), filename=engine_secrets.__file__)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Name) or node.func.id != "Finding":
+            continue
+        for keyword in node.keywords:
+            if (
+                keyword.arg == "rule_id"
+                and isinstance(keyword.value, ast.Constant)
+                and isinstance(keyword.value.value, str)
+            ):
+                rules.add(keyword.value.value)
+    return rules
 
 
 # --------------------------------------------------------------------------- #
@@ -489,11 +520,48 @@ def main():
     python_secret_rules = {
         identity.split("|", 3)[1] for identity in py_secrets.split()
     }
+    defined_secret_rules = python_defined_secret_rules()
+    if defined_secret_rules != _REQUIRED_SECRET_RULES:
+        missing_from_contract = defined_secret_rules - _REQUIRED_SECRET_RULES
+        stale_in_contract = _REQUIRED_SECRET_RULES - defined_secret_rules
+        details = []
+        if missing_from_contract:
+            details.append(
+                "missing from required-rule contract: "
+                + ", ".join(sorted(missing_from_contract))
+            )
+        if stale_in_contract:
+            details.append(
+                "no longer defined by Python: "
+                + ", ".join(sorted(stale_in_contract))
+            )
+        failures.append(
+            "Python secrets rule surface and required-rule contract disagree ("
+            + "; ".join(details)
+            + ")"
+        )
     missing_rules = _REQUIRED_SECRET_RULES - python_secret_rules
     if missing_rules:
         failures.append(
             "secrets corpus does not reach required Python rules: "
             + ", ".join(sorted(missing_rules))
+        )
+    secret_case_paths = {path for _label, path, _text in secrets_corpus_cases()}
+    missing_negative_paths = _REQUIRED_SECRET_NEGATIVE_PATHS - secret_case_paths
+    if missing_negative_paths:
+        failures.append(
+            "secrets corpus is missing required negative paths: "
+            + ", ".join(sorted(missing_negative_paths))
+        )
+    unexpected_negative_findings = {
+        identity
+        for identity in py_secrets.split()
+        if identity.split("|", 3)[2] in _REQUIRED_SECRET_NEGATIVE_PATHS
+    }
+    if unexpected_negative_findings:
+        failures.append(
+            "required Python negative cases produced findings: "
+            + ", ".join(sorted(unexpected_negative_findings))
         )
     if py_secrets != secrets_contract:
         _report_set("scripts/engine_secrets.py disagrees with the COMMITTED CONTRACT",
