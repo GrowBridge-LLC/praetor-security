@@ -22,7 +22,8 @@ Do not write to the auditor's handoff, and do not expect the auditor to write he
 
 1. `inbox/GOAL-codex-f-2026-08-22.md` — your standing goal and its two resolutions.
 2. `AGENTS.md`, then `CLAUDE.md` — the canonical rules. `CLAUDE.md` outranks.
-3. `inbox/PAIR-CHANNEL.md` — tail it. That is where work arrives.
+3. `C:\projects\PRAETOR\.local\PAIR-CHANNEL.md` — tail it. That is where work arrives.
+   Absolute on purpose: it is ignored by git and absent from this worktree.
 4. `inbox/PRE-ROLLOUT-BACKLOG-2026-08-22.md` — the queue that survived the rollout setup.
 
 ## Log

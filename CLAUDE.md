@@ -191,10 +191,17 @@ This repo is public. Routine build traffic, drafts, assignments, and working
 state stay under .local/. That directory is intentionally ignored and pre-commit
 gate 9 asserts that no .local artifact is tracked.
 
-Pair traffic goes to the tracked channel, inbox/PAIR-CHANNEL.md. Append to it
-with the shared channel-append.sh, never with Write or Edit; that file's own
-header carries the exact command and the heading grammar. Read its tail at the
-start of every session.
+Pair traffic goes to C:\projects\PRAETOR\.local\PAIR-CHANNEL.md, which is
+ignored and absent from worktrees -- hence the absolute path. Append to it with
+the shared channel-append.sh and an absolute CHANNEL_FILE, never with Write or
+Edit. Read its tail at the start of every session.
+
+It is not tracked, and inbox/PAIR-CHANNEL.md records why: two gates here rejected
+a tracked channel on 2026-08-22. The hygiene sweep rejects a shipping file naming
+a sibling project, and the self-scan pin moved when routine prose about a check
+was read by aisec as an instruction to weaken a control. That finding was
+correct; the file was in the wrong place. Excluding the directory from the scan
+was rejected -- a credential pasted into a note would then go unreported.
 
 The earlier rule sent pair traffic to the lane-pair.md file under .local and
 forbade a channel wrapper, because a helper aimed at an ignored path can append
