@@ -1,13 +1,24 @@
 # `LF-2` — malfunction vs unavailable at the default-config boundary
 
-> 🔴 **STATUS: AUTHORIZED, NOT IMPLEMENTED. The hole it closes is LIVE on `main`.**
+> ✅ **STATUS: IMPLEMENTED AND TESTED, 2026-08-22.** Landed in `0930947`. The hole
+> described below is CLOSED on `main`.
+>
+> ↩️ **This header read "AUTHORIZED, NOT IMPLEMENTED. The hole it closes is LIVE on
+> `main`" until 2026-08-22, and by then it had been false for some time.** The row
+> below told the reader to run `grep -rn NON_MALFUNCTION_STATUSES scripts/` and
+> expect nothing; that grep returns three hits in `core.py` and one in `praetor.py`.
+> A stale "not built yet" claim is the exact converse of a stale "this is enforced"
+> claim, and it costs the same way: a session read this file, believed it, and came
+> within one post of assigning a builder work that was already finished. **When a
+> feature ships, sweep every document that asserts its old status — not only the
+> one you happen to be editing.**
 >
 > | | |
 > |---|---|
 > | Authorized | 2026-08-12, in the operator's own words: *"sounds good agreed"* |
 > | Precondition attached | *"apply only after both adversarial audits report"* |
 > | Precondition status | ✅ **MET** — both passes reported 2026-08-12 (`references/audits/2026-08-12-independent-audit.md`) |
-> | Implemented | ❌ **No.** `grep -rn NON_MALFUNCTION_STATUSES scripts/` returns nothing |
+> | Implemented | ✅ **Yes**, `0930947`. `core.py` defines `NON_MALFUNCTION_STATUSES` and `engine_malfunctions`; `praetor.py`'s report-only branch returns 3 on a malfunction |
 > | Blast radius | **Behaviour change** — report-only runs that today exit 0 with a dead engine would exit 3 |
 >
 > **Why this file exists in the repo rather than a handoff.** This design was
@@ -23,8 +34,12 @@
 > and rejected `--exclude ""`. Re-derive the table below against current `main`
 > before implementing; the reasoning is sound, the surrounding code has moved.
 >
-> **The live hole, in one line:** `praetor .` in CI with `if rc != 0`, no
-> `--fail-on`, and a dead SAST engine is **green today**.
+> **The hole this closed, in one line:** `praetor .` in CI with `if rc != 0`, no
+> `--fail-on`, and a dead SAST engine used to be green. It now exits 3, and six
+> tests in `tests/test_exit_code_never_hides_a_blind_spot.py` hold that behaviour —
+> including the carve-out that an *unavailable* runtime must NOT fail a report-only
+> run. They assert exit codes rather than function names, which is why a search for
+> the implementation's identifiers does not find them.
 
 ---
 

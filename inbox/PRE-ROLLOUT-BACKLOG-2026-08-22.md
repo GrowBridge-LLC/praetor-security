@@ -10,16 +10,28 @@ contents of `.local/`. State at the time of writing: `main` at `090bf28`, clean,
 
 ## Build queue — ordered, owned by this project
 
-1. **Task D — the subprocess-discovery guard hard-codes five filenames.** A planted new-engine file
-   goes undetected, and a fifth engine is inbound, so this is a live security gap rather than
-   cleanup. Owner: the builder session, or the auditor session if no builder is running.
-   Next action: prove the existing probe RED first, then glob `scripts/*.py`, allow `core.py`'s one
-   legitimate call by line number rather than by excluding its filename, and replace the `== 5`
-   count pin.
-2. **Task I — exit-code priority.** Findings plus a blind engine must return 3, not 1.
-   Owner: this project. Next action: start after Task D lands with a green gate.
-3. **Task H — the Rust differential harness and the `engine_secrets` port.** Its "wait for Task G to
-   merge" precondition is now satisfied. Owner: this project. Next action: start after D and I.
+1. **Task D — DELIVERED on `codex-f/build`, four audited rounds. Awaiting a merge decision.**
+   The guard hard-coded five filenames, so a planted new-engine file went undetected. It now
+   discovers every `scripts/*.py` by AST, treats `subprocess` as deny-by-default, matches the `os`
+   process family by prefix, and allows exactly one sanctioned call by `(file, line)`.
+   Owner: this project. Next action: **the merge to `main` needs the operator's word.** Nothing on
+   that branch is pushed.
+2. ~~**Task I — exit-code priority.**~~ ✅ **ALREADY DONE — this entry was wrong when written.**
+   It landed in `0930947`, and six tests in `tests/test_exit_code_never_hides_a_blind_spot.py` hold
+   the behaviour, including the carve-out that an *unavailable* runtime must not fail a report-only
+   run.
+   ⚠️ **How the error happened, because it will happen again:** this entry was copied from a handoff
+   written before the implementation landed, and the design document carried a "NOT IMPLEMENTED"
+   header of its own, so two sources agreed and neither had been re-derived. A second near-miss
+   followed: searching `tests/` for the implementation's identifiers found nothing, because those
+   tests assert **exit codes**, not function names — which is exactly the discipline this repository
+   asks for. **Re-derive a "not started" claim against the code before assigning it to anyone.**
+3. **Task H — PARTIALLY DONE, re-derived 2026-08-22.** The differential harness **exists**, at
+   `tests/differential/run_differential.py`, and pre-commit gate 8 enforces it. The Rust
+   `engine_secrets` port **does not**: `rust/praetor-core/src/` holds `sca.rs`, `text.rs` and
+   `unicode_tables.rs`, and no secrets module. Owner: this project.
+   Next action: port `engine_secrets` into `rust/praetor-core/src/`, then extend the existing
+   differential runner to cover it. **Do not rebuild the harness — it is already there.**
 4. **Tasks F, E and B.** Owner: this project. Next action: re-read the assignment file under
    `.local/` for their specifications once H clears. The handoff supersedes that file's ordering,
    not its content.
