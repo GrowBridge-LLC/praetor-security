@@ -7,12 +7,14 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
-# 🔴 NO DEPENDENCIES, DELIBERATELY.
+# 🔴 ONE DEPENDENCY, DELIBERATELY.
 #
-# The Python `core`/`aisec` modules are standard-library only, and that is a
-# property worth preserving rather than an accident: PRAETOR is a security tool,
-# so every crate added here is a crate its users must trust. The port does not
-# get to widen the trust surface that the thing being ported kept narrow.
+# ADR-001 Amendment 1 authorizes `regex` for the detector ports: Rust has no
+# standard-library regex engine, and a bespoke matcher over attacker-controlled
+# text would be a larger security risk than this audited finite-automata engine.
+# It has no build script or native dependency. This remains a one-entry budget;
+# every further crate still needs its own recorded decision.
 #
 # Adding a dependency is a decision, not a convenience. Record it here when made.
 [dependencies]
+regex = "=1.13.1"

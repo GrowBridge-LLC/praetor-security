@@ -21,15 +21,15 @@
 //!
 //! ## Status
 //!
-//! **No DETECTOR has been ported yet** — nothing here scans, and the binary
-//! refuses to pretend otherwise.
+//! A `secrets` detector prototype exists on a parked side branch ahead of the
+//! ADR-mandated port order. It is preserved work, not an accepted first port and
+//! not wired into the binary; the binary still refuses to pretend it can scan.
 //!
 //! ⚠️ "Scaffold only" was the earlier wording and it undersold this: `text.rs`
 //! (the shared line definition), `sca.rs` (argv construction plus the
 //! never-execute guard) and `unicode_tables.rs` (a generated script table) are
-//! real, tested, load-bearing code, not stubs. What is absent is any `scan()`
-//! entry point. Corrected after an audit noted a reader skimming the summary
-//! would take the crate for inert.
+//! real, tested, load-bearing code, not stubs. The parked detector adds a
+//! `scan()` entry point in this crate only; it does not change CLI capability.
 //!
 //! Port order is fixed by ADR-001: `aisec` first (pure pattern matching, no
 //! external tool dependencies), with `sast`/`sca` last because they own the
@@ -44,11 +44,12 @@
 //! a fork.
 
 pub mod sca;
+pub mod secrets;
 pub mod text;
 pub mod unicode_tables;
 
 /// Engines PRAETOR fuses. Present so the differential harness has a stable
-/// vocabulary to compare on before any engine is ported.
+/// vocabulary to compare on while engines are ported incrementally.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Engine {
     Sast,

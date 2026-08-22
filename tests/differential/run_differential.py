@@ -53,10 +53,13 @@ _ROOT = os.path.dirname(os.path.dirname(_HERE))
 sys.path.insert(0, os.path.join(_ROOT, "scripts"))
 
 import core  # noqa: E402  -- after the sys.path insert, deliberately
+import engine_secrets  # noqa: E402  -- same reference implementation
 
 _CORPUS_DIR = os.path.join(_ROOT, "references", "differential")
 _CORPUS = os.path.join(_CORPUS_DIR, "line-splitting.txt")
 _CONTRACT = os.path.join(_CORPUS_DIR, "line-splitting.expected")
+_SECRETS_CORPUS = os.path.join(_CORPUS_DIR, "secrets.tsv")
+_SECRETS_CONTRACT = os.path.join(_CORPUS_DIR, "secrets.expected")
 
 _NL = chr(0x0A)
 _CR = chr(0x0D)
@@ -72,6 +75,19 @@ _MIN_DISCRIMINATING_CASES = 8
 # Anti-vacuity floor for the corpus itself: an emptied corpus plus a regenerated
 # contract would otherwise agree with anything.
 _MIN_CASES = 20
+
+# One case per provider plus every non-provider detection route and both negative
+# directions. An emptied or provider-only corpus is not parity evidence.
+_MIN_SECRET_CASES = 25
+_REQUIRED_SECRET_RULES = {
+    "aws-access-key-id", "aws-secret-access-key", "gcp-api-key",
+    "gcp-oauth-client-secret", "google-oauth-refresh-token", "github-token",
+    "github-fine-grained-pat", "slack-token", "slack-webhook",
+    "stripe-secret-key", "openai-key", "anthropic-key",
+    "twilio-account-sid-authtoken", "sendgrid-key", "npm-token", "jwt",
+    "private-key-pem", "gcp-service-account-key", "db-connection-string-password",
+    "hardcoded-secret-assignment", "base64-wrapped-secret", "high-entropy-string",
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -151,10 +167,18 @@ def _kv(text, key):
     raise AssertionError(f"no {key!r} line found")
 
 
-def expected(key):
-    """A value from the committed contract."""
-    with open(_CONTRACT, encoding="utf-8") as fh:
+def _expected(path, key):
+    """A value from one committed contract."""
+    with open(path, encoding="utf-8") as fh:
         return _kv(fh.read(), key)
+
+
+def expected(key):
+    return _expected(_CONTRACT, key)
+
+
+def secrets_expected(key):
+    return _expected(_SECRETS_CONTRACT, key)
 
 
 def corpus_source_lines():
@@ -184,6 +208,50 @@ def python_signature():
     return " ".join(python_parts())
 
 
+def secrets_corpus_cases():
+    r"""Parse `label<TAB>relpath<TAB>fragment...` from the shared corpus.
+
+    Fragments are unescaped and joined only in memory. That lets the corpus
+    exercise credential-shaped values without committing those values intact and
+    turning the detector's own fixture into repository noise.
+    """
+    cases = []
+    labels, paths = set(), set()
+    with open(_SECRETS_CORPUS, encoding="utf-8") as fh:
+        raw = fh.read()
+    for line_no, raw_line in enumerate(core.split_lines(raw), 1):
+        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
+            continue
+        fields = raw_line.split(_TAB)
+        assert len(fields) >= 3, (
+            f"secrets corpus line {line_no} needs label, path, and fragments"
+        )
+        label, path = fields[:2]
+        assert label and path, f"secrets corpus line {line_no} has an empty identity"
+        assert label not in labels, f"duplicate secrets corpus label: {label}"
+        assert path not in paths, f"duplicate secrets corpus path: {path}"
+        labels.add(label)
+        paths.add(path)
+        cases.append((label, path, "".join(unescape(part) for part in fields[2:])))
+    return cases
+
+
+def python_secrets_signature():
+    """Sorted set of the ADR-mandated finding identity from the Python engine."""
+    cases = secrets_corpus_cases()
+    texts = {label: text for label, _path, text in cases}
+    inputs = [
+        core.ScanFile(abspath=label, relpath=path, size=len(text.encode("utf-8")))
+        for label, path, text in cases
+    ]
+    findings = engine_secrets.scan(inputs, lambda label: texts[label])
+    identities = {
+        f"{finding.engine}|{finding.rule_id}|{finding.file}|{finding.line}"
+        for finding in findings
+    }
+    return " ".join(sorted(identities))
+
+
 # --------------------------------------------------------------------------- #
 # Reaching the other implementation
 # --------------------------------------------------------------------------- #
@@ -199,8 +267,8 @@ def _cargo():
     return None
 
 
-def rust_signature():
-    """Run the Rust emitter and return `(cases, signature)`.
+def rust_signatures():
+    """Run the Rust emitter and return both blocking contracts.
 
     Raises RuntimeError -- never returns a sentinel and never skips. A harness
     that cannot reach the other implementation has failed, not passed.
@@ -225,6 +293,8 @@ def rust_signature():
     try:
         n = int(_kv(proc.stdout, "cases"))
         sig = _kv(proc.stdout, "signature")
+        secrets_n = int(_kv(proc.stdout, "secrets_cases"))
+        secrets_sig = _kv(proc.stdout, "secrets_signature")
     except (AssertionError, ValueError) as exc:
         raise RuntimeError(
             "the Rust emitter ran but its output could not be parsed (%s). An "
@@ -236,7 +306,12 @@ def rust_signature():
             "the Rust emitter produced an EMPTY signature. Two empty strings "
             "compare equal, so this would otherwise pass as agreement."
         )
-    return n, sig
+    if not secrets_sig:
+        raise RuntimeError(
+            "the Rust emitter produced an EMPTY secrets signature. A port that "
+            "reports nothing must not pass as parity with a missing measurement."
+        )
+    return n, sig, secrets_n, secrets_sig
 
 
 # --------------------------------------------------------------------------- #
@@ -298,14 +373,27 @@ def _report(label, a_name, a, b_name, b, sources, parts):
           file=sys.stderr)
 
 
+def _report_set(label, a_name, a, b_name, b):
+    """Report identity-set drift without pretending an ordering change matters."""
+    a_set, b_set = set(a.split()), set(b.split())
+    print(f"FAIL  {label}", file=sys.stderr)
+    for identity in sorted(a_set - b_set):
+        print(f"      only in {a_name}: {identity}", file=sys.stderr)
+    for identity in sorted(b_set - a_set):
+        print(f"      only in {b_name}: {identity}", file=sys.stderr)
+
+
 def main():
     failures = []
     sources = corpus_source_lines()
     cases = corpus_cases()
+    secret_cases = secrets_corpus_cases()
 
-    print("PRAETOR differential gate -- one definition of a line, two implementations")
+    print("PRAETOR differential gate -- shared contracts, two implementations")
     print(f"  corpus   : {os.path.relpath(_CORPUS, _ROOT)}  ({len(cases)} cases)")
     print(f"  contract : {os.path.relpath(_CONTRACT, _ROOT)}")
+    print(f"  secrets  : {os.path.relpath(_SECRETS_CORPUS, _ROOT)}  ({len(secret_cases)} cases)")
+    print(f"  contract : {os.path.relpath(_SECRETS_CONTRACT, _ROOT)}")
 
     # --- the corpus must be capable of detecting the divergence class -------- #
     want_cases = int(expected("cases"))
@@ -341,18 +429,39 @@ def main():
             f"thin. A reading of 0 with an intact corpus means (b)."
         )
 
+    secret_want_cases = int(secrets_expected("cases"))
+    if len(secret_cases) != secret_want_cases:
+        failures.append(
+            f"secrets corpus has {len(secret_cases)} cases, the contract says "
+            f"{secret_want_cases}; corpus and truth artifact moved independently."
+        )
+    if secret_want_cases < _MIN_SECRET_CASES:
+        failures.append(
+            f"the secrets contract declares only {secret_want_cases} cases (floor "
+            f"{_MIN_SECRET_CASES}); a thinned detector corpus is not parity evidence."
+        )
+    secret_paths = {path for _label, path, _text in secret_cases}
+    for required_path in {".cursor/hooks.json", ".agent-instructions"}:
+        if required_path not in secret_paths:
+            failures.append(
+                f"secrets corpus lost required wide-scope path {required_path!r}; two "
+                f"ports could now agree while preserving the known scope hole."
+            )
+
     # --- the three-way comparison -------------------------------------------- #
     contract = expected("signature")
+    secrets_contract = secrets_expected("signature")
     parts = python_parts()
     py = " ".join(parts)
+    py_secrets = python_secrets_signature()
 
     try:
-        rust_cases, rust = rust_signature()
+        rust_cases, rust, rust_secret_cases, rust_secrets = rust_signatures()
     except RuntimeError as exc:
         print(f"FAIL  the Rust implementation could not be reached\n      {exc}",
               file=sys.stderr)
         failures.append("Rust signature unavailable -- parity UNVERIFIED")
-        rust_cases, rust = None, None
+        rust_cases, rust, rust_secret_cases, rust_secrets = None, None, None, None
 
     if py != contract:
         _report("scripts/core.py disagrees with the COMMITTED CONTRACT",
@@ -377,22 +486,52 @@ def main():
                     "python", py, "rust", rust, sources, parts)
             failures.append("python != rust")
 
+    python_secret_rules = {
+        identity.split("|", 3)[1] for identity in py_secrets.split()
+    }
+    missing_rules = _REQUIRED_SECRET_RULES - python_secret_rules
+    if missing_rules:
+        failures.append(
+            "secrets corpus does not reach required Python rules: "
+            + ", ".join(sorted(missing_rules))
+        )
+    if py_secrets != secrets_contract:
+        _report_set("scripts/engine_secrets.py disagrees with the COMMITTED CONTRACT",
+                    "python", py_secrets, "contract", secrets_contract)
+        failures.append("python secrets != contract")
+
+    if rust_secrets is not None:
+        if rust_secret_cases != secret_want_cases:
+            failures.append(
+                f"the Rust emitter reports {rust_secret_cases} secrets cases, the "
+                f"contract says {secret_want_cases}; it is not reading this corpus."
+            )
+        if rust_secrets != secrets_contract:
+            _report_set("rust/praetor-core secrets disagree with the COMMITTED CONTRACT",
+                        "rust", rust_secrets, "contract", secrets_contract)
+            failures.append("rust secrets != contract")
+        if py_secrets != rust_secrets:
+            _report_set("Python and Rust secrets engines disagree WITH EACH OTHER",
+                        "python", py_secrets, "rust", rust_secrets)
+            failures.append("python secrets != rust secrets")
+
     if failures:
         print("", file=sys.stderr)
         print("DIFFERENTIAL CONTRACT BROKEN:", file=sys.stderr)
         for f in failures:
             print(f"  - {f}", file=sys.stderr)
         print("", file=sys.stderr)
-        print("A line number is part of every finding's identity. A divergence here "
-              "misaligns every ported detector at once -- and the inline-ignore bypass "
-              "this corpus was built from is what that looks like in the wild.",
+        print("A finding identity is part of the scanner's public contract. A divergence "
+              "means the result changes with the implementation selected.",
               file=sys.stderr)
         print("🔴 Do NOT regenerate the .expected file to make this pass.", file=sys.stderr)
         return 1
 
     print(f"  python   : {len(parts)} cases signed, {len(py)} chars")
     print(f"  rust     : {rust_cases} cases signed, {len(rust)} chars")
-    print("OK    python == rust == committed contract")
+    print(f"  secrets : {secret_want_cases} cases, "
+          f"{len(py_secrets.split())} finding identities")
+    print("OK    python == rust == committed contracts")
     return 0
 
 
