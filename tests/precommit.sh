@@ -137,16 +137,27 @@ EXPECT_FILTERED=52
 # here, deliberately, with the same reasoning.
 #
 # The third one appeared on 2026-08-22, exactly as the paragraph above predicted:
-# `.codex/` holds a linked build worktree, which is a COMPLETE SECOND COPY of this
-# repository inside the tree this scan walks. It did not add a few findings; it
-# DOUBLED the corpus, 13/52 -> 26/104, because the scanner read every shipping
+# `.codex/PRAETOR-codex` is a linked build worktree, which is a COMPLETE SECOND COPY
+# of this repository inside the tree this scan walks. It did not add a few findings;
+# it DOUBLED the corpus, 13/52 -> 26/104, because the scanner read every shipping
 # file twice. Excluding it restores 13/52 exactly, which is the evidence that the
 # duplicate copy was the whole cause and that no real finding is being hidden.
-# 🔴 THE GENERAL SHAPE, worth more than this line: any check that walks the tree
+#
+# 🔴 THE EXCLUSION IS THE WORKTREE PATH, NOT `.codex/`. Getting this wrong was
+# this repo's own most-recorded defect -- suppressing on PATH alone -- and the first
+# version of this line did exactly that. `.gitignore` deliberately keeps
+# `.codex/hooks/` and `.codex/agents/` VISIBLE and stageable, so those files SHIP and
+# must be scanned. Measured both ways with a hardcoded credential planted in
+# `.codex/hooks/`: under `^\.codex/PRAETOR-codex/` the scan reports 14 active /
+# CRITICAL=2 and catches it; under a wholesale `^\.codex/` it reports 13 / CRITICAL=1
+# and the credential is INVISIBLE. A directory-shaped exclusion is one new
+# subdirectory away from hiding live executable code.
+#
+# 🔴 THE GENERAL SHAPE, worth more than either line: any check that walks the tree
 # rather than asking git sees a nested worktree as a second repository. A pin
 # catches that loudly. A coverage percentage, a lint sweep or a duplicate-code
 # check absorbs it silently and still reports a number.
-SS="$(py -3.14 scripts/praetor.py . --no-registry --exclude '^\.local/' --exclude '^\.claude/' --exclude '^\.codex/' 2>&1)"
+SS="$(py -3.14 scripts/praetor.py . --no-registry --exclude '^\.local/' --exclude '^\.claude/' --exclude '^\.codex/PRAETOR-codex/' 2>&1)"
 GOT_ACTIVE="$(printf '%s' "$SS" | grep -oE 'Findings \(active\): [0-9]+' | grep -oE '[0-9]+$')"
 GOT_FILTERED="$(printf '%s' "$SS" | grep -oE 'Filtered \(likely FP / low-signal, shown separately\): [0-9]+' | grep -oE '[0-9]+$')"
 if [ "$GOT_ACTIVE" = "$EXPECT_ACTIVE" ] && [ "$GOT_FILTERED" = "$EXPECT_FILTERED" ]; then
