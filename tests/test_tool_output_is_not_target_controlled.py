@@ -106,12 +106,13 @@ def test_no_engine_calls_subprocess_run_directly():
     keyword arguments -- a test that checks a setting cannot notice the setting
     being bypassed by a NEW call site, which is exactly how this arrived.
 
-    Scope is explicit: this resolves direct ``import subprocess`` and
-    ``from subprocess import run`` bindings, including aliases and star imports.
-    It does not resolve dynamic imports, ``getattr``, or assignment aliases such
-    as ``runner = subprocess.run``. Discovery covers top-level ``scripts/*.py``;
-    a future nested scripts package needs recursive discovery. The sanctioned
-    core call is line-pinned so source movement fails closed and forces review.
+    Covered function surface: ``subprocess.run``, ``check_output``, ``Popen``,
+    ``call``, and ``check_call``; plus ``os.system`` and ``os.popen``. The guard
+    resolves direct module/from imports, aliases, and star imports. It does not
+    resolve dynamic imports, ``getattr``, or assignment aliases such as
+    ``runner = subprocess.run``. Discovery covers top-level ``scripts/*.py``; a
+    future nested scripts package needs recursive discovery. The sanctioned core
+    call is line-pinned so source movement fails closed and forces review.
     """
     root = pathlib.Path(__file__).resolve().parent.parent
     required = {
@@ -122,6 +123,10 @@ def test_no_engine_calls_subprocess_run_directly():
         "scripts/praetor.py",
     }
     allowed_calls = {("scripts/core.py", 152)}
+    dangerous_calls = {
+        "subprocess": {"run", "check_output", "Popen", "call", "check_call"},
+        "os": {"system", "popen"},
+    }
     offenders = []
     scanned = set()
     for path in sorted((root / "scripts").glob("*.py")):
@@ -131,23 +136,23 @@ def test_no_engine_calls_subprocess_run_directly():
         tree = ast.parse(source, filename=rel)
         lines = core.split_lines(source)
 
-        module_names = {"subprocess"}
-        run_names = set()
+        module_names = dict(dangerous_calls)
+        function_names = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for name in node.names:
-                    if name.name == "subprocess":
-                        module_names.add(name.asname or name.name)
+                    if name.name in dangerous_calls:
+                        module_names[name.asname or name.name] = dangerous_calls[name.name]
             elif (
                 isinstance(node, ast.ImportFrom)
                 and node.level == 0
-                and node.module == "subprocess"
+                and node.module in dangerous_calls
             ):
                 for name in node.names:
-                    if name.name == "run":
-                        run_names.add(name.asname or name.name)
+                    if name.name in dangerous_calls[node.module]:
+                        function_names.add(name.asname or name.name)
                     elif name.name == "*":
-                        run_names.add("run")
+                        function_names.update(dangerous_calls[node.module])
 
         for node in ast.walk(tree):
             module_call = (
@@ -155,12 +160,12 @@ def test_no_engine_calls_subprocess_run_directly():
                 and isinstance(node.func, ast.Attribute)
                 and isinstance(node.func.value, ast.Name)
                 and node.func.value.id in module_names
-                and node.func.attr == "run"
+                and node.func.attr in module_names[node.func.value.id]
             )
             imported_call = (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
-                and node.func.id in run_names
+                and node.func.id in function_names
             )
             if not (module_call or imported_call):
                 continue
@@ -175,7 +180,7 @@ def test_no_engine_calls_subprocess_run_directly():
     missing = required - scanned
     assert not missing, f"guard missed required engine files: {sorted(missing)}"
     assert not offenders, (
-        "an engine calls subprocess.run directly. Use core.run_tool: a bare "
-        "`text=True` decodes with the LOCALE codec, and the scanned tree supplies "
-        "the bytes. Offenders:\n  " + "\n  ".join(offenders)
+        "an engine uses a process primitive directly. Use core.run_tool so external "
+        "analysis tools share explicit UTF-8 decoding, replacement errors, timeout, "
+        "and cwd handling. Offenders:\n  " + "\n  ".join(offenders)
     )

@@ -112,3 +112,34 @@ advancing anything.
 - Complete targeted module: `FOLLOWUP_TARGET_MODULE_EXIT=0`, `3 passed`.
 - Exact follow-up tree gate: `FOLLOWUP_FINAL_TREE_PRECOMMIT_EXIT=0`, all nine gates
   (240 Python, 8 Rust, self-scan 13/52, public-hygiene sweep 81 shipping files).
+
+### 2026-08-22 — Task D dangerous-function surface follow-up
+
+- `claude-f` independently re-ran and accepted every claim in `3388db6`, including module aliases,
+  direct/from-import aliases, star imports, relative-import exclusion, and inert docstring behavior.
+- The audit found the disclosure still incomplete at the function-set level: the guard does not
+  catch `subprocess.check_output`, `subprocess.Popen`, `subprocess.call`,
+  `subprocess.check_call`, `os.system`, or `os.popen`. No current `scripts/` file uses them, so the
+  gap is latent rather than live.
+- Assigned follow-up: cover the four additional `subprocess` functions; either cover or disclose
+  the two `os` functions; state the covered function surface; mutation-prove each, inert text, clean
+  tree, and the full gate.
+- Builder choice: cover both `os` functions in the fail-safe direction rather than leave an
+  alternate process-launch surface out of the structural guard. Preserve the exact core allowance.
+- Red-first combined alias/from-import probe called all six new primitives and the committed guard
+  returned `SURFACE_OLD_GUARD_EXIT=0` with `1 passed`.
+- Generalized the binding table to the explicit function surface: `subprocess.run`,
+  `check_output`, `Popen`, `call`, `check_call`, plus `os.system` and `os.popen`. The docstring names
+  that surface and retains the previously audited dynamic/discovery limitations.
+- The fixed guard returned test exit 1 and reported all six exact probe lines; the wrapper asserted
+  `SURFACE_OFFENDER_ASSERT_COUNT=6` and `SURFACE_OFFENDER_ASSERT=PASS`.
+- A probe with the same imports but only docstring/comment names returned
+  `SURFACE_DOCSTRING_COMMENT_EXIT=0` and `1 passed`; the probe was deleted.
+- Re-proved the allowance boundary with a second `subprocess.check_output` in `core.py`: test exit 1
+  named `scripts/core.py:164`, then the mutation was removed and `git diff scripts/core.py` returned
+  no content difference. Clean guard returned `SURFACE_POST_ALLOWANCE_CLEAN_EXIT=0`.
+- Safety-claim check: fixed-string probes found every named function in the guarded set and found
+  explicit UTF-8, replacement-error, timeout, and cwd handling in the real `core.run_tool` body.
+- Complete targeted module returned `SURFACE_TARGET_MODULE_EXIT=0` with `3 passed`.
+- Pre-final-handoff repository gate returned `SURFACE_PRECOMMIT_EXIT=0`, all nine gates
+  (240 Python, 8 Rust, self-scan 13/52, public-hygiene sweep 81 shipping files).
