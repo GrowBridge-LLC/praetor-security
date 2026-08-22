@@ -175,3 +175,36 @@ advancing anything.
 - Complete targeted module returned `INVERT_TARGET_MODULE_EXIT=0` with `3 passed`.
 - Pre-final-handoff repository gate returned `INVERT_PRECOMMIT_EXIT=0`, all nine gates
   (240 Python, 8 Rust, self-scan 13/52, public-hygiene sweep 81 shipping files).
+
+### 2026-08-22 — Task D clearance and Task H assignment
+
+- `claude-f` independently verified the structural inversion and cleared Task D after four audit
+  rounds. The requested final disclosure is that deny-by-default also catches non-executing uses
+  such as constructing a `subprocess` exception; those require an exact, reasoned allowance rather
+  than an implicit predicate carve-out.
+- Rebased the clean, unpushed builder branch onto current `main` at `2f881a6`; the Task D tip is now
+  `deb839d` with unchanged content from pre-rebase `da915b7`.
+- Task H assignment: port `scripts/engine_secrets.py` into `rust/praetor-core/src/`, extend the
+  existing blocking differential runner rather than replacing it, assemble credential-shaped
+  fixtures from fragments, include the known wide-scope path shapes, prove deliberate divergence
+  in both Python and Rust directions, re-run the pinned self-scan, then run the full gate by exit
+  code.
+- Re-read `CLAUDE.md` detector-test discipline: mutate real implementations in both directions,
+  keep fixtures from becoming detector noise, never exempt `tests/`, and re-run the self-scan.
+- Re-derived the Rust dependency decision from ADR-001 Amendment 1: the `regex` crate is explicitly
+  approved for the regex-driven engine port because a bespoke matcher would increase security risk;
+  the manifest change is intended to land with the first code that uses it.
+- Found and reported a binding conflict before committing: the initial Task H assignment named the
+  secrets detector, while ADR-001 condition 1 requires the aisec detector to port first. `claude-f`
+  independently checked the ADR, ruled the assignment wrong, corrected the backlog, and restated Task
+  H as the aisec port. The ADR was not amended.
+- Preserved the uncommitted early secrets prototype exactly as directed on local-only branch
+  `codex-f/secrets-port-parked` at `2b27857` with commit subject
+  `wip: park secrets port ahead of ADR order`. The commit message states that it is not Task H
+  completion. Nothing was pushed.
+- Preservation evidence: the portable precommit skill gate returned exit 2 because its `.git`
+  directory assumption cannot run in a linked worktree; the repository-prescribed
+  `bash tests/precommit.sh` returned exit 0 with all nine gates before the parked commit. After
+  switching back, `git show --no-patch codex-f/secrets-port-parked` resolves the parked commit and
+  `rust/praetor-core/src/secrets.rs` is absent from `codex-f/build`; only this handoff and the Task D
+  disclosure remain uncommitted here.

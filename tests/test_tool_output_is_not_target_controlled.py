@@ -116,7 +116,9 @@ def test_no_engine_calls_subprocess_run_directly():
     assignment aliases such as ``runner = subprocess.run``. Discovery covers
     top-level ``scripts/*.py``; a future nested scripts package needs recursive
     discovery. The sanctioned core call is line-pinned so source movement fails
-    closed and forces review.
+    closed and forces review. Non-executing calls such as constructing a
+    ``subprocess`` exception are intentionally caught until an exact, reasoned
+    allowance is added.
     """
     root = pathlib.Path(__file__).resolve().parent.parent
     required = {
