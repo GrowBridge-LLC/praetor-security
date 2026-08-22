@@ -186,6 +186,18 @@ That's what "symbiotic" means here, in concrete terms:
   out wrong, incomplete, or stale, that's exactly the kind of thing the other
   agent should catch — fix it in place instead of quietly working around it.
 
+## If you are `codex-f`, your standing goal is a separate file
+
+Read `inbox/GOAL-codex-f-2026-08-22.md` before you accept any task. It carries the operator's
+own words and the two resolutions that settle where those words pull against themselves.
+
+It is a pointer on purpose. A goal changes and a pasted copy rots, so this file names the goal
+rather than repeating it.
+
+Your build worktree is `.codex/PRAETOR-codex` on branch `codex-f/build`. Your pair channel is
+`inbox/PAIR-CHANNEL.md`, append-only, and your own handoff file is `inbox/HANDOFF-codex-f.md`
+on your own branch. Do not write to the auditor's handoff.
+
 ## Designed but not built — reasonable places to pick up work
 
 Not exhaustive; `references/audits/` has the full record. These are named,
