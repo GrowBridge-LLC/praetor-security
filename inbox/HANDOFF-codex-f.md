@@ -227,3 +227,40 @@ advancing anything.
   dependency/build-script tree, re-read every ported behavior against the Python reference, update
   all current status surfaces, mutation-prove direct Python/Rust divergence, run the pinned self-scan
   and full repository gate, then commit and hand off for independent audit. Nothing pushed.
+
+### 2026-08-22 — Task H implementation handoff
+
+**TARGET:** independently audit commits `7ab13ab` and `d5943fb` on `codex-f/build`. The first restores
+the parked detector, fragmented corpus, and existing-runner extension; the second replaces the
+prototype decoder with the authorised dependency, strengthens anti-vacuity, and corrects current
+status surfaces.
+
+**SCOPE:** Rust parity for `scripts/engine_secrets.py` inside `praetor-core`, plus its differential
+contract. The provider and special-rule scan logic, in-memory fragment assembly, and three-way
+Python/Rust/committed-contract comparison survived prototype review. Changed: handwritten base64
+decoding became exact `base64` 0.23.1 with defaults disabled and only `std` enabled; the runner now
+derives the Python rule surface and requires three named negative paths. CLI engine wiring, aisec,
+and any further dependency are explicitly out of scope.
+
+**ACCEPTANCE:** at the `d5943fb` task tree, `py -3.14 tests/differential/run_differential.py` returned
+0 for 23 line cases and 25 fragmented secrets cases. Mutating the Python AWS rule identity returned
+runner exit 1 with `Python and Rust secrets engines disagree WITH EACH OTHER`; restoring it and
+mutating the Rust identity returned the same exit and marker in the opposite direction. Both sources
+were restored and the runner returned 0 again. `cargo test -p praetor-core` returned 0 with 11 passed
+and none ignored; focused Python tests returned 0 with 28 passed. The exact-source formatter checks
+returned 0. Workspace-wide formatter check remains red on pre-existing `sca.rs`, `text.rs`, and
+generated Unicode-table formatting; those unrelated files were not rewritten. `rg` found the
+`pub fn scan` positive control and returned 1 for forbidden process/filesystem surfaces in
+`secrets.rs`. `cargo tree` resolved base64 with only `std` and `alloc`, no `simd-unsafe`, no
+transitives, and no build script. `bash tests/precommit.sh` returned 0 with all nine gates, including
+the stamped 13 active / 52 filtered self-scan. Failure is any independent Python/Rust identity
+divergence, a changed self-scan pin, a process/filesystem capability in the detector, or a non-zero
+repository gate.
+
+**PERSISTENCE:** implementation and status changes are committed at `d5943fb` on
+`codex-f/build`; this handoff is the sole follow-up change prepared for an explicit-path commit.
+Any reader seeing this paragraph in Git has the persistent handoff; if it exists only in a working
+tree, persistence is not yet met. Nothing pushed. The portable skill gate returned exit 2 with
+`CANNOT RUN: not inside a git repository` because it rejects this managed linked worktree's `.git`
+file; the prescribed repository gate above is the authorised worktree path. Independent audit
+remains required before landing.
