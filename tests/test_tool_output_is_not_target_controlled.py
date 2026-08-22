@@ -106,13 +106,17 @@ def test_no_engine_calls_subprocess_run_directly():
     keyword arguments -- a test that checks a setting cannot notice the setting
     being bypassed by a NEW call site, which is exactly how this arrived.
 
-    Covered function surface: ``subprocess.run``, ``check_output``, ``Popen``,
-    ``call``, and ``check_call``; plus ``os.system`` and ``os.popen``. The guard
-    resolves direct module/from imports, aliases, and star imports. It does not
-    resolve dynamic imports, ``getattr``, or assignment aliases such as
-    ``runner = subprocess.run``. Discovery covers top-level ``scripts/*.py``; a
-    future nested scripts package needs recursive discovery. The sanctioned core
-    call is line-pinned so source movement fails closed and forces review.
+    The policy is deliberately asymmetric. ``subprocess`` is deny-by-default:
+    every statically resolved call through the module or a name imported from it
+    is an offender unless exactly allowed. ``os`` is a named process family:
+    exact ``system``/``popen`` plus names beginning ``exec``, ``spawn``, or
+    ``posix_spawn``. Ordinary calls such as ``os.getcwd`` stay outside that set.
+    A ``subprocess`` star import makes every bare call suspect because its binding
+    cannot be proved. The guard does not resolve dynamic imports, ``getattr``, or
+    assignment aliases such as ``runner = subprocess.run``. Discovery covers
+    top-level ``scripts/*.py``; a future nested scripts package needs recursive
+    discovery. The sanctioned core call is line-pinned so source movement fails
+    closed and forces review.
     """
     root = pathlib.Path(__file__).resolve().parent.parent
     required = {
@@ -123,10 +127,12 @@ def test_no_engine_calls_subprocess_run_directly():
         "scripts/praetor.py",
     }
     allowed_calls = {("scripts/core.py", 152)}
-    dangerous_calls = {
-        "subprocess": {"run", "check_output", "Popen", "call", "check_call"},
-        "os": {"system", "popen"},
-    }
+
+    def is_os_process_name(name):
+        return name in {"system", "popen"} or name.startswith(
+            ("exec", "spawn", "posix_spawn")
+        )
+
     offenders = []
     scanned = set()
     for path in sorted((root / "scripts").glob("*.py")):
@@ -136,38 +142,60 @@ def test_no_engine_calls_subprocess_run_directly():
         tree = ast.parse(source, filename=rel)
         lines = core.split_lines(source)
 
-        module_names = dict(dangerous_calls)
-        function_names = set()
+        subprocess_modules = {"subprocess"}
+        os_modules = {"os"}
+        subprocess_functions = set()
+        os_functions = set()
+        subprocess_star_import = False
+        os_star_import = False
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for name in node.names:
-                    if name.name in dangerous_calls:
-                        module_names[name.asname or name.name] = dangerous_calls[name.name]
+                    if name.name == "subprocess":
+                        subprocess_modules.add(name.asname or name.name)
+                    elif name.name == "os":
+                        os_modules.add(name.asname or name.name)
             elif (
                 isinstance(node, ast.ImportFrom)
                 and node.level == 0
-                and node.module in dangerous_calls
+                and node.module in {"subprocess", "os"}
             ):
                 for name in node.names:
-                    if name.name in dangerous_calls[node.module]:
-                        function_names.add(name.asname or name.name)
+                    if node.module == "subprocess":
+                        if name.name == "*":
+                            subprocess_star_import = True
+                        else:
+                            subprocess_functions.add(name.asname or name.name)
                     elif name.name == "*":
-                        function_names.update(dangerous_calls[node.module])
+                        os_star_import = True
+                    elif is_os_process_name(name.name):
+                        os_functions.add(name.asname or name.name)
 
         for node in ast.walk(tree):
-            module_call = (
+            subprocess_module_call = (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
                 and isinstance(node.func.value, ast.Name)
-                and node.func.value.id in module_names
-                and node.func.attr in module_names[node.func.value.id]
+                and node.func.value.id in subprocess_modules
+            )
+            os_module_call = (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in os_modules
+                and is_os_process_name(node.func.attr)
             )
             imported_call = (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
-                and node.func.id in function_names
+                and (
+                    node.func.id in subprocess_functions
+                    or node.func.id in os_functions
+                    or subprocess_star_import
+                    or (os_star_import and is_os_process_name(node.func.id))
+                )
             )
-            if not (module_call or imported_call):
+            if not (subprocess_module_call or os_module_call or imported_call):
                 continue
             if (rel, node.lineno) in allowed_calls:
                 continue

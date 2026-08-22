@@ -143,3 +143,35 @@ advancing anything.
 - Complete targeted module returned `SURFACE_TARGET_MODULE_EXIT=0` with `3 passed`.
 - Pre-final-handoff repository gate returned `SURFACE_PRECOMMIT_EXIT=0`, all nine gates
   (240 Python, 8 Rust, self-scan 13/52, public-hygiene sweep 81 shipping files).
+
+### 2026-08-22 — Task D structural inversion follow-up
+
+- `claude-f` independently verified `35dc426`: requested subprocess/os catches, alias behavior,
+  inert docstrings, and the real-tree guard all passed.
+- Audit found the enumeration class persists: `subprocess.getoutput`, `getstatusoutput`, and the
+  `os` exec/spawn families are not caught. None is used by current `scripts/`, so the gap is latent.
+- Assigned terminating shape: deny every statically resolved call through the `subprocess` module
+  or a name imported from it unless exactly allowed; keep `os` as an enumeration matching exact
+  `system`/`popen` plus `exec`, `spawn`, and `posix_spawn` families by prefix.
+- Acceptance requires old catches plus the two unenumerated subprocess functions; dangerous and
+  harmless `os` directions (`spawnv`/`execv`/`posix_spawn` versus `path.join`/`getcwd`); inert text;
+  clean tree; full gate; and an explicit asymmetry/remaining-limits disclosure.
+- Red-first probe against `35dc426`: aliased `subprocess.getoutput` and from-imported
+  `getstatusoutput` returned `INVERT_OLD_GUARD_EXIT=0` with `1 passed`.
+- Replaced the subprocess function-name set with deny-by-default module/from-import binding logic;
+  no `getoutput` or `getstatusoutput` name was added. The fixed guard returned exit 1 and reported
+  both exact lines (`INVERT_SUBPROCESS_ASSERT_COUNT=2`, assertion pass).
+- Regression probe rechecked all seven earlier process functions through aliases/imports: fixed
+  guard exit 1, seven exact offenders, `INVERT_REGRESSION_ASSERT=PASS`.
+- `os.spawnv`, from-imported/aliased `execv`, and `os.posix_spawn` produced three exact offenders;
+  `os.path.join` plus `os.getcwd` returned `INVERT_OS_HARMLESS_EXIT=0` and `1 passed`.
+- A star-import probe proved the disclosed fail-safe: an otherwise ordinary bare `print` call was
+  reported because its binding could not be proved. Docstring/comment-only names stayed green.
+- Probe deleted; clean named guard returned `INVERT_CLEAN_GUARD_EXIT=0`.
+- Re-proved the exact allowance after inversion: a second `subprocess.getoutput` in `core.py` was
+  reported at line 164, then removed; core has no content diff and the clean guard passed again.
+- Safety-claim fixed-string checks found the deny-by-default module/from-import branches, star-import
+  branch, `os` exact/prefix predicate, and both dangerous/harmless mutation directions.
+- Complete targeted module returned `INVERT_TARGET_MODULE_EXIT=0` with `3 passed`.
+- Pre-final-handoff repository gate returned `INVERT_PRECOMMIT_EXIT=0`, all nine gates
+  (240 Python, 8 Rust, self-scan 13/52, public-hygiene sweep 81 shipping files).
