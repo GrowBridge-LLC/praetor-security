@@ -191,13 +191,21 @@ This repo is public. Routine build traffic, drafts, assignments, and working
 state stay under .local/. That directory is intentionally ignored and pre-commit
 gate 9 asserts that no .local artifact is tracked.
 
-Read the tail of C:\\projects\\PRAETOR\\.local\\lane-pair.md at the start of
-every session. The absolute path is deliberate: .local is absent from worktrees,
-so a relative path can silently lose coordination traffic.
+Pair traffic goes to the tracked channel, inbox/PAIR-CHANNEL.md. Append to it
+with the shared channel-append.sh, never with Write or Edit; that file's own
+header carries the exact command and the heading grammar. Read its tail at the
+start of every session.
 
-Write pair traffic directly to that file; do not use a channel wrapper. A helper
-aimed at an ignored path can append while its attribution check is inoperative.
+The earlier rule sent pair traffic to the lane-pair.md file under .local and
+forbade a channel wrapper, because a helper aimed at an ignored path can append
+while its attribution check is inoperative. That reason was sound and it no
+longer applies: the new channel is tracked, so the check works. lane-pair.md is
+frozen as the record from before 2026-08-22. Read it for history; post nothing
+new to it. Its path is written absolute wherever it appears because .local is
+absent from worktrees, and that is still true.
+
 Findings for another project, blockers owned elsewhere, and contract corrections
 belong in the shared coordination channel; otherwise keep routine traffic local.
+The pair channel is public, so nothing describing the wider estate goes in it.
 
 The .local directory is machine-local and must never enter this public repository.
