@@ -98,12 +98,20 @@ def test_no_engine_calls_subprocess_run_directly():
 
     The behavioural test above cannot fail on a UTF-8 box, so on its own it would
     let this defect back in through any CI that is not Windows. This asserts the
-    property structurally instead: every engine subprocess goes through
-    `core.run_tool`, which fixes the encoding in one place.
+    covered static call spellings structurally instead: engine subprocess calls
+    using those spellings go through `core.run_tool`, which fixes the encoding in
+    one place.
 
     Deliberately a source-level guard rather than an assertion about run_tool's
     keyword arguments -- a test that checks a setting cannot notice the setting
     being bypassed by a NEW call site, which is exactly how this arrived.
+
+    Scope is explicit: this resolves direct ``import subprocess`` and
+    ``from subprocess import run`` bindings, including aliases and star imports.
+    It does not resolve dynamic imports, ``getattr``, or assignment aliases such
+    as ``runner = subprocess.run``. Discovery covers top-level ``scripts/*.py``;
+    a future nested scripts package needs recursive discovery. The sanctioned
+    core call is line-pinned so source movement fails closed and forces review.
     """
     root = pathlib.Path(__file__).resolve().parent.parent
     required = {
@@ -122,14 +130,39 @@ def test_no_engine_calls_subprocess_run_directly():
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=rel)
         lines = core.split_lines(source)
+
+        module_names = {"subprocess"}
+        run_names = set()
         for node in ast.walk(tree):
-            if not (
+            if isinstance(node, ast.Import):
+                for name in node.names:
+                    if name.name == "subprocess":
+                        module_names.add(name.asname or name.name)
+            elif (
+                isinstance(node, ast.ImportFrom)
+                and node.level == 0
+                and node.module == "subprocess"
+            ):
+                for name in node.names:
+                    if name.name == "run":
+                        run_names.add(name.asname or name.name)
+                    elif name.name == "*":
+                        run_names.add("run")
+
+        for node in ast.walk(tree):
+            module_call = (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
                 and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "subprocess"
+                and node.func.value.id in module_names
                 and node.func.attr == "run"
-            ):
+            )
+            imported_call = (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in run_names
+            )
+            if not (module_call or imported_call):
                 continue
             if (rel, node.lineno) in allowed_calls:
                 continue

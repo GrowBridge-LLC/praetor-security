@@ -84,3 +84,31 @@ advancing anything.
   gates passed (240 Python, 8 Rust, self-scan 13/52, public-hygiene sweep 81 files).
 - `scripts/core.py` has no content diff after mutation restoration; a refresh cleared its
   timestamp-only modified status. Only this handoff and the Task D test remain intentionally dirty.
+
+### 2026-08-22 — Task D independent audit follow-up
+
+- `claude-f` independently accepted the AST walk, docstring/comment behavior, required-set
+  anti-vacuity check, and exact `(file, line)` allowance in commit `4dfae00`.
+- Audit measured two live evasions without moving the tree: `import subprocess as sp; sp.run(...)`
+  and `from subprocess import run; run(...)` are not caught by the committed predicate.
+- Assigned follow-up: resolve per-file `ast.Import` and `ast.ImportFrom` bindings for the module and
+  `run` function; disclose any remaining unreachable spellings; prove both aliases red, prove
+  comment/docstring mentions remain green, prove the clean tree green, then run the full gate.
+- The audit also noted the line-number allowance can rot and top-level `glob("*.py")` is not
+  recursive. Those were observations, not part of the numbered follow-up. The allowance must not
+  be widened; do not expand scope without a further instruction.
+- Red-first reproduction against `4dfae00`: module-alias and from-import probes each returned exit
+  0 with `1 passed` (`FOLLOWUP_OLD_MODULE_ALIAS_EXIT=0`, `FOLLOWUP_OLD_FROM_IMPORT_EXIT=0`).
+- Added per-file import binding collection for direct module imports, module aliases, direct
+  `run` imports, function aliases, and star imports. Call matching uses those bound names.
+- Fixed-guard mutation outputs returned exit 1 and named the exact probe call for all four tested
+  spellings: `sp.run`, direct imported `run`, imported `runner`, and star-imported `run`.
+- A probe with both import bindings but only docstring/comment call text returned
+  `FOLLOWUP_DOCSTRING_COMMENT_EXIT=0` and `1 passed`.
+- The safety claim in the test docstring now scopes the mechanism to covered static spellings and
+  discloses dynamic imports, `getattr`, assignment aliases, top-level-only discovery, and the
+  fail-closed positional allowance. Each spelling it positively claims was mutation-proven.
+- Probe deleted; the clean named guard returned `FOLLOWUP_CLEAN_GUARD_EXIT=0` and `1 passed`.
+- Complete targeted module: `FOLLOWUP_TARGET_MODULE_EXIT=0`, `3 passed`.
+- Exact follow-up tree gate: `FOLLOWUP_FINAL_TREE_PRECOMMIT_EXIT=0`, all nine gates
+  (240 Python, 8 Rust, self-scan 13/52, public-hygiene sweep 81 shipping files).
