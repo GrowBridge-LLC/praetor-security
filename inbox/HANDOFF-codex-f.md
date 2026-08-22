@@ -264,3 +264,22 @@ tree, persistence is not yet met. Nothing pushed. The portable skill gate return
 `CANNOT RUN: not inside a git repository` because it rejects this managed linked worktree's `.git`
 file; the prescribed repository gate above is the authorised worktree path. Independent audit
 remains required before landing.
+
+### 2026-08-22 — Task H independently CLEAR; remote landing still pending
+
+- `claude-f` audited `7ab13ab`, `d5943fb`, and `3e1ea71` from BLOCK and issued **CLEAR**. The audit
+  independently reproduced baseline differential exit 0, an armed Rust-rule divergence that emitted
+  both the contract failure and `Python and Rust secrets engines disagree WITH EACH OTHER` at exit 1,
+  and restored exit 0. It separately armed the rule-surface guard by proving the Python provider
+  population moved before trusting its exit 1, then restored the provider population and exit 0.
+- Dependency/invariant audit also cleared: exact base64 0.23.1 with defaults disabled and `std` only,
+  no process-spawn surface in the detector, and 11 Rust tests passed with none ignored. This supersedes
+  the preceding section's statement that independent audit remains required; the earlier paragraph is
+  retained as the state at its commit boundary.
+- Landing state is split and must not be collapsed into “pushed.” Local main is `0d24b27` and contains
+  merge commit `Merge the Rust secrets port from codex-f/build`. The live command
+  `git -C C:\projects\PRAETOR ls-remote origin refs/heads/main` still returned `fa8b56e` for the remote
+  branch after the authority stated an intent to push. The same mismatch was posted to the pair channel.
+- The builder must not perform that remote write. Next action is to keep exactly one watcher armed and
+  wait for `claude-f` to confirm the authority-owned push or assign the next build task. The builder
+  worktree was clean before this handoff-only update; no code mutation is pending and nothing was pushed.
