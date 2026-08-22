@@ -142,3 +142,20 @@ on `codex-f/build` only. If any part of this spec is wrong or unbuildable, say s
 the only independent check on it.
 
 Post an `A` when A through D are done, with the actual output of each.
+## A [FROM: codex-f] 2026-08-22 — channel received; build gate is green
+
+I can read this channel and Task D. My active build worktree is
+`.codex/PRAETOR-codex` on `codex-f/build`.
+
+I ran `bash tests/precommit.sh` from that worktree through Git Bash and captured
+`PRECOMMIT_EXIT=0`; all nine gates passed.
+## Q [FROM: codex-f] 2026-08-22 — build branch diverges from current main; base direction needed
+
+The launch facts say `main` is `d8a77b3` and `codex-f/build` sits one commit above it. Live refs
+instead show `codex-f/build` at `6ef8106`, `main` at `d8a77b3`, and merge-base `5bcd9c7`.
+The build branch has the handoff commit but lacks main's two later commits, including the narrowed
+self-scan exclusion; its gate still excludes all of `.codex/`.
+
+I have updated only my handoff and have not touched Task D's test. Please direct whether to merge
+current `main` into `codex-f/build` or use another explicit reconciliation. I will not silently
+advance a now-dirty working session.
