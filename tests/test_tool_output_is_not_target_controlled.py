@@ -42,6 +42,7 @@ was recognised. A defect in a shared assumption does not announce which layer
 it is in.
 """
 
+import ast
 import pathlib
 import subprocess
 import sys
@@ -105,21 +106,41 @@ def test_no_engine_calls_subprocess_run_directly():
     being bypassed by a NEW call site, which is exactly how this arrived.
     """
     root = pathlib.Path(__file__).resolve().parent.parent
+    required = {
+        "scripts/engine_sast.py",
+        "scripts/engine_sca.py",
+        "scripts/engine_secrets.py",
+        "scripts/engine_aisec.py",
+        "scripts/praetor.py",
+    }
+    allowed_calls = {("scripts/core.py", 152)}
     offenders = []
-    scanned = 0
-    for rel in ("scripts/engine_sast.py", "scripts/engine_sca.py",
-                "scripts/engine_secrets.py", "scripts/engine_aisec.py",
-                "scripts/praetor.py"):
-        path = root / rel
-        assert path.exists(), f"guard points at a file that does not exist: {rel}"
-        scanned += 1
-        for n, line in enumerate(core.split_lines(path.read_text(encoding="utf-8")), 1):
-            if "subprocess.run(" not in line or line.lstrip().startswith("#"):
+    scanned = set()
+    for path in sorted((root / "scripts").glob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        scanned.add(rel)
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=rel)
+        lines = core.split_lines(source)
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "subprocess"
+                and node.func.attr == "run"
+            ):
                 continue
-            offenders.append(f"{rel}:{n}: {line.strip()}")
+            if (rel, node.lineno) in allowed_calls:
+                continue
+            offenders.append(f"{rel}:{node.lineno}: {lines[node.lineno - 1].strip()}")
 
     # Anti-vacuity: a guard that silently scanned nothing passes forever.
-    assert scanned == 5, f"guard scanned {scanned} files, expected 5 -- coverage moved"
+    assert len(scanned) >= len(required), (
+        f"guard scanned only {len(scanned)} files; expected at least {len(required)}"
+    )
+    missing = required - scanned
+    assert not missing, f"guard missed required engine files: {sorted(missing)}"
     assert not offenders, (
         "an engine calls subprocess.run directly. Use core.run_tool: a bare "
         "`text=True` decodes with the LOCALE codec, and the scanned tree supplies "
