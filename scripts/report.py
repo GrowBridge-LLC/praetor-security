@@ -110,6 +110,27 @@ def render_text(result: dict, meta: dict, redacted: bool = True) -> str:
     else:
         out.append(f"Files (text): {_fc}")
     out.append(f"PRAETOR ver : {meta.get('version')}")
+    # 🔴 A SUPPRESSION WITH NO STATED REASON IS NOT TRIAGE, and skipped
+    # directories were the one suppression in this tool that said nothing at all.
+    # The count is printed whenever code went unread, so a reader can tell a real
+    # clean scan from a scan that never opened the code.
+    _scope = meta.get("scope") or {}
+    _skipped_code = _scope.get("skipped_code_files", 0)
+    if _skipped_code:
+        _dirs = _scope.get("skipped_dirs") or {}
+        _worst = ", ".join(
+            f"{d}/ ({n})" for d, n in sorted(_dirs.items(), key=lambda kv: -kv[1])[:4]
+        )
+        out.append(
+            f"Scope       : {_skipped_code} code file(s) NOT read -- inside skipped "
+            f"dirs: {_worst}"
+        )
+        out.append(
+            "              (build/dependency dirs are skipped by default; for a "
+            "DISTRIBUTED artifact use --no-default-skips)"
+        )
+    if _scope.get("default_skips_disabled"):
+        out.append("Scope       : --no-default-skips ACTIVE -- build/dependency dirs were read")
     out.append("")
     out.extend(_engine_status_block(meta))
     out.append("")

@@ -426,7 +426,7 @@ def _source_line(path: str, line_no: int, cache: dict) -> str:
 def run(target: str, bundled_rules: str, use_registry: bool = True,
         extra_configs=None, prefer: str = "auto", wsl_distro: str = "Ubuntu",
         timeout: int = _SEMGREP_TIMEOUT, excludes=None,
-        enumerated_code_files: int = -1) -> dict:
+        enumerated_code_files: int = -1, skip_dirs=None) -> dict:
     """
     Returns {findings: [...], status: 'ok'|'unavailable'|'error', detail: str,
              runtime: str}.
@@ -500,7 +500,20 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
     #
     # ⇒ Restore the scope explicitly, from PRAETOR's list rather than semgrep's,
     # so exactly one component decides what is in scope and the engines agree.
-    for d in sorted(core.DEFAULT_SKIP_DIRS):
+    # 🔴 `skip_dirs` MUST come from the caller, not from the constant.
+    #
+    # This loop used to read `core.DEFAULT_SKIP_DIRS` directly. When
+    # `--no-default-skips` was added to praetor.py so a DISTRIBUTED artifact could
+    # be scanned, PRAETOR's walker started reading `dist/` while this line kept
+    # excluding it -- so the header printed `Files (text): 80` over a semgrep run
+    # that had opened almost none of them. Measured on the same npm tarball, same
+    # bytes, only the directory NAME differing:
+    #     directory named `dist/`     -> semgrep 0 findings
+    #     directory named `shipped/`  -> semgrep 10 findings
+    # ⇒ That is the very desynchronisation the comment above exists to prevent,
+    # reintroduced by the fix for a different scope defect. One component decides
+    # scope; this line must follow it rather than re-derive it.
+    for d in sorted(core.DEFAULT_SKIP_DIRS if skip_dirs is None else skip_dirs):
         common += ["--exclude", d]
 
     if mode == "native":

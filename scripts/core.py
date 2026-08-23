@@ -447,6 +447,12 @@ SECRETS_SKIP_DIRS = {".git", ".hg", ".svn"}
 # text-based engines (secrets/aisec). SCA/SAST discover their own file types.
 TEXT_EXTS = {
     ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte",
+    # 🔴 `.cts` / `.mts` were absent while `.cjs` / `.mjs` were present. TypeScript
+    # spells its CommonJS and ESM module variants with those two extensions, so a
+    # published package shipping them was read as if those files did not exist.
+    # Measured 2026-08-22 on a real npm tarball: 25 of its 81 files were dropped
+    # here, silently, and the scan still exited 0.
+    ".cts", ".mts",
     ".java", ".kt", ".kts", ".scala", ".groovy", ".go", ".rs", ".rb", ".php",
     ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".swift", ".m", ".mm", ".dart",
     ".sh", ".bash", ".zsh", ".ps1", ".psm1", ".bat", ".cmd", ".pl", ".lua", ".r",
@@ -548,6 +554,43 @@ def scannable(name: str) -> bool:
     return False
 
 
+#: Extensions whose files are EXECUTABLE-LANGUAGE source, as opposed to the
+#: documentation, metadata and certificate files that also live in TEXT_EXTS.
+#:
+#: 🔴 THIS SET EXISTS TO ANSWER ONE QUESTION: did this scan read any code at all?
+#: It is deliberately NARROWER than TEXT_EXTS, and the narrowness is the safety
+#: property. `is_code()` is consulted only by the scope floor below, and that floor
+#: degrades a scan when NO code was kept. So an extension MISSING from this set
+#: makes a scan look LESS measured, never more -- an unknown language degrades
+#: toward "we did not read code here", which is the honest answer for a name
+#: nobody has classified. ⇒ Adding an entry here can only ever REDUCE the floor's
+#: coverage. Removing one can only increase it. Weigh additions accordingly.
+#:
+#: ⚠️ `.json`, `.yaml`, `.md` and friends are EXCLUDED ON PURPOSE. A tarball whose
+#: only unskipped files are `README.md` and `package.json` has not been measured,
+#: and treating either as code is exactly what would hide that.
+CODE_EXTS = {
+    ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".cts", ".mts",
+    ".vue", ".svelte", ".java", ".kt", ".kts", ".scala", ".groovy", ".go", ".rs",
+    ".rb", ".php", ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".swift", ".m",
+    ".mm", ".dart", ".sh", ".bash", ".zsh", ".ps1", ".psm1", ".bat", ".cmd",
+    ".pl", ".lua", ".r", ".sql",
+}
+
+
+def is_code(name: str) -> bool:
+    """Whether `name` is executable-language source, for the scope floor only.
+
+    Git hooks are code regardless of extension -- they are the conventional home
+    of a fetch-and-run, and most of them carry no extension at all.
+    """
+    low = name.lower()
+    if low in GIT_HOOK_NAMES:
+        return True
+    _, ext = os.path.splitext(low)
+    return ext in CODE_EXTS
+
+
 @dataclass
 class ScanFile:
     abspath: str
@@ -560,12 +603,32 @@ def walk_files(
     skip_dirs: Optional[set] = None,
     max_bytes: int = DEFAULT_MAX_BYTES,
     extra_excludes: Optional[Iterable[str]] = None,
+    stats: Optional[dict] = None,
 ) -> list:
     """
     Enumerate scannable text files under `target` exactly once. Returns a list of
     ScanFile. Never opens for execution; never follows into skipped dirs.
+
+    🔴 `stats`, when a dict is passed, RECORDS WHAT THIS WALKER REFUSED.
+
+    Skipping used to be invisible. `DEFAULT_SKIP_DIRS` is 38 directory names and
+    THE SCANNED TREE CHOOSES ITS OWN DIRECTORY NAMES, so a tree could put all of
+    its code in one of them and nothing in the report said so. Measured on a real
+    npm tarball 2026-08-22: 81 files on disk, `dist/` pruned, **2 files read** --
+    `README.md` and `package.json` -- and the scan exited 0 reporting no findings.
+
+    Keys populated: `skipped_dirs` (dirname -> file count), `skipped_code_files`,
+    `kept_code_files`. The caller decides what to do with them; this function only
+    counts. `praetor.py` turns the third and second into the scope floor.
+
+    The extra `os.walk` over pruned subtrees runs ONLY when `stats` is passed, so
+    the engines' own hot path is unchanged.
     """
     skip_dirs = DEFAULT_SKIP_DIRS if skip_dirs is None else skip_dirs
+    if stats is not None:
+        stats.setdefault("skipped_dirs", {})
+        stats.setdefault("skipped_code_files", 0)
+        stats.setdefault("kept_code_files", 0)
     excludes = [re.compile(p) for p in (extra_excludes or [])]
     target = os.path.abspath(target)
     out: list = []
@@ -579,6 +642,8 @@ def walk_files(
             return out
         if scannable(rel) and size <= max_bytes and not is_probably_binary(target):
             out.append(ScanFile(target, rel, size))
+            if stats is not None and is_code(rel):
+                stats["kept_code_files"] += 1
         return out
 
     for root, dirs, files in os.walk(target, followlinks=False):
@@ -595,6 +660,20 @@ def walk_files(
         # `.github/` and was therefore unreachable, i.e. dead code.
         # engine_sca.py's own walker already skipped `".git"` exactly; this was the
         # outlier, not the convention.
+        if stats is not None:
+            for d in dirs:
+                if d not in skip_dirs and d != ".git":
+                    continue
+                pruned_root = os.path.join(root, d)
+                for proot, _pdirs, pfiles in os.walk(pruned_root, followlinks=False):
+                    for pfn in pfiles:
+                        stats["skipped_dirs"][d] = stats["skipped_dirs"].get(d, 0) + 1
+                        # Only files this walker WOULD have opened count toward the
+                        # floor. A pruned `.git` object or a compiled artifact is
+                        # not evidence that code went unread.
+                        if scannable(pfn) and is_code(pfn):
+                            stats["skipped_code_files"] += 1
+                    del proot, _pdirs
         dirs[:] = [d for d in dirs if d not in skip_dirs and d != ".git"]
         for fn in files:
             ap = os.path.join(root, fn)
@@ -612,6 +691,8 @@ def walk_files(
             if is_probably_binary(ap):
                 continue
             out.append(ScanFile(ap, rel, size))
+            if stats is not None and is_code(fn):
+                stats["kept_code_files"] += 1
     return out
 
 

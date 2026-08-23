@@ -158,6 +158,12 @@ def parse_args(argv):
                    help="Skip files larger than this many bytes (default: 3MB).")
     p.add_argument("--exclude", action="append", default=[],
                    help="Regex of relative paths to exclude (repeatable).")
+    p.add_argument("--no-default-skips", action="store_true",
+                   help="Do not skip build-output and dependency directories "
+                        "(dist, build, out, target, vendor, node_modules, ...). "
+                        "Required to scan a DISTRIBUTED artifact such as an "
+                        "unpacked npm tarball, where dist/ is the shipped code "
+                        "rather than generated output. .git is still skipped.")
     p.add_argument("--no-redact", action="store_true",
                    help="(Discouraged) do not redact matched secrets. Off by default.")
     p.add_argument("--quiet", action="store_true", help="Suppress progress messages on stderr.")
@@ -431,7 +437,14 @@ def main(argv=None):
     _log(args.quiet, f"praetor {VERSION}: scanning {target}")
 
     # Enumerate scannable text files exactly once (shared by secrets + aisec).
-    scan_files = core.walk_files(target, max_bytes=args.max_file_size, extra_excludes=args.exclude)
+    # `scope_stats` records what the walker REFUSED, so a scan that read almost
+    # nothing cannot report itself as clean in silence. See the scope floor below
+    # and core.walk_files' docstring for the measurement that produced it.
+    scope_stats = {}
+    scan_skip_dirs = set() if args.no_default_skips else None
+    scan_files = core.walk_files(target, skip_dirs=scan_skip_dirs,
+                                 max_bytes=args.max_file_size,
+                                 extra_excludes=args.exclude, stats=scope_stats)
     # 🔴 A SECOND, WIDER WALK FOR SECRETS ONLY -- see core.SECRETS_SKIP_DIRS.
     # `core.DEFAULT_SKIP_DIRS` is 36 directory names, and the SCANNED TREE CHOOSES
     # ITS OWN DIRECTORY NAMES, so it is an attacker-controlled scope boundary.
@@ -502,6 +515,10 @@ def main(argv=None):
                 # disagreeing is the only signal that survives semgrep changing
                 # how it decides scope -- see the scope guard in engine_sast.
                 enumerated_code_files=engine_sast.count_code_files(scan_files),
+                # The SAME skip set the walker used. Passing it rather than
+                # letting the engine re-read the constant is what keeps the two
+                # components agreeing about scope under --no-default-skips.
+                skip_dirs=scan_skip_dirs,
             )
             all_findings.extend(res["findings"])
             engine_meta["sast"] = {"status": res["status"],
@@ -571,6 +588,15 @@ def main(argv=None):
         "timestamp": report.now_iso(),
         "version": VERSION,
         "file_count": len(scan_files),
+        # 🔴 WHAT THE WALKER REFUSED, reported rather than dropped. A reviewer can
+        # now see "2 files read, 78 code files skipped in dist/" instead of a bare
+        # zero-findings result that looks identical to a real clean scan.
+        "scope": {
+            "skipped_dirs": dict(sorted(scope_stats.get("skipped_dirs", {}).items())),
+            "skipped_code_files": scope_stats.get("skipped_code_files", 0),
+            "kept_code_files": scope_stats.get("kept_code_files", 0),
+            "default_skips_disabled": bool(args.no_default_skips),
+        },
         # None, not 0, when secrets did not run: "the engine read nothing" and
         # "the engine was not asked" are different facts, and reporting 0 for the
         # second is the same one-word-two-facts defect as `unavailable` was.
@@ -665,6 +691,53 @@ def main(argv=None):
             sys.stderr.write(
                 "  An empty file set is not a clean tree. Widen the filters, or pass "
                 "--allow-degraded to gate on findings alone.\n"
+            )
+            return 3
+        # 🔴 THE SCOPE FLOOR. The floor above catches a tree emptied ENTIRELY and
+        # nothing else -- "one file defeats it" is stated in its own comment, and
+        # that is precisely how this defect survived. Measured on a real npm
+        # tarball 2026-08-22: 81 files, `dist/` pruned by DEFAULT_SKIP_DIRS, the
+        # two files left at the root were `README.md` and `package.json`, and
+        # `--fail-on HIGH` returned 0. Re-run with the directory renamed: 80 files
+        # read, 10 findings. The clean result was an artefact of the skip list.
+        #
+        # The predicate is NOT a ratio. Measured across real trees, a ratio cannot
+        # separate the two cases: this repository itself skips 3,721 files and
+        # keeps 174 -- a 21x ratio that is entirely healthy, because `target/` and
+        # `.git/` hold no source. The npm tarball skipped 78 and kept 2. What
+        # actually distinguishes them is whether ANY CODE WAS READ:
+        #
+        #     this repo    kept_code=93   skipped_code=0     -> measured
+        #     docker-zulip kept_code=19   skipped_code=0     -> measured
+        #     npm tarball  kept_code=0    skipped_code=78    -> NOT measured
+        #
+        # ⚠️ FAIL-SAFE DIRECTION: an extension missing from core.CODE_EXTS makes a
+        # tree look LESS measured, so an unclassified language degrades toward
+        # "we did not read code", never toward a clean pass. That is why the set
+        # is narrow and why `.json` and `.md` are deliberately absent from it.
+        if (scope_stats.get("skipped_code_files", 0) > 0
+                and scope_stats.get("kept_code_files", 0) == 0
+                and not args.allow_degraded):
+            skipped = scope_stats.get("skipped_dirs", {})
+            worst = ", ".join(
+                f"{d}/ ({n} files)"
+                for d, n in sorted(skipped.items(), key=lambda kv: -kv[1])[:4]
+            )
+            sys.stderr.write(
+                "praetor: NO CODE WAS EXAMINED -- every source file in this target "
+                "is inside a skipped directory, so --fail-on has no basis to pass.\n"
+            )
+            sys.stderr.write(
+                f"  target: {target}\n"
+                f"  files read: {len(scan_files)}, of which code: 0\n"
+                f"  code files skipped: {scope_stats.get('skipped_code_files', 0)}\n"
+                f"  skipped directories: {worst or '(none)'}\n"
+            )
+            sys.stderr.write(
+                "  If this is a DISTRIBUTED artifact (an unpacked npm tarball, a "
+                "released bundle), dist/ is the shipped code and not build output: "
+                "re-run with --no-default-skips. Pass --allow-degraded to gate on "
+                "findings alone.\n"
             )
             return 3
         # 🔴 A whole-scan floor, not a per-engine one. Reached only when every

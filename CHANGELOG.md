@@ -12,6 +12,54 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Fixed — a scan that read no code at all reported a clean exit
+
+**A live false clean, found in the field rather than by a test.** PRAETOR was
+pointed at a real unpacked npm tarball during a supply-chain review. It read
+**2 of the 81 files** — `README.md` and `package.json` — and returned exit 0 with
+no findings under `--fail-on HIGH`. Re-running with one directory renamed read 80
+files and returned 10 findings. **The clean result was an artefact of a directory
+name.**
+
+Two independent causes, both closed:
+
+- **`dist` is in `core.DEFAULT_SKIP_DIRS`**, with `build`, `out`, `target`,
+  `vendor` and `node_modules`. For a repository that is correct — those hold
+  generated or third-party content. For a **published package it is backwards**:
+  `dist/` is the shipped code and the sources are not in the tarball at all.
+- **`.cts` and `.mts` were missing from the scannable extensions** while `.cjs`
+  and `.mjs` were present. That dropped 25 further files on its own.
+
+**The existing zero-files floor could not catch this, and its own comment said so**
+— *"it catches exactly-zero and nothing else, and one file defeats it"*, recorded
+on 2026-08-13 with a credential hidden in `vendor/`. It stayed open for nine days
+and then a real scan walked into it.
+
+**What is new:** the walker now records what it refused, the report prints it, a
+new `--no-default-skips` flag scans a distributed artifact correctly, and a scope
+floor exits **3 (not measured)** when code files were skipped and **none** were
+read.
+
+⚠️ **The predicate is deliberately not a ratio.** That rule was measured and
+rejected: this repository skips 3,721 files and keeps 174 — a 21× ratio that is
+entirely healthy, because `target/` and `.git/` hold no source. The npm tarball
+skipped 78 and kept 2. Ratio cannot separate them; *"was any code read at all"*
+can.
+
+⇒ **`core.CODE_EXTS` is narrow on purpose, and the narrowness is the safety
+property.** An extension missing from it makes a tree look *less* measured, never
+more, so an unclassified language degrades toward "we did not read code here".
+`.json` and `.md` are excluded deliberately — counting `package.json` as code
+would have hidden this exact defect.
+
+🔴 **And the first version of this fix reintroduced the defect it was closing.**
+`engine_sast` re-applied the skip list to Semgrep from the constant, so
+`--no-default-skips` widened the walker while Semgrep kept excluding `dist/` — the
+report printed `Files (text): 80` over a Semgrep run that had opened almost none
+of them. Same bytes, only the directory name differing: `dist/` gave 0 findings,
+`shipped/` gave 10. The engine now receives the caller's skip set. **One component
+decides scope.**
+
 ### Changed — the direct-subprocess guard now denies by default instead of enumerating
 
 The structural guard that keeps engines away from raw process primitives used to
