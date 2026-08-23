@@ -12,6 +12,60 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Fixed — deployment code, build recipes and bare credential files are now read
+
+Found the same way as the two below: by running the scanner on a real deployment
+the estate was about to adopt, and checking the file count instead of the verdict.
+**These types were not in the walker's allowlist, so nothing ever opened them** —
+not "scanned and clean", never read:
+
+```text
+.pp     103 files   Puppet manifests -- the actual deployment configuration
+.hbs    466 files   Handlebars templates
+.erb     56 files   ERB templates, which embed Ruby
+.hook     8 files   pre-deploy.d / post-deploy.d scripts that RUN on deploy
+.patch    1 file    384 added lines, including API-credential handling
+env       2 files   ci/*/env -- shell environment files (`.env` was covered)
+```
+
+🔴 **The two smallest matter most.** A deploy hook is a supply-chain **execution**
+point that runs with the deployer's privileges. A `.patch` is code arriving inside
+a package — that one had to be read by hand to discover it handled API credentials
+at all.
+
+⚠️ **`Dockerfile.dev` is its own lesson.** The exact name `dockerfile` was in
+`TEXT_NAMES`, and `splitext("Dockerfile.dev")` yields extension `.dev` — so every
+environment variant of the most security-relevant build file in a repository fell
+between the name check and the extension check, and the dev variant is usually the
+loosest.
+
+**Measured effect on the three trees that exposed it:**
+
+```text
+zulip server source    7,369 -> 8,014 files read   (+645)
+docker-zulip             134 ->   136              (+2, both `env` files)
+the deployment package     3 ->     5              (+2, including the patch)
+```
+
+⇒ **`.pp`, `.erb` and `.hook` also count as code for the scope floor** — they are
+executable configuration. **`.patch`, `.diff` and `.hbs` deliberately do not.**
+`CODE_EXTS` only ever *widens* what counts as measured, so a tree of patches or
+templates must not be able to satisfy the floor.
+
+📌 **The self-scan pin moved 13 → 15 and the gate went red — and the cause was not
+this change.** Two `sensitive-file-read` findings came from the new test file
+spelling two well-known private-key and package-registry credential filenames as
+literals. The fix was the fixture, exactly as this project's own guidance says:
+assemble such strings from parts. With that corrected the pin is unchanged at
+13 active / 52 filtered, which is the proof that widening the allowlist added
+nothing to this repository's own surface.
+
+⚠️ **And then this very entry did it again, one file over.** Naming those two
+filenames here — in prose explaining the hazard — put a third finding into the
+self-scan and turned the gate red a second time. **The rule is not "be careful in
+tests". It is that any file inside a scanned tree is scanned, including the note
+describing the trap.**
+
 ### Fixed — one undecodable byte no longer blinds an entire engine
 
 **Found while scanning a real container image filesystem**, pulled from a registry

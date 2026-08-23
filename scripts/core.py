@@ -462,6 +462,17 @@ TEXT_EXTS = {
     ".env", ".properties", ".tf", ".tfvars", ".hcl",
     ".md", ".markdown", ".mdx", ".mdc", ".rst", ".txt", ".text",
     ".dockerfile", ".gitconfig", ".npmrc",
+    # 🔴 DEPLOYMENT AND TEMPLATE CODE. Every one of these was MEASURED going unread
+    # on 2026-08-23, scanning a real deployment the estate was about to adopt:
+    #     .pp     103 files   Puppet manifests -- the actual deployment configuration
+    #     .hbs    466 files   Handlebars templates
+    #     .erb     56 files   ERB templates, which embed Ruby
+    #     .hook     8 files   pre-deploy.d / post-deploy.d scripts that RUN on deploy
+    #     .patch    1 file    384 added lines, including API-credential handling
+    # The last two are the ones that matter: a deploy hook is a supply-chain
+    # execution point, and a patch is code arriving in a package. Both were
+    # invisible, and the patch had to be read by hand.
+    ".pp", ".erb", ".hbs", ".handlebars", ".hook", ".patch", ".diff",
     # credential-bearing text files -- a secret scanner should read these
     ".pem", ".key", ".crt", ".cer", ".pub", ".asc", ".ppk", ".pk8",
 }
@@ -509,6 +520,11 @@ TEXT_NAMES = GIT_HOOK_NAMES | {
     "gemini.md", "qwen.md", "cline_instructions.md",
     # (git hook names come from GIT_HOOK_NAMES above -- do not re-list them here)
     "gemfile", "rakefile", "berksfile",
+    # 🔴 EXTENSIONLESS CREDENTIAL CARRIERS, measured unread 2026-08-23 in a real
+    # deployment repository: `ci/certbot/env` and `ci/http-only/env`. A file named
+    # exactly `env` is a shell environment file and is one of the commonest homes
+    # for a live credential; `.env` was covered and the bare name was not.
+    "env", "credentials", "credentials.txt", "secrets", "htpasswd", ".htpasswd",
     "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "id_rsa.pub",
 }
 
@@ -551,6 +567,14 @@ def scannable(name: str) -> bool:
     # dotfiles like ".env.staging"
     if low.startswith(".env"):
         return True
+    # 🔴 `Dockerfile.dev`, `Dockerfile.prod`, `Dockerfile.test` -- MEASURED unread
+    # 2026-08-23. `TEXT_NAMES` carries the exact name `dockerfile`, and
+    # `os.path.splitext` turns `Dockerfile.dev` into extension `.dev`, so every
+    # variant of the single most security-relevant build file in a repository fell
+    # between the two checks. A Dockerfile is a build recipe; the suffix names the
+    # environment, and the dev one is often the loosest.
+    if low.startswith("dockerfile"):
+        return True
     return False
 
 
@@ -575,6 +599,14 @@ CODE_EXTS = {
     ".rb", ".php", ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".swift", ".m",
     ".mm", ".dart", ".sh", ".bash", ".zsh", ".ps1", ".psm1", ".bat", ".cmd",
     ".pl", ".lua", ".r", ".sql",
+    # Deployment code. `.pp` is Puppet and `.erb` embeds Ruby; a `.hook` is a shell
+    # script that runs on deploy. All three are executable configuration, so a tree
+    # made only of them HAS been measured.
+    # ⚠️ `.patch`, `.diff` and `.hbs` are deliberately NOT here. They are READ (see
+    # TEXT_EXTS) but they do not count as "code was examined" for the scope floor --
+    # a directory of patches or templates is not evidence that the shipped code was
+    # read, and this set only ever widens what counts as measured.
+    ".pp", ".erb", ".hook",
 }
 
 
