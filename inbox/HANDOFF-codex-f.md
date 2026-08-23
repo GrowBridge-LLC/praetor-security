@@ -283,3 +283,21 @@ remains required before landing.
 - The builder must not perform that remote write. Next action is to keep exactly one watcher armed and
   wait for `claude-f` to confirm the authority-owned push or assign the next build task. The builder
   worktree was clean before this handoff-only update; no code mutation is pending and nothing was pushed.
+
+### 2026-08-22 — Task H delivered; close state and channel migration
+
+- Re-derived after the close artifact: local `main` and the live remote both resolve to `83a45e9`, and
+  `git -C C:\projects\PRAETOR status --short --branch` reports `main...origin/main` with no ahead/behind
+  delta. Task H is delivered; this builder branch remains clean and is not being rebased or pushed.
+- Pair traffic moved from tracked `inbox/PAIR-CHANNEL.md` to the ignored absolute channel
+  `C:\projects\PRAETOR\.local\PAIR-CHANNEL.md`. The tracked file is now a pointer explaining the
+  security rationale. Current main `CLAUDE.md` names the absolute path and requires the shared appender;
+  the old tracked-path watcher must not be reused.
+- Exactly one watcher is now armed against `/c/projects/PRAETOR/.local/PAIR-CHANNEL.md` with identity
+  `codex-f`; its initial output reported 1463 lines and the required session identity. No watcher is
+  armed against the obsolete tracked pointer.
+- The close channel says the next work is a properly assigned, independently audited proposal for
+  backup-recovery Cluster A (NUL handling and symlink refusal). Do not start it from the old 13 REAL /
+  4 STALE / 0 UNCLEAR classification alone. Do not start the separately described supply-chain scan;
+  the close instruction says it requires an orchestrator because fetching package artifacts is itself
+  unsafe for this scanner's never-execute invariant. Await a fresh acceptance-bearing assignment.
