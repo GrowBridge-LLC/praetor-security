@@ -12,6 +12,38 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Fixed — one undecodable byte no longer blinds an entire engine
+
+**Found while scanning a real container image filesystem**, pulled from a registry
+and unpacked read-only. 30,790 selected files, and this is all that came back:
+
+```text
+secrets -> error  "'utf-8' codec can't decode byte 0xb1 in position 81"
+aisec   -> error  "'utf-8' codec can't decode byte 0xff in position 163"
+```
+
+**Two bytes, in two files, and nothing else in that tree was ever examined.** The
+engines read in a bare loop, so the first `read_text` that raised aborted the
+whole engine. PRAETOR returned exit 3 rather than a clean result, so this was
+never a false clean — but it made the tool unable to scan a real-world tree.
+
+🔴 **The obvious fix was already tried here and reverted, so it was not repeated.**
+A `surrogateescape` fallback was added on 2026-08-13 and reverted the same day,
+because it turned a loud failure into a silent miss: the bad byte became U+DCxx, a
+pattern spanning it stopped matching, and the engine reported `ok` with zero
+findings on a file containing a live payload. **`core.read_text` still raises.**
+
+**What changed is the blast radius, not the loudness.** The failure is isolated to
+the FILE instead of the ENGINE: the file is recorded as unread, the rest of the
+tree is scanned, and the engine's status refuses to say `ok`. Its detail names the
+file that went unread and states that the remainder was scanned.
+
+⚠️ **The first version of this change got that second half wrong**, and this
+repository's own guard caught it. Isolating the error while leaving the status
+`ok` is the reverted fallback arriving from the other direction — an engine
+claiming work it did not do. `test_suppression_is_not_attacker_controlled.py`
+turned the gate red and the design was corrected. **Both halves, or neither.**
+
 ### Fixed — a scan that read no code at all reported a clean exit
 
 **A live false clean, found in the field rather than by a test.** PRAETOR was

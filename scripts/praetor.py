@@ -471,7 +471,52 @@ def main(argv=None):
     _log(args.quiet, f"  enumerated {len(scan_files)} text file(s)"
                      f" ({len(secret_files)} for secrets)")
 
-    read_text = (lambda p: core.read_text(p, args.max_file_size))
+    # 🔴 ONE UNDECODABLE FILE USED TO BLIND AN ENTIRE ENGINE.
+    #
+    # `core.read_text` raises on an invalid start byte, and that is the correct
+    # design -- a `surrogateescape` fallback was added 2026-08-13 and REVERTED the
+    # same day because it turned a LOUD failure into a SILENT MISS. That decision
+    # stands and this does not touch it.
+    #
+    # What was wrong is the BLAST RADIUS. The engines read in a bare loop, so the
+    # first unreadable file aborted the whole scan and the engine reported
+    # `error` having examined nothing. Measured 2026-08-22 on a real container
+    # image filesystem, 30,790 files:
+    #     secrets -> error  "'utf-8' codec can't decode byte 0xb1 in position 81"
+    #     aisec   -> error  "'utf-8' codec can't decode byte 0xff in position 163"
+    # Two bytes, in two files, and nothing else in that tree was ever looked at.
+    #
+    # ⚠️ THE SILENCE IS THE DANGER, NOT THE SKIP. Recording the file and moving on
+    # is only safe because `unreadable` is REPORTED and, below, DEGRADES the scan.
+    # Returning "" without that record would be precisely the reverted fallback
+    # wearing a different hat: engines reporting `ok` over files they never read.
+    unreadable: list = []
+
+    def read_text(path):
+        try:
+            return core.read_text(path, args.max_file_size)
+        except Exception as exc:  # noqa -- the reason is recorded, not swallowed
+            unreadable.append((path, f"{type(exc).__name__}: {exc}"[:160]))
+            return ""
+
+    def _status_after_reading(name, before, ok_detail):
+        """Record `name`'s status, refusing to say `ok` about a file it could not read.
+
+        🔴 THE EXIT CODE IS THE GATE; THE STATUS IS WHAT A HUMAN READS. Isolating
+        the decode failure per file is only half the job -- an engine that then
+        reports `ok` is claiming work it did not do, which is the same lie one
+        layer up and survives any exit-code-only assertion.
+        `tests/test_suppression_is_not_attacker_controlled.py` pins this, and it
+        caught exactly this regression in the first version of the isolation.
+        """
+        missed = unreadable[before:]
+        if not missed:
+            return {"status": "ok", "detail": ok_detail}
+        first = os.path.relpath(missed[0][0], target)
+        return {"status": "error",
+                "detail": (f"{len(missed)} file(s) could not be decoded and were NOT "
+                           f"scanned (first: {first}: {missed[0][1]}); "
+                           f"the rest of the tree was scanned -- {ok_detail}")}
 
     all_findings = []
     engine_meta = {}
@@ -480,9 +525,12 @@ def main(argv=None):
     if "secrets" in engines:
         _log(args.quiet, "  [secrets] scanning...")
         try:
+            _unread_before = len(unreadable)
             fs = engine_secrets.scan(secret_files, read_text)
             all_findings.extend(fs)
-            engine_meta["secrets"] = {"status": "ok", "detail": f"{len(fs)} raw finding(s); provider patterns + entropy + base64-unwrap"}
+            engine_meta["secrets"] = _status_after_reading(
+                "secrets", _unread_before,
+                f"{len(fs)} raw finding(s); provider patterns + entropy + base64-unwrap")
         except Exception as e:  # noqa
             engine_meta["secrets"] = {"status": "error", "detail": f"{e}"}
     else:
@@ -492,9 +540,12 @@ def main(argv=None):
     if "aisec" in engines:
         _log(args.quiet, "  [aisec] scanning...")
         try:
+            _unread_before = len(unreadable)
             fs = engine_aisec.scan(scan_files, read_text)
             all_findings.extend(fs)
-            engine_meta["aisec"] = {"status": "ok", "detail": f"{len(fs)} raw finding(s); injection/unicode/exfil/hooks/bypass"}
+            engine_meta["aisec"] = _status_after_reading(
+                "aisec", _unread_before,
+                f"{len(fs)} raw finding(s); injection/unicode/exfil/hooks/bypass")
         except Exception as e:  # noqa
             engine_meta["aisec"] = {"status": "error", "detail": f"{e}"}
     else:
@@ -596,6 +647,13 @@ def main(argv=None):
             "skipped_code_files": scope_stats.get("skipped_code_files", 0),
             "kept_code_files": scope_stats.get("kept_code_files", 0),
             "default_skips_disabled": bool(args.no_default_skips),
+            # Files an engine asked for and could not decode. Reported so the
+            # skip is never silent; see the unreadable floor below.
+            "unreadable_files": len(unreadable),
+            "unreadable_sample": [
+                {"file": os.path.relpath(p, target).replace("\\", "/"), "error": why}
+                for p, why in unreadable[:5]
+            ],
         },
         # None, not 0, when secrets did not run: "the engine read nothing" and
         # "the engine was not asked" are different facts, and reporting 0 for the
@@ -738,6 +796,36 @@ def main(argv=None):
                 "released bundle), dist/ is the shipped code and not build output: "
                 "re-run with --no-default-skips. Pass --allow-degraded to gate on "
                 "findings alone.\n"
+            )
+            return 3
+        # 🔴 A BACKSTOP, NOT THE PRIMARY ENFORCEMENT -- stated plainly so nobody
+        # mistakes which line is load-bearing.
+        #
+        # The primary enforcement is `_status_after_reading`, which refuses to
+        # report `ok` for an engine that could not decode a file; the existing
+        # degraded path then returns 3. Both engines that read text are wrapped,
+        # so on today's code this block is unreachable.
+        #
+        # It is kept because that wrapping is an ENUMERATION -- two call sites,
+        # by hand -- and this repository's whole history is enumerations missing
+        # their next member. A future engine that calls `read_text` without the
+        # wrapper would otherwise reach the gate reporting `ok`. This catches it.
+        # ⚠️ It cannot catch an engine that opens files WITHOUT `read_text`; that
+        # route bypasses the recording entirely and nothing here sees it.
+        if unreadable and not args.allow_degraded:
+            sys.stderr.write(
+                f"praetor: {len(unreadable)} FILE(S) COULD NOT BE READ -- they were "
+                "selected for scanning and no engine could decode them, so this scan "
+                "did not cover its whole target.\n"
+            )
+            for path, why in unreadable[:5]:
+                sys.stderr.write(f"  {os.path.relpath(path, target)}: {why}\n")
+            if len(unreadable) > 5:
+                sys.stderr.write(f"  ... and {len(unreadable) - 5} more\n")
+            sys.stderr.write(
+                "  An undecodable file is a BLIND SPOT, not a clean file. Exclude "
+                "them deliberately with --exclude, or pass --allow-degraded to gate "
+                "on findings alone.\n"
             )
             return 3
         # 🔴 A whole-scan floor, not a per-engine one. Reached only when every

@@ -129,6 +129,14 @@ def render_text(result: dict, meta: dict, redacted: bool = True) -> str:
             "              (build/dependency dirs are skipped by default; for a "
             "DISTRIBUTED artifact use --no-default-skips)"
         )
+    _unread = _scope.get("unreadable_files", 0)
+    if _unread:
+        out.append(
+            f"Scope       : {_unread} file(s) selected but NOT DECODABLE -- a blind "
+            "spot, not a clean file"
+        )
+        for _u in (_scope.get("unreadable_sample") or [])[:3]:
+            out.append(f"              {_u.get('file')}: {_u.get('error')}")
     if _scope.get("default_skips_disabled"):
         out.append("Scope       : --no-default-skips ACTIVE -- build/dependency dirs were read")
     out.append("")
