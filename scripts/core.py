@@ -666,15 +666,28 @@ def walk_files(
     out: list = []
 
     if os.path.isfile(target):
-        base = os.path.dirname(target)
-        rel = os.path.basename(target)
+        name = os.path.basename(target)
         try:
             size = os.path.getsize(target)
         except OSError:
             return out
-        if scannable(rel) and size <= max_bytes and not is_probably_binary(target):
+        if scannable(name) and size <= max_bytes and not is_probably_binary(target):
+            # Report a path relative to the CWD, not the bare basename. A
+            # single-file scan used to report "x.js" no matter how deep the
+            # file actually lived, which is indistinguishable from every
+            # other x.js in the tree and from any of its own historical
+            # copies under a build worktree -- a downstream consumer
+            # matching findings by file path had to re-derive the real path
+            # itself to tell them apart. `scannable`/`is_code` still see the
+            # plain basename above: they match name prefixes like ".env" and
+            # "dockerfile", which a path would defeat.
+            try:
+                rel = os.path.relpath(target, os.getcwd()).replace("\\", "/")
+            except ValueError:
+                # Cross-drive on Windows: no relative path exists.
+                rel = name
             out.append(ScanFile(target, rel, size))
-            if stats is not None and is_code(rel):
+            if stats is not None and is_code(name):
                 stats["kept_code_files"] += 1
         return out
 
