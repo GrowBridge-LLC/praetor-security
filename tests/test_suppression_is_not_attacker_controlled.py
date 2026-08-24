@@ -664,6 +664,37 @@ def test_an_unrelated_semgrep_error_is_not_retried(tmp_path, monkeypatch):
     assert res["status"] == "error"
 
 
+def test_semgrep_analysis_errors_are_not_reported_as_ok(tmp_path, monkeypatch):
+    """A COUNT, NOT A STATUS.
+
+    Semgrep can return valid JSON, a positive scanned count, and non-empty
+    findings while its own `errors` array says it could not parse or analyse
+    specific files -- a NUL-bearing source, a syntax error in an unrelated
+    dialect, a truncated read. Findings that did arrive prove some files were
+    measured, not that every opened file was, so `--fail-on` must fail closed
+    on the gap rather than certify a partially-measured scan as clean.
+    """
+    _semgrep_returning(monkeypatch, {
+        "results": [], "paths": {"scanned": ["a.py", "b.py"]},
+        "errors": [{"message": "could not parse b.py"}],
+    })
+    res = engine_sast.run(str(tmp_path), bundled_rules="", use_registry=False,
+                          extra_configs=["p/ci"], enumerated_code_files=2)
+    assert res["status"] == "error", f"a reported analysis error must fail closed; got {res}"
+    assert "scan errors=1" in res["detail"]
+    assert "coverage cannot be certified" in res["detail"]
+
+
+def test_zero_semgrep_errors_is_still_ok(tmp_path, monkeypatch):
+    """KEEP DIRECTION. An empty `errors` array is the ordinary clean case."""
+    _semgrep_returning(monkeypatch, {
+        "results": [], "paths": {"scanned": ["a.py"]}, "errors": [],
+    })
+    res = engine_sast.run(str(tmp_path), bundled_rules="", use_registry=False,
+                          extra_configs=["p/ci"], enumerated_code_files=1)
+    assert res["status"] == "ok", f"zero errors is the ordinary case; got {res}"
+
+
 # --------------------------------------------------------------------------- #
 # THE SKIP LIST IS AN ATTACKER-CONTROLLED SCOPE BOUNDARY
 #

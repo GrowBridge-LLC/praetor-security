@@ -714,12 +714,30 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
         ))
     n_errors = len(data.get("errors", []))
     detail = f"{rt['detail']}; ran configs={configs}; scan errors={n_errors}"
+    if n_errors:
+        # 🔴 A COUNT, NOT A STATUS. `scan errors=N` used to sit in `detail` next
+        # to an unconditional `status: "ok"` -- printed, gate-trusted, and never
+        # read. Semgrep can return valid JSON and a positive file count while
+        # admitting it could not parse or analyse specific files (a NUL-bearing
+        # source, a syntax error in an unrelated dialect, a truncated read); a
+        # non-empty findings list proves SOME files were measured, not that every
+        # opened file was. `--fail-on` must fail closed on that gap rather than
+        # certify a scan with unmeasured files as a clean one.
+        detail += ("; Semgrep reported file/analysis errors -- "
+                   "SAST coverage cannot be certified")
     if not semgrepignore_off:
         # Visible, not silent: this semgrep did not accept the flag, so the
-        # scanned tree's own `.semgrepignore` was honoured on this run. The scope
-        # guard above still applies; a reader should know which regime produced
-        # this result.
+        # scanned tree's own `.semgrepignore` was honoured on this run. Status
+        # stays "ok" here DELIBERATELY -- this branch used to be `error` on
+        # every scan against an older semgrep, unconditionally, which is the
+        # regression `test_a_semgrep_that_rejects_the_flag_does_not_break_every_scan`
+        # exists to pin. The scope guard above still applies and catches the
+        # dangerous case (a .semgrepignore hiding EVERYTHING, so semgrep opens
+        # zero files); a partial hide agrees with PRAETOR's count and is
+        # reported here, visibly, rather than blocking every caller on an old
+        # semgrep binary for a risk the scope guard already covers.
         detail += (f"; NOTE this semgrep rejected {_SEMGREPIGNORE_OFF}, so the target's "
                    "own .semgrepignore was honoured -- scope guard active, but upgrade "
                    "semgrep for full protection")
-    return {"findings": findings, "status": "ok", "detail": detail, "runtime": mode}
+    status = "error" if n_errors else "ok"
+    return {"findings": findings, "status": status, "detail": detail, "runtime": mode}
