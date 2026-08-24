@@ -1,5 +1,44 @@
 # PRAETOR — open backlog recorded before the Codex worktree/comms rollout
 
+## ↩️ REFRESHED 2026-08-24 (evening) — re-derived by execution, not carried forward
+
+**Everything the "Build queue" section below lists as open or in-progress is DONE and on `main`,
+re-verified by running the actual checks rather than trusting the prior text:**
+
+- **Cluster A** — merged `3f27c6e`. `codex-f/build` and `main` had genuinely diverged (both rewrote
+  the same lines of `core.py::walk_files()`); hand-resolved keeping both sides. Full suite +
+  precommit green after.
+- **Task D** — already landed on `main` before this refresh (`git merge-base --is-ancestor` on its
+  landing commits returns 0). `codex-f` independently re-derived this from `tests/test_tool_output_
+  is_not_target_controlled.py`'s AST-based subprocess-discovery guard and confirmed it live.
+- **Task H** — already landed on `main` before this refresh (`d5943fb`, `0d24b27`, `3a34b16` are all
+  ancestors of current `main`). `codex-f/secrets-port-parked` is a superseded dead end -- its tip is
+  NOT an ancestor of `main`; do not build on it.
+- **SAST fail-safe status gap** — `88affb0`. `n_errors > 0` (Semgrep reporting file/analysis errors)
+  used to sit in `detail` next to an unconditional `status: "ok"`. Re-derived from the 2026-08-18
+  recovery backup below, narrowed: that backup's version of the same function also reverts the
+  operator-controlled Semgrep timeout (`e09dcf3`) and a *deliberate* prior fix (`.semgrepignore`
+  degradation staying `"ok"` rather than breaking every scan on an older Semgrep -- see
+  `test_a_semgrep_that_rejects_the_flag_does_not_break_every_scan`'s own docstring). Only the
+  `n_errors` half was taken; the rest of that backup is NOT safe to apply wholesale.
+
+**Genuinely still open, from the same recovery backup (`wip/task-d-backup-2026-08-18`), deliberately
+not touched today because both need real design reconciliation, not extraction:**
+
+- `SEMGREP_DEFAULT_IGNORE_DIRS` (the backup's Semgrep-measured default-ignore set) vs. `main`'s
+  current caller-supplied `skip_dirs` parameter (which exists to fix a *different*, already-shipped
+  bug: the `--no-default-skips` desync between PRAETOR's walker and Semgrep's own exclusions). The
+  backup predates the `skip_dirs` fix and would regress it if applied as-is; reconciling the two
+  needs someone to decide whether Semgrep's default-ignore restoration should be keyed off PRAETOR's
+  walker policy or off Semgrep's own measured defaults, not just picked.
+- `scripts/engine_sast.py` currently forwards PRAETOR's `--exclude` (documented as REGEX) straight
+  to Semgrep's own `--exclude` flag (which is GLOB syntax) — a real, live language mismatch, same
+  shape as the already-fixed `.gitignore`/`.semgrepignore` scope-disagreement bugs above it in the
+  same file. Not fixed here because it needs verification against a live Semgrep
+  (`tests/semgrep_live_check.py` exists for exactly this) before trusting a behavioural claim about
+  it, not because it's low-value.
+
+
 Written 2026-08-22, before the rollout's first step, because that rollout is an interruption and
 not a replacement. Every item carries an owner and a next action, so none of it depends on a
 session surviving.
