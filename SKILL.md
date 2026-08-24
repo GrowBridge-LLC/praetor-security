@@ -53,6 +53,13 @@ silently).
 python <skill_dir>/scripts/praetor.py <TARGET_PATH> [options]
 ```
 
+Get `<skill_dir>` with `git clone` (or a `git archive`/checkout of a pinned ref),
+not a raw directory copy. `references/test-corpus/` holds deliberately fake
+secrets used for this project's own self-testing and is gitignored for exactly
+that reason -- a `git clone` never sees it; a `cp -r` of a local working tree
+does, and a consumer that vendors it that way inherits fixtures shaped like
+real credentials with no way to tell them apart from a genuine leak.
+
 Common invocations:
 
 ```bash
