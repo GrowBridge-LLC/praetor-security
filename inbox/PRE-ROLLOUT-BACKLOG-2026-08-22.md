@@ -4,6 +4,46 @@ Written 2026-08-22, before the rollout's first step, because that rollout is an 
 not a replacement. Every item carries an owner and a next action, so none of it depends on a
 session surviving.
 
+## ↩️ REFRESHED 2026-08-24 — the rollout returned a second time; the section below is CURRENT state
+
+The worktree, `.gitignore` rules, goal file and handoff file described below were already built and
+committed on 2026-08-22 (`090bf28`, `b78cf1c`/`59249d8`) — re-verified today, all still correct
+(`.gitignore` gate passes, worktree `git-common-dir` links to the main checkout, precommit gate runs
+clean from both the main checkout and the worktree). The pair channel moved to `.local/PAIR-CHANNEL.md`
+(gitignored) after `inbox/PAIR-CHANNEL.md` tripped two of this repo's own gates on 2026-08-22 —
+`inbox/PAIR-CHANNEL.md` is now a 36-line pointer explaining that, not the live channel.
+
+**Since this file was written, both this session and codex-f have been active. Current state:**
+
+- **Four PRAETOR defects found and fixed by this session, all committed and pushed to `main`**
+  (`66d0dd9`, `0d3d184`, `4936b01`, `e09dcf3`): a scan that read zero code files exiting clean, one
+  undecodable file blinding a whole engine, an extension allowlist missing deployment/build-recipe
+  code, and a hard-coded Semgrep timeout with no operator override.
+- **`codex-f/build` is 5 ahead of `main`** (tip `16f0797`), carrying Cluster A: symlink-refusal +
+  NUL-retention in `scripts/core.py`. Independently audited by this session tonight — **CLEAR on the
+  code** (mutation-reproduced the claimed test failures myself), **BLOCK on landing**: the branch's
+  own last commit leaked "ODO" (a sibling lane's tool name) into `inbox/HANDOFF-codex-f.md:323`,
+  failing the public-hygiene gate. Fix is narrow (reword that line, re-run the gate) and is codex-f's
+  to make, per Rule 1. Full verdict posted to `.local/PAIR-CHANNEL.md`.
+- **`codex-f/secrets-port-parked` is 7 ahead of `main`** — this is Task H below (the Rust secrets
+  port), parked, not abandoned. Still needs the differential/mutation acceptance pass and independent
+  audit named in that entry.
+- **Zulip comms are live for this session** (`claude-f` / Dorothy, onboarded, LIVE). `codex-f` /
+  Whitfield has NOT onboarded — still `never` in `zulip who` as of this refresh — so
+  `.local/PAIR-CHANNEL.md` remains the only channel to reach it. **Whoever next opens a Codex session
+  in the worktree should onboard it to Zulip using its already-provisioned
+  `C:\Users\Admin\zulip-agents\codex-f.zuliprc`, not the git-channel-based prompt in
+  `ROLLOUT-WORKTREE-AND-COMMS.md` §3** — Mike ruled 2026-08-24 that the git channel files and their
+  watchers are retired, no dual-write.
+- **The ODO plugin cache content-check FAILs today**, one file (`generic-git-root-basename.sh`,
+  installed `0.6.1` vs repo). Not this project's to fix — ODO's own repo is deliberately ahead of
+  origin pending its own held audit, so the cache legitimately can't match it yet. Reported, not
+  acted on.
+
+Everything below this point is the original 2026-08-22 backlog, left as written except where a line
+above it already updated an item (Cluster A above is separate from, and does not change, Task D
+below).
+
 **How this was established:** read this project's live session handoff in the Claude memory store,
 the tail of the machine-local pair record under `.local/`, `git log`, `git status`, and the
 contents of `.local/`. State at the time of writing: `main` at `090bf28`, clean, one checkout.
