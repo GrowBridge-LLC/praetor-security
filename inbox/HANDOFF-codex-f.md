@@ -320,7 +320,7 @@ restored. Ordinary files and nested ordinary files remain selected. A NUL-bearin
 source is retained with `contains_nul=True` and reaches `report.render_text`, covered
 by the targeted test suite (`9 passed`). `bash tests/precommit.sh` returned exit 0:
 263 Python tests, 11 Rust tests, self-scan 13 active / 52 filtered, all gates passed.
-The portable ODO fast gate returned exit 0. Failure is any symlink traversal, lost NUL
+The portable auxiliary fast gate returned exit 0. Failure is any symlink traversal, lost NUL
 observation/report, targeted regression, or non-zero repository gate.
 
 **PERSISTENCE:** this handoff update and implementation are committed on
