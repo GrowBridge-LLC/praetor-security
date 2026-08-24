@@ -158,6 +158,12 @@ def parse_args(argv):
                    help="Skip files larger than this many bytes (default: 3MB).")
     p.add_argument("--exclude", action="append", default=[],
                    help="Regex of relative paths to exclude (repeatable).")
+    p.add_argument("--no-default-skips", action="store_true",
+                   help="Do not skip build-output and dependency directories "
+                        "(dist, build, out, target, vendor, node_modules, ...). "
+                        "Required to scan a DISTRIBUTED artifact such as an "
+                        "unpacked npm tarball, where dist/ is the shipped code "
+                        "rather than generated output. .git is still skipped.")
     p.add_argument("--no-redact", action="store_true",
                    help="(Discouraged) do not redact matched secrets. Off by default.")
     p.add_argument("--quiet", action="store_true", help="Suppress progress messages on stderr.")
@@ -431,7 +437,14 @@ def main(argv=None):
     _log(args.quiet, f"praetor {VERSION}: scanning {target}")
 
     # Enumerate scannable text files exactly once (shared by secrets + aisec).
-    scan_files = core.walk_files(target, max_bytes=args.max_file_size, extra_excludes=args.exclude)
+    # `scope_stats` records what the walker REFUSED, so a scan that read almost
+    # nothing cannot report itself as clean in silence. See the scope floor below
+    # and core.walk_files' docstring for the measurement that produced it.
+    scope_stats = {}
+    scan_skip_dirs = set() if args.no_default_skips else None
+    scan_files = core.walk_files(target, skip_dirs=scan_skip_dirs,
+                                 max_bytes=args.max_file_size,
+                                 extra_excludes=args.exclude, stats=scope_stats)
     # 🔴 A SECOND, WIDER WALK FOR SECRETS ONLY -- see core.SECRETS_SKIP_DIRS.
     # `core.DEFAULT_SKIP_DIRS` is 36 directory names, and the SCANNED TREE CHOOSES
     # ITS OWN DIRECTORY NAMES, so it is an attacker-controlled scope boundary.
@@ -458,7 +471,52 @@ def main(argv=None):
     _log(args.quiet, f"  enumerated {len(scan_files)} text file(s)"
                      f" ({len(secret_files)} for secrets)")
 
-    read_text = (lambda p: core.read_text(p, args.max_file_size))
+    # 🔴 ONE UNDECODABLE FILE USED TO BLIND AN ENTIRE ENGINE.
+    #
+    # `core.read_text` raises on an invalid start byte, and that is the correct
+    # design -- a `surrogateescape` fallback was added 2026-08-13 and REVERTED the
+    # same day because it turned a LOUD failure into a SILENT MISS. That decision
+    # stands and this does not touch it.
+    #
+    # What was wrong is the BLAST RADIUS. The engines read in a bare loop, so the
+    # first unreadable file aborted the whole scan and the engine reported
+    # `error` having examined nothing. Measured 2026-08-22 on a real container
+    # image filesystem, 30,790 files:
+    #     secrets -> error  "'utf-8' codec can't decode byte 0xb1 in position 81"
+    #     aisec   -> error  "'utf-8' codec can't decode byte 0xff in position 163"
+    # Two bytes, in two files, and nothing else in that tree was ever looked at.
+    #
+    # ⚠️ THE SILENCE IS THE DANGER, NOT THE SKIP. Recording the file and moving on
+    # is only safe because `unreadable` is REPORTED and, below, DEGRADES the scan.
+    # Returning "" without that record would be precisely the reverted fallback
+    # wearing a different hat: engines reporting `ok` over files they never read.
+    unreadable: list = []
+
+    def read_text(path):
+        try:
+            return core.read_text(path, args.max_file_size)
+        except Exception as exc:  # noqa -- the reason is recorded, not swallowed
+            unreadable.append((path, f"{type(exc).__name__}: {exc}"[:160]))
+            return ""
+
+    def _status_after_reading(name, before, ok_detail):
+        """Record `name`'s status, refusing to say `ok` about a file it could not read.
+
+        🔴 THE EXIT CODE IS THE GATE; THE STATUS IS WHAT A HUMAN READS. Isolating
+        the decode failure per file is only half the job -- an engine that then
+        reports `ok` is claiming work it did not do, which is the same lie one
+        layer up and survives any exit-code-only assertion.
+        `tests/test_suppression_is_not_attacker_controlled.py` pins this, and it
+        caught exactly this regression in the first version of the isolation.
+        """
+        missed = unreadable[before:]
+        if not missed:
+            return {"status": "ok", "detail": ok_detail}
+        first = os.path.relpath(missed[0][0], target)
+        return {"status": "error",
+                "detail": (f"{len(missed)} file(s) could not be decoded and were NOT "
+                           f"scanned (first: {first}: {missed[0][1]}); "
+                           f"the rest of the tree was scanned -- {ok_detail}")}
 
     all_findings = []
     engine_meta = {}
@@ -467,9 +525,12 @@ def main(argv=None):
     if "secrets" in engines:
         _log(args.quiet, "  [secrets] scanning...")
         try:
+            _unread_before = len(unreadable)
             fs = engine_secrets.scan(secret_files, read_text)
             all_findings.extend(fs)
-            engine_meta["secrets"] = {"status": "ok", "detail": f"{len(fs)} raw finding(s); provider patterns + entropy + base64-unwrap"}
+            engine_meta["secrets"] = _status_after_reading(
+                "secrets", _unread_before,
+                f"{len(fs)} raw finding(s); provider patterns + entropy + base64-unwrap")
         except Exception as e:  # noqa
             engine_meta["secrets"] = {"status": "error", "detail": f"{e}"}
     else:
@@ -479,9 +540,12 @@ def main(argv=None):
     if "aisec" in engines:
         _log(args.quiet, "  [aisec] scanning...")
         try:
+            _unread_before = len(unreadable)
             fs = engine_aisec.scan(scan_files, read_text)
             all_findings.extend(fs)
-            engine_meta["aisec"] = {"status": "ok", "detail": f"{len(fs)} raw finding(s); injection/unicode/exfil/hooks/bypass"}
+            engine_meta["aisec"] = _status_after_reading(
+                "aisec", _unread_before,
+                f"{len(fs)} raw finding(s); injection/unicode/exfil/hooks/bypass")
         except Exception as e:  # noqa
             engine_meta["aisec"] = {"status": "error", "detail": f"{e}"}
     else:
@@ -502,6 +566,10 @@ def main(argv=None):
                 # disagreeing is the only signal that survives semgrep changing
                 # how it decides scope -- see the scope guard in engine_sast.
                 enumerated_code_files=engine_sast.count_code_files(scan_files),
+                # The SAME skip set the walker used. Passing it rather than
+                # letting the engine re-read the constant is what keeps the two
+                # components agreeing about scope under --no-default-skips.
+                skip_dirs=scan_skip_dirs,
             )
             all_findings.extend(res["findings"])
             engine_meta["sast"] = {"status": res["status"],
@@ -571,6 +639,22 @@ def main(argv=None):
         "timestamp": report.now_iso(),
         "version": VERSION,
         "file_count": len(scan_files),
+        # 🔴 WHAT THE WALKER REFUSED, reported rather than dropped. A reviewer can
+        # now see "2 files read, 78 code files skipped in dist/" instead of a bare
+        # zero-findings result that looks identical to a real clean scan.
+        "scope": {
+            "skipped_dirs": dict(sorted(scope_stats.get("skipped_dirs", {}).items())),
+            "skipped_code_files": scope_stats.get("skipped_code_files", 0),
+            "kept_code_files": scope_stats.get("kept_code_files", 0),
+            "default_skips_disabled": bool(args.no_default_skips),
+            # Files an engine asked for and could not decode. Reported so the
+            # skip is never silent; see the unreadable floor below.
+            "unreadable_files": len(unreadable),
+            "unreadable_sample": [
+                {"file": os.path.relpath(p, target).replace("\\", "/"), "error": why}
+                for p, why in unreadable[:5]
+            ],
+        },
         # None, not 0, when secrets did not run: "the engine read nothing" and
         # "the engine was not asked" are different facts, and reporting 0 for the
         # second is the same one-word-two-facts defect as `unavailable` was.
@@ -665,6 +749,83 @@ def main(argv=None):
             sys.stderr.write(
                 "  An empty file set is not a clean tree. Widen the filters, or pass "
                 "--allow-degraded to gate on findings alone.\n"
+            )
+            return 3
+        # 🔴 THE SCOPE FLOOR. The floor above catches a tree emptied ENTIRELY and
+        # nothing else -- "one file defeats it" is stated in its own comment, and
+        # that is precisely how this defect survived. Measured on a real npm
+        # tarball 2026-08-22: 81 files, `dist/` pruned by DEFAULT_SKIP_DIRS, the
+        # two files left at the root were `README.md` and `package.json`, and
+        # `--fail-on HIGH` returned 0. Re-run with the directory renamed: 80 files
+        # read, 10 findings. The clean result was an artefact of the skip list.
+        #
+        # The predicate is NOT a ratio. Measured across real trees, a ratio cannot
+        # separate the two cases: this repository itself skips 3,721 files and
+        # keeps 174 -- a 21x ratio that is entirely healthy, because `target/` and
+        # `.git/` hold no source. The npm tarball skipped 78 and kept 2. What
+        # actually distinguishes them is whether ANY CODE WAS READ:
+        #
+        #     this repo    kept_code=93   skipped_code=0     -> measured
+        #     docker-zulip kept_code=19   skipped_code=0     -> measured
+        #     npm tarball  kept_code=0    skipped_code=78    -> NOT measured
+        #
+        # ⚠️ FAIL-SAFE DIRECTION: an extension missing from core.CODE_EXTS makes a
+        # tree look LESS measured, so an unclassified language degrades toward
+        # "we did not read code", never toward a clean pass. That is why the set
+        # is narrow and why `.json` and `.md` are deliberately absent from it.
+        if (scope_stats.get("skipped_code_files", 0) > 0
+                and scope_stats.get("kept_code_files", 0) == 0
+                and not args.allow_degraded):
+            skipped = scope_stats.get("skipped_dirs", {})
+            worst = ", ".join(
+                f"{d}/ ({n} files)"
+                for d, n in sorted(skipped.items(), key=lambda kv: -kv[1])[:4]
+            )
+            sys.stderr.write(
+                "praetor: NO CODE WAS EXAMINED -- every source file in this target "
+                "is inside a skipped directory, so --fail-on has no basis to pass.\n"
+            )
+            sys.stderr.write(
+                f"  target: {target}\n"
+                f"  files read: {len(scan_files)}, of which code: 0\n"
+                f"  code files skipped: {scope_stats.get('skipped_code_files', 0)}\n"
+                f"  skipped directories: {worst or '(none)'}\n"
+            )
+            sys.stderr.write(
+                "  If this is a DISTRIBUTED artifact (an unpacked npm tarball, a "
+                "released bundle), dist/ is the shipped code and not build output: "
+                "re-run with --no-default-skips. Pass --allow-degraded to gate on "
+                "findings alone.\n"
+            )
+            return 3
+        # 🔴 A BACKSTOP, NOT THE PRIMARY ENFORCEMENT -- stated plainly so nobody
+        # mistakes which line is load-bearing.
+        #
+        # The primary enforcement is `_status_after_reading`, which refuses to
+        # report `ok` for an engine that could not decode a file; the existing
+        # degraded path then returns 3. Both engines that read text are wrapped,
+        # so on today's code this block is unreachable.
+        #
+        # It is kept because that wrapping is an ENUMERATION -- two call sites,
+        # by hand -- and this repository's whole history is enumerations missing
+        # their next member. A future engine that calls `read_text` without the
+        # wrapper would otherwise reach the gate reporting `ok`. This catches it.
+        # ⚠️ It cannot catch an engine that opens files WITHOUT `read_text`; that
+        # route bypasses the recording entirely and nothing here sees it.
+        if unreadable and not args.allow_degraded:
+            sys.stderr.write(
+                f"praetor: {len(unreadable)} FILE(S) COULD NOT BE READ -- they were "
+                "selected for scanning and no engine could decode them, so this scan "
+                "did not cover its whole target.\n"
+            )
+            for path, why in unreadable[:5]:
+                sys.stderr.write(f"  {os.path.relpath(path, target)}: {why}\n")
+            if len(unreadable) > 5:
+                sys.stderr.write(f"  ... and {len(unreadable) - 5} more\n")
+            sys.stderr.write(
+                "  An undecodable file is a BLIND SPOT, not a clean file. Exclude "
+                "them deliberately with --exclude, or pass --allow-degraded to gate "
+                "on findings alone.\n"
             )
             return 3
         # 🔴 A whole-scan floor, not a per-engine one. Reached only when every

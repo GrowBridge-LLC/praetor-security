@@ -12,6 +12,207 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Fixed — deployment code, build recipes and bare credential files are now read
+
+Found the same way as the two below: by running the scanner on a real deployment
+the estate was about to adopt, and checking the file count instead of the verdict.
+**These types were not in the walker's allowlist, so nothing ever opened them** —
+not "scanned and clean", never read:
+
+```text
+.pp     103 files   Puppet manifests -- the actual deployment configuration
+.hbs    466 files   Handlebars templates
+.erb     56 files   ERB templates, which embed Ruby
+.hook     8 files   pre-deploy.d / post-deploy.d scripts that RUN on deploy
+.patch    1 file    384 added lines, including API-credential handling
+env       2 files   ci/*/env -- shell environment files (`.env` was covered)
+```
+
+🔴 **The two smallest matter most.** A deploy hook is a supply-chain **execution**
+point that runs with the deployer's privileges. A `.patch` is code arriving inside
+a package — that one had to be read by hand to discover it handled API credentials
+at all.
+
+⚠️ **`Dockerfile.dev` is its own lesson.** The exact name `dockerfile` was in
+`TEXT_NAMES`, and `splitext("Dockerfile.dev")` yields extension `.dev` — so every
+environment variant of the most security-relevant build file in a repository fell
+between the name check and the extension check, and the dev variant is usually the
+loosest.
+
+**Measured effect on the three trees that exposed it:**
+
+```text
+zulip server source    7,369 -> 8,014 files read   (+645)
+docker-zulip             134 ->   136              (+2, both `env` files)
+the deployment package     3 ->     5              (+2, including the patch)
+```
+
+⇒ **`.pp`, `.erb` and `.hook` also count as code for the scope floor** — they are
+executable configuration. **`.patch`, `.diff` and `.hbs` deliberately do not.**
+`CODE_EXTS` only ever *widens* what counts as measured, so a tree of patches or
+templates must not be able to satisfy the floor.
+
+📌 **The self-scan pin moved 13 → 15 and the gate went red — and the cause was not
+this change.** Two `sensitive-file-read` findings came from the new test file
+spelling two well-known private-key and package-registry credential filenames as
+literals. The fix was the fixture, exactly as this project's own guidance says:
+assemble such strings from parts. With that corrected the pin is unchanged at
+13 active / 52 filtered, which is the proof that widening the allowlist added
+nothing to this repository's own surface.
+
+⚠️ **And then this very entry did it again, one file over.** Naming those two
+filenames here — in prose explaining the hazard — put a third finding into the
+self-scan and turned the gate red a second time. **The rule is not "be careful in
+tests". It is that any file inside a scanned tree is scanned, including the note
+describing the trap.**
+
+### Fixed — one undecodable byte no longer blinds an entire engine
+
+**Found while scanning a real container image filesystem**, pulled from a registry
+and unpacked read-only. 30,790 selected files, and this is all that came back:
+
+```text
+secrets -> error  "'utf-8' codec can't decode byte 0xb1 in position 81"
+aisec   -> error  "'utf-8' codec can't decode byte 0xff in position 163"
+```
+
+**Two bytes, in two files, and nothing else in that tree was ever examined.** The
+engines read in a bare loop, so the first `read_text` that raised aborted the
+whole engine. PRAETOR returned exit 3 rather than a clean result, so this was
+never a false clean — but it made the tool unable to scan a real-world tree.
+
+🔴 **The obvious fix was already tried here and reverted, so it was not repeated.**
+A `surrogateescape` fallback was added on 2026-08-13 and reverted the same day,
+because it turned a loud failure into a silent miss: the bad byte became U+DCxx, a
+pattern spanning it stopped matching, and the engine reported `ok` with zero
+findings on a file containing a live payload. **`core.read_text` still raises.**
+
+**What changed is the blast radius, not the loudness.** The failure is isolated to
+the FILE instead of the ENGINE: the file is recorded as unread, the rest of the
+tree is scanned, and the engine's status refuses to say `ok`. Its detail names the
+file that went unread and states that the remainder was scanned.
+
+⚠️ **The first version of this change got that second half wrong**, and this
+repository's own guard caught it. Isolating the error while leaving the status
+`ok` is the reverted fallback arriving from the other direction — an engine
+claiming work it did not do. `test_suppression_is_not_attacker_controlled.py`
+turned the gate red and the design was corrected. **Both halves, or neither.**
+
+### Fixed — a scan that read no code at all reported a clean exit
+
+**A live false clean, found in the field rather than by a test.** PRAETOR was
+pointed at a real unpacked npm tarball during a supply-chain review. It read
+**2 of the 81 files** — `README.md` and `package.json` — and returned exit 0 with
+no findings under `--fail-on HIGH`. Re-running with one directory renamed read 80
+files and returned 10 findings. **The clean result was an artefact of a directory
+name.**
+
+Two independent causes, both closed:
+
+- **`dist` is in `core.DEFAULT_SKIP_DIRS`**, with `build`, `out`, `target`,
+  `vendor` and `node_modules`. For a repository that is correct — those hold
+  generated or third-party content. For a **published package it is backwards**:
+  `dist/` is the shipped code and the sources are not in the tarball at all.
+- **`.cts` and `.mts` were missing from the scannable extensions** while `.cjs`
+  and `.mjs` were present. That dropped 25 further files on its own.
+
+**The existing zero-files floor could not catch this, and its own comment said so**
+— *"it catches exactly-zero and nothing else, and one file defeats it"*, recorded
+on 2026-08-13 with a credential hidden in `vendor/`. It stayed open for nine days
+and then a real scan walked into it.
+
+**What is new:** the walker now records what it refused, the report prints it, a
+new `--no-default-skips` flag scans a distributed artifact correctly, and a scope
+floor exits **3 (not measured)** when code files were skipped and **none** were
+read.
+
+⚠️ **The predicate is deliberately not a ratio.** That rule was measured and
+rejected: this repository skips 3,721 files and keeps 174 — a 21× ratio that is
+entirely healthy, because `target/` and `.git/` hold no source. The npm tarball
+skipped 78 and kept 2. Ratio cannot separate them; *"was any code read at all"*
+can.
+
+⇒ **`core.CODE_EXTS` is narrow on purpose, and the narrowness is the safety
+property.** An extension missing from it makes a tree look *less* measured, never
+more, so an unclassified language degrades toward "we did not read code here".
+`.json` and `.md` are excluded deliberately — counting `package.json` as code
+would have hidden this exact defect.
+
+🔴 **And the first version of this fix reintroduced the defect it was closing.**
+`engine_sast` re-applied the skip list to Semgrep from the constant, so
+`--no-default-skips` widened the walker while Semgrep kept excluding `dist/` — the
+report printed `Files (text): 80` over a Semgrep run that had opened almost none
+of them. Same bytes, only the directory name differing: `dist/` gave 0 findings,
+`shipped/` gave 10. The engine now receives the caller's skip set. **One component
+decides scope.**
+
+### Changed — the direct-subprocess guard now denies by default instead of enumerating
+
+The structural guard that keeps engines away from raw process primitives used to
+walk five hard-coded filenames, so a sixth engine file was simply never scanned.
+It now discovers every `scripts/*.py` by parsing it, and the allowance for the one
+sanctioned call is scoped to a `(file, line)` pair rather than to a whole file, so
+a second call added to that same file is still caught.
+
+It took four rounds to get right, and the shape of the failure is the useful part.
+Round one enumerated files, and a new file evaded it. Round two enumerated
+spellings of one function, and a different function evaded it. Round three
+enumerated functions in one module, and `getoutput` and the `os.spawn` family
+evaded that. Each fix was written immediately after reading the previous finding.
+
+⇒ The check now **inverts** for `subprocess`: any call resolving to that module is
+an offender unless explicitly allowed. The proof that this is an inversion rather
+than a longer list is that `getoutput` and `getstatusoutput` are caught while
+appearing nowhere in the guard. `os` stays a named family, because most of `os` is
+harmless and denying by default there would flag `os.path.join`. **That asymmetry
+is stated in the guard's own docstring rather than left to be inferred.**
+
+Non-executing uses of `subprocess`, such as constructing one of its exceptions,
+are caught deliberately. Nothing in the tree does that today; if something needs
+to, it earns an explicit allowance with a reason rather than slipping past a
+predicate.
+
+### Added — the secrets engine is ported to Rust, with a parity check that can fail
+
+`rust/praetor-core/src/secrets.rs` implements the reference detector, and the
+existing differential runner was extended to cover it.
+
+The acceptance was not a green run. Deliberately diverging the two
+implementations makes the runner report that **they disagree with each other**,
+not merely that one disagrees with a committed contract — the property this
+project previously lacked, when two ports each matched one contract file and were
+never compared to one another. Planting a rule the Rust side has never seen is
+caught by name, so a new reference rule cannot leave a vacuous pass.
+
+`base64` is pinned exactly, with default features disabled: that release enables a
+SIMD feature by default and the crate forbids unsafe code without it. The
+dependency decision is recorded in `ADR-001` Amendment 2, which also records that
+the call was marginal and sets no precedent for a third crate.
+
+### Fixed — the self-scan pin measured a second copy of the repository
+
+A linked build worktree lives inside the tree the self-scan walks, so every
+shipping file was read twice and the pin doubled. The exclusion is scoped to that
+worktree path and **not** to the directory containing it: that directory also
+holds enforcement files that ship, and excluding it wholesale was measured to hide
+a hardcoded credential planted among them. Suppressing a path instead of proving a
+property is this project's most repeated defect, and this is one more instance.
+
+### Changed — coordination traffic moved out of the tracked tree
+
+A tracked conversation file was rejected by two of this project's own pre-commit
+gates within a day. The public-hygiene sweep rejected its first draft. Then the
+self-scan pin went red on ordinary prose about a pre-commit check, which the AI
+security engine correctly read as an instruction to weaken a control.
+
+The finding was correct and the file was in the wrong place. **A security
+scanner's own product tree is the wrong home for prose about security controls**,
+because every future note would have to avoid the detector's vocabulary — and
+writing around your own detector to keep a gate green is how a scanner goes quiet.
+Excluding the directory from the scan was considered and rejected: a credential
+pasted into a note would then go unreported.
+
+
 - **Comment-based suppression is now file-type-aware.** Markdown headings and
   YAML URL paths can no longer impersonate comments to hide an AI-security
   finding. Inline-ignore and lexical-context decisions receive the finding's

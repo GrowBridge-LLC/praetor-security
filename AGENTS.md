@@ -195,7 +195,9 @@ It is a pointer on purpose. A goal changes and a pasted copy rots, so this file 
 rather than repeating it.
 
 Your build worktree is `.codex/PRAETOR-codex` on branch `codex-f/build`. Your pair channel is
-`inbox/PAIR-CHANNEL.md`, append-only, and your own handoff file is `inbox/HANDOFF-codex-f.md`
+`C:\projects\PRAETOR\.local\PAIR-CHANNEL.md`, append-only and NOT tracked -- the
+absolute path is deliberate, since that directory is absent from your worktree. Your own handoff
+file is `inbox/HANDOFF-codex-f.md`
 on your own branch. Do not write to the auditor's handoff.
 
 ## Designed but not built — reasonable places to pick up work
