@@ -22,9 +22,9 @@ clean from both the main checkout and the worktree). The pair channel moved to `
 - **`codex-f/build` is 5 ahead of `main`** (tip `16f0797`), carrying Cluster A: symlink-refusal +
   NUL-retention in `scripts/core.py`. Independently audited by this session tonight — **CLEAR on the
   code** (mutation-reproduced the claimed test failures myself), **BLOCK on landing**: the branch's
-  own last commit leaked "ODO" (a sibling lane's tool name) into `inbox/HANDOFF-codex-f.md:323`,
-  failing the public-hygiene gate. Fix is narrow (reword that line, re-run the gate) and is codex-f's
-  to make, per Rule 1. Full verdict posted to `.local/PAIR-CHANNEL.md`.
+  own last commit leaked a sibling lane's tool name into `inbox/HANDOFF-codex-f.md:323`, failing the
+  public-hygiene gate. Fix is narrow (reword that line, re-run the gate) and is codex-f's to make,
+  per Rule 1. Full verdict posted to `.local/PAIR-CHANNEL.md`.
 - **`codex-f/secrets-port-parked` is 7 ahead of `main`** — this is Task H below (the Rust secrets
   port), parked, not abandoned. Still needs the differential/mutation acceptance pass and independent
   audit named in that entry.
@@ -35,9 +35,9 @@ clean from both the main checkout and the worktree). The pair channel moved to `
   `C:\Users\Admin\zulip-agents\codex-f.zuliprc`, not the git-channel-based prompt in
   `ROLLOUT-WORKTREE-AND-COMMS.md` §3** — Mike ruled 2026-08-24 that the git channel files and their
   watchers are retired, no dual-write.
-- **The ODO plugin cache content-check FAILs today**, one file (`generic-git-root-basename.sh`,
-  installed `0.6.1` vs repo). Not this project's to fix — ODO's own repo is deliberately ahead of
-  origin pending its own held audit, so the cache legitimately can't match it yet. Reported, not
+- **The enforcement plugin's cache content-check FAILs today**, one file (`generic-git-root-basename.sh`,
+  installed `0.6.1` vs repo). Not this project's to fix — the owning lane's repo is deliberately ahead
+  of origin pending its own held audit, so the cache legitimately can't match it yet. Reported, not
   acted on.
 
 Everything below this point is the original 2026-08-22 backlog, left as written except where a line
