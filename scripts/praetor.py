@@ -158,6 +158,12 @@ def parse_args(argv):
                    help="Skip files larger than this many bytes (default: 3MB).")
     p.add_argument("--exclude", action="append", default=[],
                    help="Regex of relative paths to exclude (repeatable).")
+    p.add_argument("--semgrep-timeout", type=int, default=0,
+                   help="Overall seconds allowed for Semgrep (default: 900, or "
+                        "PRAETOR_SEMGREP_TIMEOUT). Raise it for a large tree: 900s is "
+                        "not enough for several thousand files and the engine then "
+                        "reports an error, which exits 3. A timeout can never "
+                        "produce a passing scan.")
     p.add_argument("--no-default-skips", action="store_true",
                    help="Do not skip build-output and dependency directories "
                         "(dist, build, out, target, vendor, node_modules, ...). "
@@ -570,6 +576,10 @@ def main(argv=None):
                 # letting the engine re-read the constant is what keeps the two
                 # components agreeing about scope under --no-default-skips.
                 skip_dirs=scan_skip_dirs,
+                # 0 means "not given"; the engine's own default (or the env var)
+                # then applies. Passing it explicitly would freeze the default at
+                # import time and defeat PRAETOR_SEMGREP_TIMEOUT.
+                **({"timeout": args.semgrep_timeout} if args.semgrep_timeout > 0 else {}),
             )
             all_findings.extend(res["findings"])
             engine_meta["sast"] = {"status": res["status"],

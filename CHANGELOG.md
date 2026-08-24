@@ -12,6 +12,38 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Fixed — the Semgrep timeout is now operator-controlled, not a hard-coded ceiling
+
+Measured 2026-08-23, pointed at a real 7,369-file target: Semgrep exceeded the
+hard-coded 900-second budget and the SAST engine returned `error` — twice, once
+in a four-engine run and once running alone. PRAETOR behaved correctly both
+times, returning exit 3 rather than a clean result; this was never a false
+clean. But **the only way to get any static analysis on that tree was to
+partition it by hand into twenty directories and scan each separately** — not
+something a CI caller can do. The failure mode of an unraisable ceiling is that
+SAST silently stops running on exactly the largest, most interesting
+codebases, and the operator has no lever to raise it.
+
+Added `--semgrep-timeout SECONDS` and kept the existing `PRAETOR_SEMGREP_TIMEOUT`
+environment variable as the lower-priority default. The flag is threaded
+**conditionally** — omitted from the call entirely unless given — so that not
+passing it leaves the engine's own default (and therefore the environment
+override) in charge; passing the argparse default unconditionally would have
+frozen the value at import time and silently defeated the env var on every run.
+
+⚠️ **Why this is safe in both directions, which is why it is a knob at all:** a
+timeout produces an engine `error`, and the existing exit-code floor already
+converts that to exit 3. There is no value of this setting that turns a
+timeout into a passing scan — raising it buys coverage, lowering it buys a
+faster failure, neither can manufacture a clean result. Proved by mutation:
+making the pass-through unconditional turns
+`test_without_the_flag_no_timeout_is_passed_at_all` red; blinding
+`engine_malfunctions()` to the `error` status turns
+`test_a_timeout_cannot_produce_a_passing_scan` red. Both restored, full suite
+green at 266 tests.
+
+The shipped default is unchanged at 900 seconds.
+
 ### Fixed — deployment code, build recipes and bare credential files are now read
 
 Found the same way as the two below: by running the scanner on a real deployment

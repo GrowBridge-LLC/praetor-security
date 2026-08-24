@@ -37,7 +37,25 @@ import core
 from core import Finding, Severity, Confidence, split_lines
 
 DEFAULT_REGISTRY_CONFIGS = ["p/owasp-top-ten", "p/security-audit"]
-_SEMGREP_TIMEOUT = 900  # seconds, overall
+#: Overall semgrep budget, in seconds.
+#:
+#: 🔴 THIS WAS A HARD-CODED CONSTANT WITH NO OPERATOR OVERRIDE, AND THAT IS A
+#: COVERAGE CEILING NOBODY COULD RAISE. Measured 2026-08-23 on a real 7,369-file
+#: target: semgrep exceeded 900s and the engine returned `error` twice -- once in
+#: a four-engine run and once running alone. PRAETOR correctly returned exit 3
+#: rather than a clean result, so it was never a false clean. But the only way to
+#: get any static analysis at all was to PARTITION the tree by hand and scan 20
+#: directories separately, which is not something a CI caller can do.
+#:
+#: ⇒ The failure mode of an unraisable ceiling is a silent absence of SAST on
+#: exactly the largest and most interesting codebases -- the ones most worth
+#: scanning. A budget is an operator decision, so it is now one.
+#:
+#: ⚠️ RAISING IT IS SAFE; LOWERING IT IS ALSO SAFE. A timeout produces an engine
+#: `error`, which the exit-code floor already turns into 3. There is no setting
+#: of this value that converts a timeout into a passing scan.
+_SEMGREP_TIMEOUT_DEFAULT = 900
+_SEMGREP_TIMEOUT = int(os.environ.get("PRAETOR_SEMGREP_TIMEOUT") or _SEMGREP_TIMEOUT_DEFAULT)
 
 #: Disables semgrep's own `.semgrepignore` handling, so the SCANNED TREE cannot
 #: decide what gets scanned. See the long note at the call site.
