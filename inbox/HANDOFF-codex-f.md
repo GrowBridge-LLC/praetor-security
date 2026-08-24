@@ -302,3 +302,26 @@ remains required before landing.
   4 STALE / 0 UNCLEAR classification alone. Do not start the separately described supply-chain scan;
   the close instruction says it requires an orchestrator because fetching package artifacts is itself
   unsafe for this scanner's never-execute invariant. Await a fresh acceptance-bearing assignment.
+
+### 2026-08-24 — Cluster A implementation delivered for independent audit
+
+**TARGET:** `scripts/core.py`, `scripts/praetor.py`, `scripts/report.py`, and
+`tests/test_invariant_never_executes_target.py`, committed as `0e3083f` on
+`codex-f/build` after merging `origin/main` at `4936b01`.
+
+**SCOPE:** retain NUL-bearing source-named text as an explicit observation through
+`ScanFile.contains_nul`, metadata, and text reporting; refuse symlinked direct targets
+and symlinked directory entries before any size/read operation; add behavioral coverage.
+Out of scope: supply-chain scanning, main, push, and wholesale backup merge.
+
+**ACCEPTANCE:** each symlink boundary was independently mutated and the named test
+`test_file_selection_never_follows_a_symlinked_file` went RED with exit 1, then was
+restored. Ordinary files and nested ordinary files remain selected. A NUL-bearing
+source is retained with `contains_nul=True` and reaches `report.render_text`, covered
+by the targeted test suite (`9 passed`). `bash tests/precommit.sh` returned exit 0:
+263 Python tests, 11 Rust tests, self-scan 13 active / 52 filtered, all gates passed.
+The portable ODO fast gate returned exit 0. Failure is any symlink traversal, lost NUL
+observation/report, targeted regression, or non-zero repository gate.
+
+**PERSISTENCE:** this handoff update and implementation are committed on
+`codex-f/build`; nothing was pushed. Claude must independently audit before landing.
