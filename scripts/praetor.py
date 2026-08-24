@@ -477,6 +477,27 @@ def main(argv=None):
     _log(args.quiet, f"  enumerated {len(scan_files)} text file(s)"
                      f" ({len(secret_files)} for secrets)")
 
+    # 🔴 --exclude MATCHING NOTHING IS INDISTINGUISHABLE FROM HAVING NOTHING TO
+    # EXCLUDE, AND THE ONLY VISIBLE SYMPTOM WAS A TIMEOUT UNDER THE WRONG NAME.
+    #
+    # Measured 2026-08-24: a pattern that never fires (a shell mangled it, a typo,
+    # a path-separator mismatch) produces the same silence as a pattern that
+    # correctly matched zero files because there was nothing to remove. One is
+    # ordinary; the other means every file the pattern was meant to skip got
+    # scanned anyway, on a tree that can be tens of thousands of files larger
+    # than the operator believes. This is that scope's mirror of the zero-files-
+    # read floor below: an --exclude that did nothing is a blind spot, not a
+    # clean result, and it stays silent otherwise.
+    if args.exclude and scope_stats.get("excluded_by_pattern", 0) == 0 and (
+            scope_stats.get("kept_code_files", 0) or scope_stats.get("skipped_code_files", 0)):
+        sys.stderr.write(
+            "praetor: WARNING -- --exclude was given %d pattern(s) but excluded 0 files.\n"
+            "  Either there was genuinely nothing to exclude, or the pattern never matched --\n"
+            "  a shell (Git Bash/MSYS path conversion is a known cause on Windows), a typo, or\n"
+            "  a path-separator mismatch can all silently turn --exclude into a no-op. Verify\n"
+            "  with the pattern against a real path before trusting the scan's scope.\n"
+            % len(args.exclude))
+
     # 🔴 ONE UNDECODABLE FILE USED TO BLIND AN ENTIRE ENGINE.
     #
     # `core.read_text` raises on an invalid start byte, and that is the correct

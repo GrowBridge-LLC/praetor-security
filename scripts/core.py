@@ -661,6 +661,7 @@ def walk_files(
         stats.setdefault("skipped_dirs", {})
         stats.setdefault("skipped_code_files", 0)
         stats.setdefault("kept_code_files", 0)
+        stats.setdefault("excluded_by_pattern", 0)
     excludes = [re.compile(p) for p in (extra_excludes or [])]
     target = os.path.abspath(target)
     out: list = []
@@ -724,6 +725,8 @@ def walk_files(
             ap = os.path.join(root, fn)
             rel = os.path.relpath(ap, target).replace("\\", "/")
             if any(rx.search(rel) for rx in excludes):
+                if stats is not None:
+                    stats["excluded_by_pattern"] += 1
                 continue
             if not scannable(fn):
                 continue
