@@ -265,3 +265,63 @@ tree, persistence is not yet met. Nothing pushed. The portable skill gate return
 `CANNOT RUN: not inside a git repository` because it rejects this managed linked worktree's `.git`
 file; the prescribed repository gate above is the authorised worktree path. Independent audit
 remains required before landing.
+
+### 2026-08-22 — Task H independently CLEAR; remote landing still pending
+
+- `claude-f` audited `7ab13ab`, `d5943fb`, and `3e1ea71` from BLOCK and issued **CLEAR**. The audit
+  independently reproduced baseline differential exit 0, an armed Rust-rule divergence that emitted
+  both the contract failure and `Python and Rust secrets engines disagree WITH EACH OTHER` at exit 1,
+  and restored exit 0. It separately armed the rule-surface guard by proving the Python provider
+  population moved before trusting its exit 1, then restored the provider population and exit 0.
+- Dependency/invariant audit also cleared: exact base64 0.23.1 with defaults disabled and `std` only,
+  no process-spawn surface in the detector, and 11 Rust tests passed with none ignored. This supersedes
+  the preceding section's statement that independent audit remains required; the earlier paragraph is
+  retained as the state at its commit boundary.
+- Landing state is split and must not be collapsed into “pushed.” Local main is `0d24b27` and contains
+  merge commit `Merge the Rust secrets port from codex-f/build`. The live command
+  `git -C C:\projects\PRAETOR ls-remote origin refs/heads/main` still returned `fa8b56e` for the remote
+  branch after the authority stated an intent to push. The same mismatch was posted to the pair channel.
+- The builder must not perform that remote write. Next action is to keep exactly one watcher armed and
+  wait for `claude-f` to confirm the authority-owned push or assign the next build task. The builder
+  worktree was clean before this handoff-only update; no code mutation is pending and nothing was pushed.
+
+### 2026-08-22 — Task H delivered; close state and channel migration
+
+- Re-derived after the close artifact: local `main` and the live remote both resolve to `83a45e9`, and
+  `git -C C:\projects\PRAETOR status --short --branch` reports `main...origin/main` with no ahead/behind
+  delta. Task H is delivered; this builder branch remains clean and is not being rebased or pushed.
+- Pair traffic moved from tracked `inbox/PAIR-CHANNEL.md` to the ignored absolute channel
+  `C:\projects\PRAETOR\.local\PAIR-CHANNEL.md`. The tracked file is now a pointer explaining the
+  security rationale. Current main `CLAUDE.md` names the absolute path and requires the shared appender;
+  the old tracked-path watcher must not be reused.
+- Exactly one watcher is now armed against `/c/projects/PRAETOR/.local/PAIR-CHANNEL.md` with identity
+  `codex-f`; its initial output reported 1463 lines and the required session identity. No watcher is
+  armed against the obsolete tracked pointer.
+- The close channel says the next work is a properly assigned, independently audited proposal for
+  backup-recovery Cluster A (NUL handling and symlink refusal). Do not start it from the old 13 REAL /
+  4 STALE / 0 UNCLEAR classification alone. Do not start the separately described supply-chain scan;
+  the close instruction says it requires an orchestrator because fetching package artifacts is itself
+  unsafe for this scanner's never-execute invariant. Await a fresh acceptance-bearing assignment.
+
+### 2026-08-24 — Cluster A implementation delivered for independent audit
+
+**TARGET:** `scripts/core.py`, `scripts/praetor.py`, `scripts/report.py`, and
+`tests/test_invariant_never_executes_target.py`, committed as `0e3083f` on
+`codex-f/build` after merging `origin/main` at `4936b01`.
+
+**SCOPE:** retain NUL-bearing source-named text as an explicit observation through
+`ScanFile.contains_nul`, metadata, and text reporting; refuse symlinked direct targets
+and symlinked directory entries before any size/read operation; add behavioral coverage.
+Out of scope: supply-chain scanning, main, push, and wholesale backup merge.
+
+**ACCEPTANCE:** each symlink boundary was independently mutated and the named test
+`test_file_selection_never_follows_a_symlinked_file` went RED with exit 1, then was
+restored. Ordinary files and nested ordinary files remain selected. A NUL-bearing
+source is retained with `contains_nul=True` and reaches `report.render_text`, covered
+by the targeted test suite (`9 passed`). `bash tests/precommit.sh` returned exit 0:
+263 Python tests, 11 Rust tests, self-scan 13 active / 52 filtered, all gates passed.
+The portable auxiliary fast gate returned exit 0. Failure is any symlink traversal, lost NUL
+observation/report, targeted regression, or non-zero repository gate.
+
+**PERSISTENCE:** this handoff update and implementation are committed on
+`codex-f/build`; nothing was pushed. Claude must independently audit before landing.

@@ -16,9 +16,11 @@ flag stops reaching the command line, not merely when a comment changes.
 Every new SCA backend widens this surface. Add a test here when you add one.
 """
 
+import os
 import subprocess
 
 import engine_sca
+import report
 
 
 class _FakeCompleted:
@@ -291,3 +293,34 @@ def test_the_target_is_passed_as_data_never_as_a_program(tmp_path, monkeypatch):
                 f"{mode}: argv[0]={argv[0]!r} lies inside the scanned tree -- that "
                 f"is executing the target, not reading it"
             )
+
+
+def test_file_selection_never_follows_a_symlinked_file(tmp_path, monkeypatch):
+    source = tmp_path / "linked.py"
+    source.write_text("TOKEN = 'host data'\n", encoding="utf-8")
+    real_islink = _core.os.path.islink
+    source_abs = os.path.abspath(source)
+    monkeypatch.setattr(
+        _core.os.path, "islink",
+        lambda path: os.path.abspath(path) == source_abs or real_islink(path),
+    )
+    assert _core.walk_files(str(source)) == []
+    assert _core.walk_files(str(tmp_path)) == []
+
+
+def test_file_selection_keeps_ordinary_files_and_nul_observation_reaches_report(tmp_path):
+    source = tmp_path / "ordinary.py"
+    source.write_bytes(b"TOKEN = 1\x00\n")
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "other.py").write_text("value = 2\n", encoding="utf-8")
+    selected = _core.walk_files(str(tmp_path))
+    assert {item.relpath for item in selected} == {"ordinary.py", "nested/other.py"}
+    assert next(item for item in selected if item.relpath == "ordinary.py").contains_nul
+    rendered = report.render_text(
+        {"active": [], "filtered": [], "summary": {}, "total_active": 0,
+         "total_filtered": 0},
+        {"target": "t", "timestamp": "now", "version": "x", "file_count": 2,
+         "nul_text_file_count": 1, "engines": {}},
+    )
+    assert "NUL-bearing text files: 1" in rendered
