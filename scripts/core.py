@@ -531,30 +531,37 @@ TEXT_NAMES = GIT_HOOK_NAMES | {
 DEFAULT_MAX_BYTES = 3_000_000  # 3 MB: skip huge minified bundles / data blobs
 
 
-def is_probably_binary(path: str, sniff: int = 4096) -> bool:
+def _binary_and_nul_in_sniff(path: str, sniff: int = 4096) -> tuple[bool, bool]:
     """
     Decide binary-vs-text on DECODED code points, not raw byte values. Valid
     multibyte UTF-8 (including invisible/zero-width/Unicode-Tag characters, which
     are exactly what the AI-security engine hunts for) is text -- an earlier
     raw-byte heuristic wrongly flagged a Tag-smuggled markdown file as binary
-    because its UTF-8 uses high bytes. Binary is signalled by NUL bytes or a high
-    ratio of C0/C1 control characters / decode failures.
+    because its UTF-8 uses high bytes. NUL is retained as an observation; binary
+    is signalled by a high ratio of the other control characters / decode failures.
     """
     try:
         with open(path, "rb") as fh:
             chunk = fh.read(sniff)
     except OSError:
-        return True
+        return True, False
     if not chunk:
-        return False
-    if b"\x00" in chunk:
-        return True
+        return False, False
     text = chunk.decode("utf-8", errors="replace")
     ctrl = sum(
         1 for c in text
-        if (ord(c) < 0x20 and c not in "\t\n\r\f") or ord(c) == 0x7F or ord(c) == 0xFFFD
+        if ((ord(c) < 0x20 and c not in "\x00\t\n\r\f") or
+            0x7F <= ord(c) <= 0x9F or ord(c) == 0xFFFD)
     )
-    return ctrl / max(1, len(text)) > 0.30
+    return ctrl / max(1, len(text)) > 0.30, b"\x00" in chunk
+
+
+def is_probably_binary(path: str, sniff: int = 4096) -> bool:
+    return _binary_and_nul_in_sniff(path, sniff)[0]
+
+
+def has_nul_in_sniff(path: str, sniff: int = 4096) -> bool:
+    return _binary_and_nul_in_sniff(path, sniff)[1]
 
 
 def scannable(name: str) -> bool:
@@ -628,6 +635,7 @@ class ScanFile:
     abspath: str
     relpath: str
     size: int
+    contains_nul: bool = False
 
 
 def walk_files(
@@ -665,6 +673,9 @@ def walk_files(
     target = os.path.abspath(target)
     out: list = []
 
+    if os.path.islink(target):
+        return out
+
     if os.path.isfile(target):
         base = os.path.dirname(target)
         rel = os.path.basename(target)
@@ -672,8 +683,9 @@ def walk_files(
             size = os.path.getsize(target)
         except OSError:
             return out
-        if scannable(rel) and size <= max_bytes and not is_probably_binary(target):
-            out.append(ScanFile(target, rel, size))
+        binary, has_nul = _binary_and_nul_in_sniff(target)
+        if scannable(rel) and size <= max_bytes and not binary:
+            out.append(ScanFile(target, rel, size, has_nul))
             if stats is not None and is_code(rel):
                 stats["kept_code_files"] += 1
         return out
@@ -710,6 +722,8 @@ def walk_files(
         for fn in files:
             ap = os.path.join(root, fn)
             rel = os.path.relpath(ap, target).replace("\\", "/")
+            if os.path.islink(ap):
+                continue
             if any(rx.search(rel) for rx in excludes):
                 continue
             if not scannable(fn):
@@ -720,9 +734,10 @@ def walk_files(
                 continue
             if size > max_bytes:
                 continue
-            if is_probably_binary(ap):
+            binary, has_nul = _binary_and_nul_in_sniff(ap)
+            if binary:
                 continue
-            out.append(ScanFile(ap, rel, size))
+            out.append(ScanFile(ap, rel, size, has_nul))
             if stats is not None and is_code(fn):
                 stats["kept_code_files"] += 1
     return out

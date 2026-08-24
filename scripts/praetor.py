@@ -468,6 +468,9 @@ def main(argv=None):
                         max_bytes=args.max_file_size, extra_excludes=args.exclude)
         if "secrets" in engines else []
     )
+    nul_text_files = {
+        sf.abspath for sf in (scan_files + secret_files) if sf.contains_nul
+    }
     _log(args.quiet, f"  enumerated {len(scan_files)} text file(s)"
                      f" ({len(secret_files)} for secrets)")
 
@@ -659,6 +662,7 @@ def main(argv=None):
         # "the engine was not asked" are different facts, and reporting 0 for the
         # second is the same one-word-two-facts defect as `unavailable` was.
         "secret_file_count": (len(secret_files) if "secrets" in engines else None),
+        "nul_text_file_count": len(nul_text_files),
         "engines": engine_meta,
         "min_severity": args.min_severity,
     }
