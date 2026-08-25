@@ -22,21 +22,27 @@ re-verified by running the actual checks rather than trusting the prior text:**
   `test_a_semgrep_that_rejects_the_flag_does_not_break_every_scan`'s own docstring). Only the
   `n_errors` half was taken; the rest of that backup is NOT safe to apply wholesale.
 
-**Genuinely still open, from the same recovery backup (`wip/task-d-backup-2026-08-18`), deliberately
-not touched today because both need real design reconciliation, not extraction:**
+## ↩️ REFRESHED 2026-08-24 (later evening) — both remaining items resolved
 
-- `SEMGREP_DEFAULT_IGNORE_DIRS` (the backup's Semgrep-measured default-ignore set) vs. `main`'s
-  current caller-supplied `skip_dirs` parameter (which exists to fix a *different*, already-shipped
-  bug: the `--no-default-skips` desync between PRAETOR's walker and Semgrep's own exclusions). The
-  backup predates the `skip_dirs` fix and would regress it if applied as-is; reconciling the two
-  needs someone to decide whether Semgrep's default-ignore restoration should be keyed off PRAETOR's
-  walker policy or off Semgrep's own measured defaults, not just picked.
-- `scripts/engine_sast.py` currently forwards PRAETOR's `--exclude` (documented as REGEX) straight
-  to Semgrep's own `--exclude` flag (which is GLOB syntax) — a real, live language mismatch, same
-  shape as the already-fixed `.gitignore`/`.semgrepignore` scope-disagreement bugs above it in the
-  same file. Not fixed here because it needs verification against a live Semgrep
-  (`tests/semgrep_live_check.py` exists for exactly this) before trusting a behavioural claim about
-  it, not because it's low-value.
+- **`--exclude` regex/glob mismatch — FIXED, `bbce4a5`.** `engine_sast.py` no longer forwards
+  PRAETOR's regex `--exclude` patterns to Semgrep's glob-only `--exclude` flag. Instead it lets
+  Semgrep scan normally and post-filters Semgrep's own results with the identical regex predicate
+  `core.walk_files()` uses, against the identical relative-path form already computed for every
+  finding. This sidesteps needing a live-Semgrep behavioural check (`tests/semgrep_live_check.py`)
+  at all: the fix never asks Semgrep to interpret a regex as a glob, so there is no Semgrep-version-
+  dependent claim to verify. Mutation-verified, full suite green, all 10 precommit gates green. See
+  `AGENTS.md`'s CR-1/CR-2 bullet.
+- **`SEMGREP_DEFAULT_IGNORE_DIRS` vs. `skip_dirs` — DECIDED, not built.** Considered and rejected:
+  restoring Semgrep's own narrower measured default-ignore set (ten directories) as a second
+  authority would re-desync SAST from the walker, the exact regression
+  `tests/test_scope_floor_no_code_examined.py::test_the_sast_engine_follows_the_walkers_skip_set_not_the_constant`
+  exists to pin. Current `main` (SAST follows the walker's own `skip_dirs`, not a Semgrep-native
+  constant) is correct as designed and stays. See `AGENTS.md`'s "Designed but not built" section for
+  the full rationale, in case someone wants Semgrep-native coverage back via a different route
+  (narrowing `core.DEFAULT_SKIP_DIRS` itself, not adding a second list).
+
+**Genuinely still open, from the same recovery backup (`wip/task-d-backup-2026-08-18`):** none —
+both items above are now resolved, one by code, one by decision.
 
 
 Written 2026-08-22, before the rollout's first step, because that rollout is an interruption and

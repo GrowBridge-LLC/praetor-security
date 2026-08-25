@@ -215,8 +215,21 @@ authorized-or-open design decisions with no code behind them yet:
 - Git-tracked file selection for the wide-walk engines — measured 56× fewer
   files scanned on a real repository, same coverage, and it closes the
   directory-name-evasion hole a hardcoded skip-list can't.
-- Restoring Semgrep's real default-ignore set — measured at ten directories,
-  not the thirty currently hardcoded in this repo.
+- **DECIDED, NOT BUILT: "restore Semgrep's own measured default-ignore set
+  (ten directories) instead of PRAETOR's broader `DEFAULT_SKIP_DIRS`" was
+  considered and rejected 2026-08-24.** It reads as a coverage win in
+  isolation, but it conflicts with an already-shipped, tested fix: SAST's
+  `--exclude` forwarding deliberately follows the WALKER's own skip set, not
+  a constant, specifically so `--no-default-skips` can widen SAST's scope
+  along with the walker's —
+  `tests/test_scope_floor_no_code_examined.py::test_the_sast_engine_follows_
+  the_walkers_skip_set_not_the_constant` pins this as a measured regression
+  from the first version of that fix. Keying SAST's exclusions off Semgrep's
+  own list instead would re-desync the two, the same failure class as before,
+  just with a different second authority. If someone wants Semgrep-native
+  coverage back, the fix belongs in `core.DEFAULT_SKIP_DIRS` itself (make
+  PRAETOR's walker policy narrower), not in a second list SAST reads instead
+  of the walker's.
 
 ## Where working notes go, and what must never ship
 
