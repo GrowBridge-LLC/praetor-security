@@ -88,6 +88,7 @@ _REQUIRED_SECRET_RULES = {
     "twilio-account-sid-authtoken", "sendgrid-key", "npm-token", "jwt",
     "private-key-pem", "gcp-service-account-key", "db-connection-string-password",
     "hardcoded-secret-assignment", "base64-wrapped-secret", "high-entropy-string",
+    "secrets-long-line-skip",
 }
 _REQUIRED_SECRET_NEGATIVE_PATHS = {
     "config/placeholder.py", "config/revision.py", "package-lock.json",
