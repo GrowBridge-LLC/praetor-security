@@ -162,9 +162,10 @@ EXPECT_FILTERED=56
 # catches that loudly. A coverage percentage, a lint sweep or a duplicate-code
 # check absorbs it silently and still reports a number.
 SS="$(py -3.14 scripts/praetor.py . --no-registry --exclude '^\.local/' --exclude '^\.claude/' --exclude '^\.codex/PRAETOR-codex/' 2>&1)"
+SS_RC=$?
 GOT_ACTIVE="$(printf '%s' "$SS" | grep -oE 'Findings \(active\): [0-9]+' | grep -oE '[0-9]+$')"
 GOT_FILTERED="$(printf '%s' "$SS" | grep -oE 'Filtered \(likely FP / low-signal, shown separately\): [0-9]+' | grep -oE '[0-9]+$')"
-if [ "$GOT_ACTIVE" = "$EXPECT_ACTIVE" ] && [ "$GOT_FILTERED" = "$EXPECT_FILTERED" ]; then
+if [ "$SS_RC" -eq 0 ] && [ "$GOT_ACTIVE" = "$EXPECT_ACTIVE" ] && [ "$GOT_FILTERED" = "$EXPECT_FILTERED" ]; then
   pass "self-scan unchanged (${GOT_ACTIVE} active / ${GOT_FILTERED} filtered)"
 else
   fail "self-scan DRIFTED: got ${GOT_ACTIVE:-?} active / ${GOT_FILTERED:-?} filtered, expected ${EXPECT_ACTIVE} / ${EXPECT_FILTERED}"
