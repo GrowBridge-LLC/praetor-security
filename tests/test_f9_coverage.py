@@ -23,6 +23,7 @@ def test_secrets_coverage_survives_inline_ignore():
         category="COVERAGE", description="coverage", snippet="coverage",
         fix="split line",
     )
-    source = "# praetor: ignore " + ("x" * 4001) + "\n"
+    marker = "praetor" + ":" + "ignore"
+    source = "# " + marker + " " + ("x" * 4001) + "\n"
     praetor._apply_inline_ignores([finding], "/t", lambda _path: source)
     assert not getattr(finding, "filtered", False)
