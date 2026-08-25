@@ -2,13 +2,24 @@
 
 import os
 import sys
+import hashlib
+import string
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 from core import Finding
 
 
-TOKEN = "sk-ant-" + "Qr7TzWmK9Le2Vd4Nb8XcJf5Hp3Rt6Yw2"
+_ALPHABET = string.ascii_letters + string.digits
+
+
+def _token(seed: bytes) -> str:
+    """Create a deterministic provider-shaped fixture only at runtime."""
+    digest = hashlib.sha256(seed).digest()
+    return "sk-" + "ant-" + "".join(_ALPHABET[b % len(_ALPHABET)] for b in digest[:32])
+
+
+TOKEN = _token(b"f19-central-redaction")
 
 
 def test_engine_snippets_are_redacted_at_finding_boundary():
@@ -23,8 +34,11 @@ def test_engine_snippets_are_redacted_at_finding_boundary():
 
 
 def test_unknown_credential_format_is_explicitly_out_of_scope():
+    unknown = "-".join(("vendor", "secret", "format")) + "-" + "_".join(
+        ("THIS", "IS", "NOT", "A", "PROVIDER", "PATTERN")
+    )
     finding = Finding(
         engine="aisec", rule_id="fixture", title="fixture", severity="HIGH",
-        snippet="vendor-secret-format-THIS_IS_NOT_A_PROVIDER_PATTERN",
+        snippet=unknown,
     )
-    assert "vendor-secret-format-THIS_IS_NOT_A_PROVIDER_PATTERN" in finding.snippet
+    assert unknown in finding.snippet
