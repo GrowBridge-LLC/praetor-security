@@ -104,7 +104,9 @@ fi
 # If false positives fall while 'needs review' rises, suppression is eating
 # real findings -- so BOTH numbers are pinned, and a change (either way) stops
 # the commit for a human to look, never silently.
-EXPECT_ACTIVE=13
+# F10 tranche 3 deliberately adds two active findings from the reach-proven
+# TSV corpus: long-line coverage and the path-field EXFIL case.
+EXPECT_ACTIVE=15
 # 2026-08-12: 45 -> 53, deliberately, and NOT because false positives improved.
 # The two causes were measured separately by reverting each change on its own:
 #   +3  the dedup fix stopped DISCARDING findings. A filtered finding could win

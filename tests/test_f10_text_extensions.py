@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 import core
 import engine_aisec
+import engine_secrets
 
 
 def test_f10_extensions_are_reached_by_walker_and_engine(tmp_path):
@@ -28,3 +29,13 @@ def test_f10_extensions_are_reached_by_walker_and_engine(tmp_path):
     )
     reached = {os.path.splitext(f.file)[1] for f in findings if f.category == "COVERAGE"}
     assert reached == set(suffixes)
+
+
+def test_f10_tsv_is_reached_and_exercises_both_text_engines(tmp_path):
+    target = tmp_path / "fixture.tsv"
+    target.write_text("x" * 4201 + "\n", encoding="utf-8")
+    files = core.walk_files(str(tmp_path))
+    assert [f.relpath for f in files] == ["fixture.tsv"]
+    contents = lambda path: open(path, encoding="utf-8").read()
+    secrets = engine_secrets.scan(files, contents)
+    assert any(f.rule_id == "secrets-long-line-skip" for f in secrets)
