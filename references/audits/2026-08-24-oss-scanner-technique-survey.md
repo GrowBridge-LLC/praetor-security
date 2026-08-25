@@ -60,6 +60,20 @@ code in the change.** Its author has just been thinking about the defect class, 
 feels like immunity and is not. This repository's own CLAUDE.md already says so under
 "a fix is unaudited code"; this document is now a second instance of it.
 
+**Third review round — and one paragraph took all three.** The baseline-fingerprint
+design was corrected in round 0, round 1 and round 2, each time by fixing exactly the
+collision the reviewer had demonstrated, and each time leaving the class open. Round 3
+showed that the round-2 fix (a byte span or match ordinal) is unstable across edits:
+delete a baselined duplicate and the next identical occurrence inherits its position,
+then is suppressed unreviewed. **The correction is no longer a fourth identity scheme.**
+§4 now inverts the default instead — when a baseline entry cannot be matched to exactly
+one finding, the finding is KEPT — which is the rule this project already applies
+everywhere else and which terminates the sequence rather than extending it. ⇒ **The
+sharper lesson, and the reason the table in §4 shows all four rounds rather than just
+the answer: three consecutive fixes that each look correct in isolation are the
+signature of a wrong problem, not of a hard one.** The tell was available from round 1
+and I missed it twice.
+
 **Citations below point to mutable `main`/`master` branches** rather than pinned
 commits or release tags (CodeRabbit flagged this too, correctly, as a lower-severity
 nitpick): a later upstream change could shift what a link shows without this
@@ -238,20 +252,44 @@ silently dropping only *exact* re-matches on later scans, with an `audit` comman
 review/relabel. Nothing here weakens the "unproven ⇒ keep" default for anything not
 already in the baseline.
 
-**🔴 CORRECTED 2026-08-25, twice, both caught in review: the fingerprint above must
-NOT be `file + rule id + hash of matched text` alone, and line number is not
-sufficient to fix it either.** `file + rule id + hash` is a SET identity: the same
-secret value appearing twice in one file under the same rule collapses to a single
-baseline entry, so a genuinely new second occurrence silently disappears —
-exactly the false-clean shape this whole document argues against elsewhere. Adding
-a bare line number narrows but does not close the gap: two identical findings on
-the *same* line (`TOKEN="x"; OTHER="x"` matching the same rule twice) still
-collide. The fingerprint needs a byte/column span or a deterministic
-match-position ordinal within the file, not merely a line number, to guarantee
-two distinct occurrences never share an identity. Any implementation of this idea
-needs two regression tests: two copies of one credential on separate lines, and
-two copies on the *same* line — baseline one occurrence in each case, confirm the
-other still reports.
+**🔴 CORRECTED 2026-08-25 — three times, in three consecutive review rounds, on this
+one paragraph. The sequence is the finding; read it before the conclusion.**
+
+| Round | Proposed identity | How it fails |
+|---|---|---|
+| 0 | `file + rule id + hash of matched text` | A **set** identity. The same secret twice in one file collapses to one entry, so the second occurrence silently disappears. |
+| 1 | …`+ line number` | Two identical findings on the **same line** (`TOKEN="x"; OTHER="x"`) still collide. |
+| 2 | …`+ byte/column span or match ordinal` | **Position is not stable across revisions.** Delete a baselined duplicate and the *next* identical occurrence inherits its span or ordinal, and is suppressed without ever having been reviewed. Insert a line above it and the original re-reports as new. |
+
+⇒ **Each round fixed the case the previous reviewer demonstrated and missed the
+class.** I wrote rounds 1 and 2 myself, immediately after reading the finding each
+time, while specifically thinking about this exact defect. That did not help. This
+repository already records the shape twice — *a fix is unaudited code*, and *an
+enumeration cannot be completed by enumerating* — and I reproduced it anyway, in a
+document arguing for care.
+
+🔴 **So the correction is not a fourth identity scheme. Constructing a positional
+identity that survives arbitrary edits is the wrong problem, and any answer to it
+would be round 3 of the same mistake.** The terminating move is to invert the
+default, which is this project's own governing rule and was available from the
+start:
+
+> **When a baseline entry cannot be matched to exactly one current finding,
+> unambiguously, KEEP the finding.**
+
+Ambiguity resolves toward reporting, never toward suppression. A scheme that cannot
+decide is not permitted to guess — it reports, and a human relabels. That makes the
+identity scheme's precision an efficiency question (how much noise a reviewer
+re-triages) rather than a correctness one, and **efficiency failures are visible
+while suppression failures are not.** Concretely: match baseline entries to
+findings one-to-one on stable surrounding context, and if the mapping is
+ambiguous in either direction — two candidates for one entry, or none — report.
+
+Regression tests any implementation needs, and note that the first two were each
+believed sufficient at the time: two copies of one credential on separate lines;
+two copies on the **same** line; a baselined duplicate **deleted**, asserting the
+survivor is still reported rather than inheriting the entry; and content
+**inserted above** a baselined occurrence, asserting it is not re-reported as new.
 
 **🔴 A second gap, not present in the original text at all: who is trusted to write
 the baseline matters as much as what it matches.** If `.praetor-baseline.json`
