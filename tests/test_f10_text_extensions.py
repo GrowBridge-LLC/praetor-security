@@ -18,7 +18,7 @@ import engine_secrets
 
 def test_f10_extensions_are_reached_by_walker_and_engine(tmp_path):
     payload = "x" * 6001 + "\n"
-    suffixes = (".csv", ".log", ".out", ".ndjson", ".har")
+    suffixes = (".csv", ".log", ".out", ".ndjson", ".jsonl", ".har")
     for suffix in suffixes:
         (tmp_path / ("fixture" + suffix)).write_text(payload, encoding="utf-8")
 

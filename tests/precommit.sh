@@ -104,9 +104,11 @@ fi
 # If false positives fall while 'needs review' rises, suppression is eating
 # real findings -- so BOTH numbers are pinned, and a change (either way) stops
 # the commit for a human to look, never silently.
-# F10 tranche 3 deliberately adds two active findings from the reach-proven
-# TSV corpus: long-line coverage and the path-field EXFIL case.
-EXPECT_ACTIVE=15
+# F10 deliberately adds two active findings from TSV and six active JSONL
+# findings; the five JSONL identities are duplicated across claims/records,
+# yielding ten raw instances, with four claim-file instances filtered as
+# documentation phrasing. The measured pin is 21 active / 56 filtered.
+EXPECT_ACTIVE=21
 # 2026-08-12: 45 -> 53, deliberately, and NOT because false positives improved.
 # The two causes were measured separately by reverting each change on its own:
 #   +3  the dedup fix stopped DISCARDING findings. A filtered finding could win
@@ -124,7 +126,7 @@ EXPECT_ACTIVE=15
 # comment. Reintroducing only that unsafe Markdown mapping returned exactly
 # 12 active / 53 filtered (one finding moved back); file-type-aware syntax keeps
 # the agent-facing heading active. The regression baseline was NOT regenerated.
-EXPECT_FILTERED=52
+EXPECT_FILTERED=56
 # 🔴 SCOPE DECISION, stated next to the code because it is one.
 # The self-scan pin must measure what PRAETOR SHIPS. Gate 5 already defines the
 # shipping set as tracked + untracked-but-not-ignored; this scan walks the tree

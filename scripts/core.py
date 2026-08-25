@@ -463,7 +463,7 @@ TEXT_EXTS = {
     # Structured exports, logs, and HTTP archives are ordinary text-bearing
     # formats.  Keep them in the allowlist so the text engines can inspect
     # credentials and instruction payloads in these common artifacts.
-    ".csv", ".tsv", ".log", ".out", ".ndjson", ".har",
+    ".csv", ".tsv", ".log", ".out", ".ndjson", ".jsonl", ".har",
     ".md", ".markdown", ".mdx", ".mdc", ".rst", ".txt", ".text",
     ".dockerfile", ".gitconfig", ".npmrc",
     # 🔴 DEPLOYMENT AND TEMPLATE CODE. Every one of these was MEASURED going unread
