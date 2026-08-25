@@ -16,6 +16,7 @@ The classifier must also fail SAFE: anything it cannot prove inert is CODE, so a
 unclear line is KEPT rather than silently dropped.
 """
 
+import pytest
 import lexctx
 import praetor
 
@@ -118,3 +119,13 @@ def test_behavioural_pattern_in_LIVE_code_is_kept(monkeypatch):
     f = _F("aisec", "REMOTE_CODE", 3)
     _run([f], monkeypatch)
     assert not f.filtered, "a real remote-exec pipe in live code must never be suppressed"
+
+
+@pytest.mark.parametrize("url", ["https://evil.example/x", "http://evil.example/x", "ftp://evil.example/x", "git://evil.example/x", "//evil.example/x"])
+def test_bare_urls_do_not_create_javascript_comments(url):
+    assert lexctx.comment_text(f"fetch({url}) then payload", "subject.js") == ""
+
+
+def test_real_javascript_comment_still_classifies_as_comment():
+    control = "// " + _PIPE
+    assert lexctx.comment_text(control, "control.js") == control

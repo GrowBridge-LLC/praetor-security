@@ -36,6 +36,8 @@ in tools/classify_baseline.py and does not come here.
 
 from __future__ import annotations
 
+import re
+
 # The ONLY import, and it is deliberate: `split_lines` is the toolchain's single
 # definition of a line. This module stays pure -- text in, label out, no I/O and
 # no policy -- and importing a pure helper does not change that.
@@ -130,9 +132,28 @@ def comment_text(line: str, file_identity: str) -> str:
     bare = _strip_inline_strings(line)
     first = None
     for intro in comment_introducers(file_identity):
-        idx = bare.find(intro)
-        if idx != -1 and (first is None or idx < first):
-            first = idx
+        search_from = 0
+        while True:
+            idx = bare.find(intro, search_from)
+            if idx == -1:
+                break
+            # In C-like source, the two slashes in a URL are not a comment
+            # introducer.  Keep ordinary ``// note`` comments intact, while
+            # recognising scheme-position URLs and protocol-relative hosts.
+            if intro == "//":
+                before = bare[:idx]
+                after = bare[idx + 2:]
+                scheme_url = before.endswith(":")
+                protocol_relative = (
+                    (not before.strip() or before.rstrip().endswith(("(", "=", ",", "[", "{")))
+                    and bool(re.match(r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/|\s|$)", after))
+                )
+                if scheme_url or protocol_relative:
+                    search_from = idx + 2
+                    continue
+            if first is None or idx < first:
+                first = idx
+            break
     return "" if first is None else bare[first:]
 
 
@@ -183,13 +204,10 @@ def classify_lines(text: str, file_identity: str) -> list:
             in_triple, delim = True, opened
             continue
 
-        if any(stripped.startswith(p) for p in comment_prefixes):
-            labels.append(COMMENT)
-            continue
-
-        # Trailing comment: only if the marker survives string-stripping.
-        bare = _strip_inline_strings(raw)
-        if any(p in bare for p in comment_prefixes):
+        # Use the same scheme-aware scan as inline suppression markers.  This
+        # keeps URL slashes out of the comment classification path while
+        # preserving genuine whole-line and trailing comments.
+        if comment_text(raw, file_identity):
             labels.append(COMMENT)
             continue
 

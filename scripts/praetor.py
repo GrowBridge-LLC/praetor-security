@@ -54,6 +54,7 @@ import argparse
 import os
 import re
 import sys
+import tempfile
 
 # make sibling engine modules importable no matter the CWD
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -69,6 +70,24 @@ import interpret                # noqa: E402
 import lexctx                   # noqa: E402
 import taint                    # noqa: E402
 import report                   # noqa: E402
+
+
+def _atomic_write_text(path: str, content: str) -> None:
+    """Publish a complete report without exposing a partially-written file."""
+    directory = os.path.dirname(path) or "."
+    fd, temp_path = tempfile.mkstemp(prefix=".praetor-report-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temp_path, path)
+    except BaseException:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
+        raise
 
 VERSION = "1.0.0"
 def _find_bundled_rules():
@@ -704,10 +723,11 @@ def main(argv=None):
 
     if args.out:
         os.makedirs(args.out, exist_ok=True)
-        with open(os.path.join(args.out, "praetor-report.txt"), "w", encoding="utf-8") as fh:
-            fh.write(text)
-        with open(os.path.join(args.out, "praetor-report.json"), "w", encoding="utf-8") as fh:
-            fh.write(js)
+        # Concurrent scans sharing one --out use last-writer-wins semantics;
+        # each artifact is nevertheless published atomically, so readers see
+        # only a complete prior or complete new report, never a torn write.
+        _atomic_write_text(os.path.join(args.out, "praetor-report.txt"), text)
+        _atomic_write_text(os.path.join(args.out, "praetor-report.json"), js)
         _log(args.quiet, f"  reports written to {args.out}")
 
     if args.format in ("text", "both"):
