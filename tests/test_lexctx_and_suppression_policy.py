@@ -41,7 +41,7 @@ def test_whole_line_and_trailing_comments_are_comments():
     labels = lexctx.classify_lines(src, "sample.py")
     assert labels[0] == lexctx.CODE
     assert labels[1] == lexctx.COMMENT
-    assert labels[2] == lexctx.COMMENT
+    assert labels[2] == lexctx.CODE
 
 
 def test_triple_quoted_block_is_docstring_throughout():
@@ -129,3 +129,37 @@ def test_bare_urls_do_not_create_javascript_comments(url):
 def test_real_javascript_comment_still_classifies_as_comment():
     control = "// " + _PIPE
     assert lexctx.comment_text(control, "control.js") == control
+
+
+def test_trailing_comment_does_not_suppress_live_javascript():
+    src = 'exec("' + _PIPE + '"); // helper\n'
+    assert lexctx.context_of(src, 1, "subject.js") == lexctx.CODE
+
+
+def test_trailing_comment_does_not_suppress_live_shell():
+    src = 'run ' + _PIPE + ' # helper\n'
+    assert lexctx.context_of(src, 1, "subject.sh") == lexctx.CODE
+
+
+def test_quote_like_triple_inside_string_is_not_a_docstring():
+    src = 'SEP = "\'\'\'"\n' + 'run ' + _PIPE + '\n'
+    assert lexctx.context_of(src, 2, "subject.py") == lexctx.CODE
+    assert lexctx.context_of('    """doc\n', 1, "subject.py") == lexctx.DOCSTRING
+
+
+def test_triple_like_text_in_comment_does_not_open_docstring():
+    src = "# '''\n" + 'os.system("' + _PIPE + '")\n'
+    assert lexctx.context_of(src, 1, "subject.py") == lexctx.COMMENT
+    assert lexctx.context_of(src, 2, "subject.py") == lexctx.CODE
+
+
+def test_template_literal_lines_are_not_javascript_comments():
+    src = "const text = `hello\n// not a comment\n`;\n// real comment\n"
+    assert lexctx.context_of(src, 2, "subject.js") == lexctx.CODE
+    assert lexctx.context_of(src, 4, "subject.js") == lexctx.COMMENT
+
+
+def test_single_line_template_then_comment_remains_comment_aware():
+    src = "const text = `hello`;\n// real comment\n"
+    assert lexctx.context_of(src, 1, "subject.js") == lexctx.CODE
+    assert lexctx.context_of(src, 2, "subject.js") == lexctx.COMMENT

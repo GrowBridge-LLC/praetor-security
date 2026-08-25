@@ -168,11 +168,15 @@ def classify_lines(text: str, file_identity: str) -> list:
 
     ⚠️ Approximate by construction, in the SAFE direction: anything it cannot
     confidently prove is inert is labelled CODE, so an unclear case is KEPT
-    rather than suppressed. Nested/escaped exotica resolves to CODE.
+    rather than suppressed. Nested/escaped exotica resolves to CODE. Line-by-line
+    classification cannot model multi-line string constructs; heredocs and raw
+    string literals are not handled and may still mislabel a line as a comment.
     """
     comment_prefixes = comment_introducers(file_identity)
     allow_docstrings = _extension(file_identity) in _PYTHON_EXTENSIONS
+    slash_comments = "//" in comment_prefixes
     labels, in_triple, delim = [], False, None
+    in_template = False
 
     # 🔴 split_lines, never str.splitlines. This list is indexed BY LINE NUMBER
     # by the caller, so a disagreement about what a line is relabels live code as
@@ -187,12 +191,45 @@ def classify_lines(text: str, file_identity: str) -> list:
 
         stripped = raw.strip()
 
+        template_at_start = in_template
+
         opened = None
-        if allow_docstrings:
-            for t in _TRIPLES:
-                if t in raw:
-                    opened = t
+        token = None
+        quote = None
+        i = 0
+        while i < len(raw):
+            if quote is None:
+                if slash_comments and raw[i] == "`":
+                    in_template = not in_template
+                    i += 1
+                    continue
+                if slash_comments and in_template:
+                    if raw[i] == "\\":
+                        i += 2
+                    else:
+                        i += 1
+                    continue
+                if allow_docstrings and (raw.startswith('"""', i) or raw.startswith("'''", i)):
+                    token = ("triple", raw[i:i + 3], i)
                     break
+                if any(raw.startswith(prefix, i) for prefix in comment_prefixes):
+                    prefix = next(prefix for prefix in comment_prefixes if raw.startswith(prefix, i))
+                    token = ("comment", prefix, i)
+                    break
+                if raw[i] in "'\"":
+                    quote = raw[i]
+                i += 1
+            else:
+                if raw[i] == "\\":
+                    i += 2
+                elif raw[i] == quote:
+                    quote = None
+                    i += 1
+                else:
+                    i += 1
+
+        if token and token[0] == "triple":
+            opened = token[1]
 
         if opened is not None:
             # A triple-quote that opens and closes on the same line is a
@@ -204,10 +241,12 @@ def classify_lines(text: str, file_identity: str) -> list:
             in_triple, delim = True, opened
             continue
 
-        # Use the same scheme-aware scan as inline suppression markers.  This
-        # keeps URL slashes out of the comment classification path while
-        # preserving genuine whole-line and trailing comments.
-        if comment_text(raw, file_identity):
+        # A line is inert only when the comment introducer starts the line
+        # (apart from whitespace). Trailing comments on live code stay CODE.
+        if template_at_start:
+            labels.append(CODE)
+            continue
+        if token and token[0] == "comment" and not raw[:token[2]].strip():
             labels.append(COMMENT)
             continue
 
