@@ -416,7 +416,8 @@ def _run_npm_audit(manifests: list, target: str) -> dict:
                 file=rel, line=0, category="VULNERABLE_DEPENDENCY",
                 description=("; ".join(titles)[:400] or f"{name} has a known vulnerability ({sev})."),
                 snippet=f"{name} ({sev})",
-                fix=(f"Run `npm audit fix`" + (" --force" if v.get("fixAvailable") is False else "") + f" to remediate {name}."),
+                fix=(f"Run `npm audit fix --ignore-scripts" + (" --force" if v.get("fixAvailable") is False else "")
+                     + f" to remediate {name}; this may break packages that require native build scripts. Review the lockfile first."),
                 owasp="A06:2021 Vulnerable and Outdated Components",
                 references=urls[:4],
             ))
