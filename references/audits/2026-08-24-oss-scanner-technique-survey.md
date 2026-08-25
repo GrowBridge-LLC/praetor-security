@@ -248,9 +248,19 @@ mark "yes, this is a real credential, it's a test fixture I control, I accept th
 risk" without weakening the detector or writing a path-based carve-out — which
 `CLAUDE.md` separately flags as unsafe ("never suppress on path alone"). Concretely: a
 `praetor scan --baseline .praetor-baseline.json` mode recording finding fingerprints,
-silently dropping only *exact* re-matches on later scans, with an `audit` command to
+dropping only *exact* re-matches on later scans, with an `audit` command to
 review/relabel. Nothing here weakens the "unproven ⇒ keep" default for anything not
 already in the baseline.
+
+⚠️ **This paragraph is the ORIGINAL proposal. It is wrong in three ways and every one is
+corrected below. Do not implement from it alone.** It said *"**silently** dropping"* until
+2026-08-25 — struck above, because this repository's governing rule is that a suppression
+is recorded with a reason and is **never** silent, which makes "silently dropping" a
+recommendation to build the one thing `CLAUDE.md` forbids. The identity scheme it implies
+is also wrong (four-round table immediately below), and it omits who is trusted to write
+the baseline at all (**"A second gap"**, further below). ⇒ **A proposal paragraph that
+reads as an endorsement in isolation is not made safe by a correction a hundred lines
+later; that is why this pointer sits here rather than only there.**
 
 **🔴 CORRECTED 2026-08-25 — three times, in three consecutive review rounds, on this
 one paragraph. The sequence is the finding; read it before the conclusion.**
