@@ -274,16 +274,37 @@ would be round 3 of the same mistake.** The terminating move is to invert the
 default, which is this project's own governing rule and was available from the
 start:
 
-> **When a baseline entry cannot be matched to exactly one current finding,
-> unambiguously, KEEP the finding.**
+> **Suppress a current finding only when exactly one baseline entry matches
+> exactly one current finding.**
+>
+> Ignore baseline entries with no current match; they are stale records, not
+> findings. Keep every current finding with no unique baseline match, or with an
+> ambiguous match in either direction.
 
 Ambiguity resolves toward reporting, never toward suppression. A scheme that cannot
 decide is not permitted to guess — it reports, and a human relabels. That makes the
 identity scheme's precision an efficiency question (how much noise a reviewer
 re-triages) rather than a correctness one, and **efficiency failures are visible
-while suppression failures are not.** Concretely: match baseline entries to
-findings one-to-one on stable surrounding context, and if the mapping is
-ambiguous in either direction — two candidates for one entry, or none — report.
+while suppression failures are not.**
+
+⚠️ **The rule above is stated from the CURRENT FINDING's side, and the first version
+of it was not — which is why this needed a fourth round.** I originally wrote it as
+*"when a baseline entry cannot be matched to exactly one current finding, KEEP the
+finding"*, phrased from the baseline entry's side because baseline matching was what
+I was thinking about. That phrasing has two holes. A **stale** baseline entry — one
+whose finding is gone because the code was fixed — has no current finding to keep, so
+the clause refers to nothing and invites an implementer to invent something. And it
+never mentions the reverse direction, **one current finding matching several baseline
+entries**, which is equally ambiguous and equally must not suppress.
+
+📌 **Worth separating from the three rounds above, because it is a different kind of
+error and the distinction matters.** Rounds 0–2 were the same mistake repeated: a
+finer discriminator each time, never terminating. This round was not another
+discriminator — the inversion was right and stayed. It was a **precision defect in
+how the inverted rule was stated**, and the fix was to name the correct subject. ⇒ A
+rule about what to suppress must be written from the perspective of **the thing being
+suppressed**, or its edge cases land on whichever side the author happened to be
+facing.
 
 Regression tests any implementation needs, and note that the first two were each
 believed sufficient at the time: two copies of one credential on separate lines;
