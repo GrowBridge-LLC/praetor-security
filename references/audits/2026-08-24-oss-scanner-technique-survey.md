@@ -260,6 +260,7 @@ one paragraph. The sequence is the finding; read it before the conclusion.**
 | 0 | `file + rule id + hash of matched text` | A **set** identity. The same secret twice in one file collapses to one entry, so the second occurrence silently disappears. |
 | 1 | …`+ line number` | Two identical findings on the **same line** (`TOKEN="x"; OTHER="x"`) still collide. |
 | 2 | …`+ byte/column span or match ordinal` | **Position is not stable across revisions.** Delete a baselined duplicate and the *next* identical occurrence inherits its span or ordinal, and is suppressed without ever having been reviewed. Insert a line above it and the original re-reports as new. |
+| 3 | **invert the default** — suppress only on a unique one-to-one match | ✅ terminates. A fifth discriminator was requested in round 5 and **declined**; the gap it demonstrated is closed by a *lifecycle* rule (prune stale entries) rather than by finer matching. |
 
 ⇒ **Each round fixed the case the previous reviewer demonstrated and missed the
 class.** I wrote rounds 1 and 2 myself, immediately after reading the finding each
@@ -277,9 +278,10 @@ start:
 > **Suppress a current finding only when exactly one baseline entry matches
 > exactly one current finding.**
 >
-> Ignore baseline entries with no current match; they are stale records, not
-> findings. Keep every current finding with no unique baseline match, or with an
-> ambiguous match in either direction.
+> A baseline entry with no current match is STALE. Report it and require it to be
+> pruned — never leave it available to match a future finding. Keep every current
+> finding with no unique baseline match, or with an ambiguous match in either
+> direction.
 
 Ambiguity resolves toward reporting, never toward suppression. A scheme that cannot
 decide is not permitted to guess — it reports, and a human relabels. That makes the
@@ -297,6 +299,35 @@ the clause refers to nothing and invites an implementer to invent something. And
 never mentions the reverse direction, **one current finding matching several baseline
 entries**, which is equally ambiguous and equally must not suppress.
 
+## 🔴 Round 5 — a fifth discriminator was asked for, and DECLINED
+
+CodeRabbit demonstrated a real gap with a runnable model, and it is worth stating exactly:
+a secret is baselined at `src/config.py:10`. It is **deleted**. An identical secret
+is later introduced at `src/config.py:42`. Under a one-to-one rule the surviving
+entry matches the new finding uniquely, so **the reintroduced secret is suppressed
+and never reported.** The case is genuine; I re-derived it from the rule's own text.
+
+**Its proposed remedy — a "diff-aware occurrence-continuity predicate", which it
+labelled Heavy lift itself — was declined.** That is a fifth discriminator, and it
+would restart the sequence the table above shows terminating at round 3. A continuity
+predicate needs history the scanner does not have, and the next constructed case
+(a rename, a file split, a move between files) defeats it again.
+
+⇒ **The defect is not that matching is too coarse. It is that a baseline entry
+outlives the finding it was written for.** Hence the wording above: a stale entry is
+**reported and pruned**, not passively "ignored" and left sitting in the file where it
+can match something new years later. Delete-and-reintroduce then resolves with **no
+new matching machinery at all** — the entry goes stale the moment the secret is
+removed, is pruned, and the reintroduction has nothing to match against, so it
+reports. **One lifecycle rule, no history required, and it closes the class rather
+than the case.** It also makes baseline growth observable, which the trust-boundary
+paragraph already requires.
+
+📌 **Recorded because the declining is the reusable part.** Four rounds of "add a
+finer discriminator" were each individually reasonable. The fifth request was too. **A
+request to close a demonstrated gap is not automatically a request worth granting —
+ask first whether granting it re-opens a sequence you have already closed.**
+
 📌 **Worth separating from the three rounds above, because it is a different kind of
 error and the distinction matters.** Rounds 0–2 were the same mistake repeated: a
 finer discriminator each time, never terminating. This round was not another
@@ -309,8 +340,10 @@ facing.
 Regression tests any implementation needs, and note that the first two were each
 believed sufficient at the time: two copies of one credential on separate lines;
 two copies on the **same** line; a baselined duplicate **deleted**, asserting the
-survivor is still reported rather than inheriting the entry; and content
-**inserted above** a baselined occurrence, asserting it is not re-reported as new.
+survivor is still reported rather than inheriting the entry; content **inserted
+above** a baselined occurrence, asserting it is not re-reported as new; and
+**delete-then-reintroduce** — baseline a finding, remove it, scan (the entry must be
+reported STALE), reintroduce the identical secret, and assert **it reports.**
 
 **🔴 A second gap, not present in the original text at all: who is trusted to write
 the baseline matters as much as what it matches.** If `.praetor-baseline.json`
