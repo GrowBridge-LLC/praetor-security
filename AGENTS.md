@@ -235,15 +235,15 @@ state stay under .local/. That directory is intentionally ignored and pre-commit
 gate 9 asserts that no .local artifact is tracked.
 
 Pair traffic goes to C:\\projects\\PRAETOR\\.local\\PAIR-CHANNEL.md, which is
-tracked and absent from worktrees -- hence the absolute path. Append to it with
-the shared channel-append.sh and an absolute CHANNEL_FILE, never with Write or
-Edit. Read its tail at the start of every session.
+ignored and absent from worktrees -- hence the absolute path. It is NOT
+tracked -- `git check-ignore -v .local/PAIR-CHANNEL.md` confirms it, and
+`git ls-files .local/` returns nothing; gate 9 would refuse a commit that
+tried to add it anyway. Append to it with the shared channel-append.sh and an
+absolute CHANNEL_FILE, never with Write or Edit. Read its tail at the start
+of every session.
 
 lane-pair.md (the same directory) is frozen as the record from before
-2026-08-22 -- read it for history, post nothing new to it. The earlier rule
-sent traffic there directly and forbade a channel wrapper, because a helper
-aimed at an ignored path could append while its attribution check was
-inoperative; that reason no longer applies now that the channel is tracked.
+2026-08-22 -- read it for history, post nothing new to it.
 
 Findings for another project, blockers owned elsewhere, and contract corrections
 belong in the shared coordination channel; otherwise keep routine traffic local.
