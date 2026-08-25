@@ -70,6 +70,8 @@ _SEMGREP_TIMEOUT = int(os.environ.get("PRAETOR_SEMGREP_TIMEOUT") or _SEMGREP_TIM
 #: ⇒ That is why the flag is NOT the guarantee. The guarantee is `_scanned_count()`
 #: below, which measures what semgrep actually opened.
 _SEMGREPIGNORE_OFF = "--x-ignore-semgrepignore-files"
+_DISABLE_NOSEM = "--disable-nosem"
+_RETRYABLE_FLAGS = (_SEMGREPIGNORE_OFF, _DISABLE_NOSEM)
 
 #: Ignore files that live in the SCANNED TREE and can shrink semgrep's scope.
 #: ⚠️ Used ONLY to enrich an error message. It is deliberately NOT part of the
@@ -499,7 +501,7 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
               # Neither `--include` (applied AFTER semgrepignore filtering) nor
               # relocating cwd helps -- measured: semgrep resolves the ignore file
               # from the SCAN ROOT, not the working directory.
-              _SEMGREPIGNORE_OFF]
+              _SEMGREPIGNORE_OFF, _DISABLE_NOSEM]
     # 🔴 `--exclude` IS DOCUMENTED AND IMPLEMENTED AS REGEX EVERYWHERE ELSE IN
     # THIS TOOL -- `core.walk_files()` and `engine_sca.py` both compile it with
     # `re.compile()` and match with `.search()` against a relative path.
@@ -610,13 +612,17 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
     # depend on this flag. The degradation is recorded in `detail` so it is
     # visible in the report rather than silent.
     semgrepignore_off = True
+    rejected_flag = None
     err_text = (r.stderr or "")
-    if r.returncode not in (0, 1) and _SEMGREPIGNORE_OFF in err_text and "unknown option" in err_text:
-        retry_cmd = [a for a in cmd if a != _SEMGREPIGNORE_OFF]
+    if r.returncode not in (0, 1) and "unknown option" in err_text:
+        rejected_flag = next((flag for flag in _RETRYABLE_FLAGS if flag in err_text), None)
+    if rejected_flag:
+        retry_cmd = list(cmd)
+        retry_cmd.remove(rejected_flag)
         r, failed = _invoke(retry_cmd)
         if failed:
             return failed
-        semgrepignore_off = False
+        semgrepignore_off = rejected_flag != _SEMGREPIGNORE_OFF
 
     # semgrep exit codes: 0 = ran (findings or not), 1 = findings, 2+ = error.
     # `r.stdout or ""` is not defensive noise: a decode fault on subprocess's
@@ -675,7 +681,7 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
         # HERE -- before the success path that appends the note. So the operator
         # saw "scope disagreement" and never learned their semgrep was too old,
         # which is the actionable half of the diagnosis.
-        stale = ("" if semgrepignore_off else
+        stale = ("" if rejected_flag != _SEMGREPIGNORE_OFF else
                  f" NOTE this semgrep rejected {_SEMGREPIGNORE_OFF}, so the target's own"
                  " .semgrepignore was honoured -- upgrade semgrep and re-run before"
                  " treating this as an attack.")
@@ -748,7 +754,7 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
         # certify a scan with unmeasured files as a clean one.
         detail += ("; Semgrep reported file/analysis errors -- "
                    "SAST coverage cannot be certified")
-    if not semgrepignore_off:
+    if rejected_flag:
         # Visible, not silent: this semgrep did not accept the flag, so the
         # scanned tree's own `.semgrepignore` was honoured on this run. Status
         # stays "ok" here DELIBERATELY -- this branch used to be `error` on
@@ -759,8 +765,12 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
         # zero files); a partial hide agrees with PRAETOR's count and is
         # reported here, visibly, rather than blocking every caller on an old
         # semgrep binary for a risk the scope guard already covers.
-        detail += (f"; NOTE this semgrep rejected {_SEMGREPIGNORE_OFF}, so the target's "
-                   "own .semgrepignore was honoured -- scope guard active, but upgrade "
-                   "semgrep for full protection")
+        if rejected_flag == _SEMGREPIGNORE_OFF:
+            detail += (f"; NOTE this semgrep rejected {rejected_flag}; retry omitted exactly "
+                       "that flag, so the target's own .semgrepignore was honoured -- "
+                       "upgrade semgrep for full protection")
+        else:
+            detail += (f"; NOTE this semgrep rejected {rejected_flag}; retry omitted exactly "
+                       "that flag -- upgrade semgrep for full protection")
     status = "error" if n_errors else "ok"
     return {"findings": findings, "status": status, "detail": detail, "runtime": mode}
