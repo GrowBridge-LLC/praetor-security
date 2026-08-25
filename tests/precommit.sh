@@ -277,5 +277,23 @@ else
   pass "no session-local artifact tracked ($LOCAL_DIR/)"
 fi
 
+# ---- 10. Knowledge-base drift ----------------------------------------------
+#
+# Estate-wide 2026-08-24 standing directive: every project's KB must be
+# content-hashed against its own source, and the check that proves it must
+# GATE, not print. `tests/kb-drift.py` recomputes every record's source-line
+# hash from the tree as it stands right now; any mismatch means the record's
+# assertion is no longer provably tied to what it cites.
+KB_DRIFT=tests/kb-drift.py
+if [ ! -f "$KB_DRIFT" ]; then
+  fail "KB drift gate MISSING ($KB_DRIFT)"
+elif KBOUT="$(py -3.14 "$KB_DRIFT" 2>&1)"; then
+  KBN="$(printf '%s' "$KBOUT" | grep -oE '[0-9]+ record' | head -1 | grep -oE '^[0-9]+')"
+  pass "KB drift check (${KBN:-0} record(s), 0 drifted)"
+else
+  fail "KB drift gate FAILED -- run: py -3.14 $KB_DRIFT"
+  printf '%s\n' "$KBOUT" | sed 's/^/      /'
+fi
+
 echo "== $([ "$FAILED" = 0 ] && echo 'ALL GATES PASSED' || echo 'GATE(S) FAILED') =="
 exit "$FAILED"

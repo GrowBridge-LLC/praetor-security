@@ -112,9 +112,11 @@ blind spot is knowingly accepted.
 - **Python 3.8+** is the only hard requirement; the `secrets` and `aisec` engines
   are pure standard library and always run.
 - **Semgrep** powers `sast`. Install with `pip install semgrep` (verified working
-  natively on Windows, macOS, and Linux with recent versions). If it is not
-  present natively, PRAETOR can run it via WSL or Docker (`--semgrep-runtime`).
-  If no Semgrep runtime exists, `sast` reports itself **skipped** and the other
+  natively on macOS and Linux; on Windows the pip-installed launcher exits 1
+  with no output because semgrep-core is not built for native Windows -- use
+  WSL or Docker there, see `README.md`). If it is not present natively, PRAETOR
+  can run it via WSL or Docker (`--semgrep-runtime`). If no Semgrep runtime
+  exists, `sast` reports itself **skipped** and the other
   engines still run.
 - **osv-scanner** (preferred) powers `sca` (`winget install Google.OSVScanner`,
   `brew install osv-scanner`, or a release binary). PRAETOR falls back to
