@@ -19,7 +19,11 @@ def main() -> int:
                 if source.startswith("inbox/"):
                     total += 1
                     if record.get("volatile") is not True:
-                        violations.append(f"{record.get('id', '?')} ({path}:{line_no})")
+                        display_path = path.replace("\\", "/")
+                        violations.append(f"{record.get('id', '?')} ({display_path}:{line_no})")
+    if total == 0:
+        print("kb-volatile-sources: no claims found under references/kb", file=sys.stderr)
+        return 1
     if violations:
         print(
             f"kb-volatile-sources: {len(violations)} inbox claim(s) missing volatile=true:",

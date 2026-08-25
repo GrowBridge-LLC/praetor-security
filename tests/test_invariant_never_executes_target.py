@@ -158,6 +158,47 @@ def _capture_sast_argv(monkeypatch, mode):
     return calls
 
 
+def test_sast_argv_carries_disable_nosem(monkeypatch, tmp_path):
+    """Semgrep must report nosemgrep lines so PRAETOR can filter them with reasons."""
+    calls = _capture_sast_argv(monkeypatch, "native")
+    (tmp_path / "a.py").write_text("subprocess.call(cmd)\n", encoding="utf-8")
+    engine_sast.run(str(tmp_path), bundled_rules="", use_registry=False,
+                    extra_configs=["p/ci"], enumerated_code_files=1)
+    assert calls and "--disable-nosem" in calls[-1][0]
+
+
+def test_sast_retry_removes_only_rejected_nosem_flag(monkeypatch, tmp_path):
+    """An old Semgrep retry must drop exactly the flag it rejected."""
+    calls = []
+
+    def fake_run_tool(cmd, **kwargs):
+        calls.append(list(cmd))
+
+        class _R:
+            stderr = "unknown option --disable-nosem"
+            returncode = 2
+            stdout = ""
+
+        if "--disable-nosem" not in cmd:
+            _R.returncode = 0
+            _R.stderr = ""
+            _R.stdout = '{"results": [], "paths": {"scanned": ["a.py"]}}'
+        return _R()
+
+    monkeypatch.setattr(engine_sast, "detect_runtime", lambda *a, **kw: {
+        "mode": "native", "prefix": ["semgrep"], "available": True,
+        "detail": "test", "version": "test"})
+    monkeypatch.setattr(_core, "run_tool", fake_run_tool)
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    result = engine_sast.run(str(tmp_path), bundled_rules="", use_registry=False,
+                             extra_configs=["p/ci"], enumerated_code_files=1)
+    assert len(calls) == 2, calls
+    assert "--disable-nosem" in calls[0]
+    assert "--disable-nosem" not in calls[1]
+    assert "--x-ignore-semgrepignore-files" in calls[1]
+    assert "rejected --disable-nosem" in result["detail"]
+
+
 def test_the_docker_runtime_mounts_the_target_read_only(tmp_path):
     """A container with write access to the target could modify what it scans.
 
