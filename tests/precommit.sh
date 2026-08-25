@@ -107,8 +107,8 @@ fi
 # F10 deliberately adds two active findings from TSV and six active JSONL
 # findings; the five JSONL identities are duplicated across claims/records,
 # yielding ten raw instances, with four claim-file instances filtered as
-# documentation phrasing. The measured pin is 21 active / 56 filtered.
-EXPECT_ACTIVE=21
+# documentation phrasing. The measured pin is 22 active / 56 filtered (+1 Azure corpus case, intentionally detected).
+EXPECT_ACTIVE=22
 # 2026-08-12: 45 -> 53, deliberately, and NOT because false positives improved.
 # The two causes were measured separately by reverting each change on its own:
 #   +3  the dedup fix stopped DISCARDING findings. A filtered finding could win

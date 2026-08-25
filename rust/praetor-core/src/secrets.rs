@@ -793,8 +793,9 @@ mod tests {
     use super::*;
 
     #[test]
+    // This checks provider count and unique IDs; differential testing checks cross-port parity.
     fn every_python_provider_pattern_is_present() {
-        assert_eq!(providers().len(), 16);
+        assert_eq!(providers().len(), 17);
         let names: HashSet<_> = providers()
             .iter()
             .map(|provider| provider.rule_id)
