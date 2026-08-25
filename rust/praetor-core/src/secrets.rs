@@ -502,9 +502,11 @@ fn scan_one(relpath: &str, text: &str, findings: &mut Vec<Finding>) {
         ));
     }
 
+    let mut skipped = 0usize;
     for (index, line) in split_lines(text).into_iter().enumerate() {
         let line_no = index + 1;
         if line.chars().count() > 4000 {
+            skipped += 1;
             continue;
         }
 
@@ -660,6 +662,27 @@ fn scan_one(relpath: &str, text: &str, findings: &mut Vec<Finding>) {
                 }
             }
         }
+    }
+    if skipped > 0 {
+        findings.push(Finding {
+            engine: "secrets",
+            rule_id: "secrets-long-line-skip",
+            title: "Secret-scanning coverage limited by long line".to_string(),
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            file: relpath.to_string(),
+            line: 1,
+            category: "COVERAGE",
+            specificity: 0,
+            description: format!("{skipped} line(s) exceeded the 4000-character analysis cap and were skipped by secret scanning."),
+            snippet: format!("skipped_lines={skipped}; cap=4000"),
+            fix: "Split oversized lines before scanning to restore secret-detection coverage.",
+            cwe: CWE_SECRET,
+            owasp: OWASP_SECRET,
+            references: REF_SECRET,
+            filtered: false,
+            filter_reason: String::new(),
+        });
     }
 }
 

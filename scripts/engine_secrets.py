@@ -358,8 +358,10 @@ def scan(scan_files, read_text) -> list:
             ))
 
         # ---- per-line scanning ----
+        skipped = 0
         for i, line in enumerate(lines, start=1):
             if len(line) > 4000:  # skip absurd minified lines
+                skipped += 1
                 continue
 
             # provider patterns
@@ -383,7 +385,6 @@ def scan(scan_files, read_text) -> list:
                         f.filtered = True
                         f.filter_reason = "well-known published documentation example token (not a live credential)"
                     findings.append(f)
-
             # connection strings w/ embedded password
             for m in CONNSTR.finditer(line):
                 pw = m.group("secret")
@@ -460,4 +461,15 @@ def scan(scan_files, read_text) -> list:
                             fix="Confirm whether this is a credential; if so, rotate and externalize it.",
                             cwe=CWE_SECRET, owasp=OWASP_SECRET, references=REF_SECRET,
                         ))
+        if skipped:
+            findings.append(Finding(
+                engine="secrets", rule_id="secrets-long-line-skip",
+                title="Secret-scanning coverage limited by long line",
+                severity=Severity.INFO, confidence=Confidence.HIGH,
+                file=rel, line=1, category="COVERAGE",
+                description=f"{skipped} line(s) exceeded the 4000-character analysis cap and were skipped by secret scanning.",
+                snippet=f"skipped_lines={skipped}; cap=4000",
+                fix="Split oversized lines before scanning to restore secret-detection coverage.",
+                cwe=CWE_SECRET, owasp=OWASP_SECRET, references=REF_SECRET,
+            ))
     return findings

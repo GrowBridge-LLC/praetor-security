@@ -243,6 +243,8 @@ def _apply_inline_ignores(findings, target, read_text):
     """
     cache: dict = {}
     for f in findings:
+        if getattr(f, "category", "") == "COVERAGE":
+            continue
         if not f.file or f.line <= 0:
             continue
         ap = os.path.join(target, f.file.replace("/", os.sep))
