@@ -44,6 +44,12 @@ REQUIRED_FIELDS = (
 # resolve them), not necessarily linked here by id yet.
 OPTIONAL_DEFAULTS = {"supersedes": None, "conflicts_with": []}
 
+# Existing debt is pinned by the gate; new or changed claims may not introduce
+# another empty string in a required field.  The generated records are not the
+# authority for this check because this script rewrites their hashes.
+EMPTY_STRING_FIELDS = {"id", "kind", "subject", "assertion", "verbatim",
+                       "source_file", "authority", "binds"}
+
 
 def compute_source_sha(source_file: str, source_line: int) -> str:
     """Hash the exact line a claim is anchored to, read from disk NOW.
@@ -104,6 +110,14 @@ def main() -> int:
         )
         return 2
 
+    existing = {}
+    if os.path.exists(RECORDS_PATH):
+        with open(RECORDS_PATH, encoding="utf-8") as fh:
+            for line in fh:
+                if line.strip():
+                    rec = json.loads(line)
+                    existing[rec.get("id")] = rec
+
     seen_ids = set()
     unresolved = []
     records = []
@@ -113,6 +127,18 @@ def main() -> int:
             sys.stderr.write(f"kb-build: duplicate id '{rid}' across claims files\n")
             return 2
         seen_ids.add(rid)
+        previous = existing.get(rid)
+        for field in EMPTY_STRING_FIELDS:
+            value = rec.get(field)
+            if value is not None and (not isinstance(value, str) or value.strip()):
+                continue
+            old_value = previous.get(field) if previous else None
+            old_empty = old_value is None or (isinstance(old_value, str) and not old_value.strip())
+            if previous is None or not old_empty:
+                sys.stderr.write(
+                    f"kb-build: {rid} introduces empty required field {field!r}\n"
+                )
+                return 1
         try:
             source_sha = compute_source_sha(rec["source_file"], rec["source_line"])
         except (OSError, IndexError) as exc:

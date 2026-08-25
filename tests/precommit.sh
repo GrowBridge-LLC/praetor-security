@@ -295,5 +295,15 @@ else
   printf '%s\n' "$KBOUT" | sed 's/^/      /'
 fi
 
+EMPTY_FIELDS=tests/kb-empty-fields.py
+if [ ! -f "$EMPTY_FIELDS" ]; then
+  fail "KB empty-field pin MISSING ($EMPTY_FIELDS)"
+elif EMPTYOUT="$(py -3.14 "$EMPTY_FIELDS" 2>&1)"; then
+  pass "KB empty-field pin holds (EXPECTED_EMPTY_VERBATIM=249)"
+else
+  fail "KB empty-field pin FAILED"
+  printf '%s\n' "$EMPTYOUT" | sed 's/^/      /'
+fi
+
 echo "== $([ "$FAILED" = 0 ] && echo 'ALL GATES PASSED' || echo 'GATE(S) FAILED') =="
 exit "$FAILED"
