@@ -460,6 +460,10 @@ TEXT_EXTS = {
     ".html", ".htm", ".xml", ".svg",
     ".json", ".jsonc", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
     ".env", ".properties", ".tf", ".tfvars", ".hcl",
+    # Structured exports, logs, and HTTP archives are ordinary text-bearing
+    # formats.  Keep them in the allowlist so the text engines can inspect
+    # credentials and instruction payloads in these common artifacts.
+    ".csv", ".log", ".out", ".ndjson", ".har",
     ".md", ".markdown", ".mdx", ".mdc", ".rst", ".txt", ".text",
     ".dockerfile", ".gitconfig", ".npmrc",
     # 🔴 DEPLOYMENT AND TEMPLATE CODE. Every one of these was MEASURED going unread
