@@ -197,3 +197,97 @@ engine against condition 1, then because condition 1's own premise did not survi
 code. Neither was caught by review of the ADR — both were caught by someone trying to execute it.
 ⇒ **An ADR's premises rot exactly like any other measured claim, and the ordering it derives from
 them rots with them. Re-derive a condition's REASON, not just its instruction.**
+
+## Amendment 3 proposal (2026-08-24, RESEARCHED, NOT RULED ON) — a JSON crate for `aisec`
+
+**This is a proposal, not a decision.** Amendment 2's `base64` call was already "genuinely borderline...
+escalated rather than absorbed" for a smaller decision than this one. Filed here, unauthorised, so the
+research survives even though the ruling has not been made — the same reason Amendment 1's counter-
+argument section exists.
+
+### The blocker this would clear
+
+`aisec` is deferred (Amendment 2, Part B) specifically because `scripts/engine_aisec.py`'s `_scan_mcp`
+(currently line 552) calls `json.loads()` on MCP manifest content, then `isinstance(data, dict)`, then
+`data.get("mcpServers")` — structural parsing of attacker-controlled JSON. Rust's standard library has
+no JSON parser. Re-verified 2026-08-24: still exactly one call site.
+
+### Applying Amendment 1's bar
+
+> *a dependency is justified only when writing it ourselves would be worse for security, not merely
+> slower to build.*
+
+| Option | Verdict |
+|---|---|
+| Hand-write a parser | **Worse for security, more clearly than the `base64` case.** JSON is a recursive grammar over attacker-controlled bytes — nested objects/arrays, string escaping, number parsing — a materially larger attack surface than a fixed base64 alphabet, which was already ruled "genuinely borderline" for a bespoke implementation. A bespoke JSON parser is exactly the case Amendment 1's table exists to catch, more so than either crate authorised so far. |
+| Take `serde_json` | Researched below; not yet adopted. |
+
+### Measured cost (2026-08-24, methodology identical to Amendment 1's)
+
+`cargo add serde_json --dry-run` in `praetor-core`, then a real add + `cargo tree`, then reverted
+(`git checkout --`, confirmed restored byte-identical to the pre-measurement `Cargo.toml`) — nothing
+here is committed or authorised by having been measured.
+
+```
+praetor-core v0.1.0
+├── base64 v0.23.1                (existing, Amendment 2)
+├── regex v1.13.1  + 4 transitive  (existing, Amendment 1)
+└── serde_json v1.0.151
+    ├── itoa v1.0.18
+    ├── memchr v2.8.3              (already shared with regex)
+    ├── serde_core v1.0.229
+    └── zmij v1.0.23
+```
+
+**4 new crates**, not the 10 `cargo add` initially listed for the lockfile — `serde`, `serde_derive`,
+`syn`, `quote`, `proc-macro2`, `unicode-ident` are pulled into `Cargo.lock` but never appear in
+`cargo tree`'s actual compile graph, because parsing a generic `serde_json::Value` (what `_scan_mcp`
+needs) does not use `serde`'s derive machinery. **Verify this stays true** if the port ever needs to
+deserialize into a typed struct instead of a generic value — that would pull the derive chain in for
+real.
+
+### 🔴 The finding that breaks with Amendment 1's own precedent, disclosed rather than absorbed
+
+**Amendment 1 measured and stated as load-bearing: "No `build.rs` anywhere in the tree — nothing
+executes at build time."** That property does NOT hold for `serde_json`. Checked directly, not
+assumed:
+
+```
+serde_json-1.0.151/build.rs   PRESENT
+serde_core-1.0.229/build.rs   PRESENT
+zmij-1.0.23/build.rs          PRESENT
+itoa-1.0.18/build.rs          absent
+base64-0.22.1 and 0.23.1      absent (checked for comparison -- Amendment 2's crate has none either)
+```
+
+**Read all three, in full, not just detected their presence** (the same discipline this file's own
+"How the stale premise was found" section demands):
+
+- `serde_json`'s reads `CARGO_CFG_TARGET_ARCH`/`CARGO_CFG_TARGET_POINTER_WIDTH` (both cargo-supplied
+  env vars) to pick a `fast_arithmetic` cfg. No filesystem write, no subprocess, no network.
+- `serde_core`'s and `zmij`'s each run `rustc --version` — via the `RUSTC` env var cargo itself sets,
+  i.e. the same compiler already trusted to build everything else — to gate version-conditional `cfg`
+  flags for older toolchains (the standard ecosystem pattern the `autocfg`/`rustc_version` crates exist
+  to formalise). `serde_core`'s also writes one generated file into cargo's own `OUT_DIR`. No network,
+  no execution of anything outside PRAETOR's own trusted build environment.
+
+**None of the three touch scanned/target content** — PRAETOR's actual invariant (never execute the
+CODE IT SCANS) is not implicated by any of them; they inspect PRAETOR's own build environment, the
+same category of thing `rustc` itself already does. But Amendment 1 explicitly measured and celebrated
+zero build-time execution as a property of the crate it authorised, and that property is genuinely
+absent here — stated plainly rather than quietly satisfied by a narrower reading of "the invariant"
+than Amendment 1 itself used.
+
+### Compatibility
+
+`serde_json`'s default features (`std` only; `unbounded_depth` is OFF by default) mean recursion depth
+is bounded against attacker-controlled deeply-nested JSON out of the box — relevant for a security
+scanner parsing untrusted MCP manifests, and not something a hand-rolled parser would get for free
+without deliberately adding the check.
+
+### What this proposal does NOT do
+
+It does not add `serde_json` to `Cargo.toml`. It does not un-defer `aisec`. It states the measured
+case for the crate and discloses the one place it falls short of Amendment 1's own bar, so the ruling
+— when made — is made against real numbers instead of a name. `aisec` stays deferred until this is
+actually decided, per Amendment 2.
