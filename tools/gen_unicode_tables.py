@@ -89,7 +89,9 @@ OUT_PATH = Path(__file__).resolve().parent.parent / "rust" / "praetor-core" / "s
 # runner emitting the message -- so the reachable substitute was the operator's
 # own older `python`. Measured: that regenerates against the older database,
 # exits 0, prints "wrote ...", and the downgraded table then PASSES its own
-# --check. 353 lines of code points silently discarded, every gate green.
+# --check. 4,302 code points silently discarded, every gate green. Re-derive by
+# rendering under Unicode 16.0.0 and 15.1.0 and differencing covered code-point
+# sets (142,179 -> 137,877); the value changes when Unicode tables move.
 #
 # The version was already being recorded in the generated file, under a comment
 # saying it existed "so a mismatch is diagnosable rather than mysterious".

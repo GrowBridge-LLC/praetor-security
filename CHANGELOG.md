@@ -790,8 +790,11 @@ Found by independent adversarial audit and re-derived before fixing.
   `STALE`, with a remediation naming `py -3.14`: the **Windows launcher**, which
   does not exist on the Linux runner printing the message. The reachable
   substitute regenerated against the older database, exited 0, printed
-  `wrote ...`, discarded 353 lines of code points, and the downgraded table then
+  `wrote ...`, discarded 4,302 code points, and the downgraded table then
   **passed its own `--check`**. The wrong action was rewarded with green.
+  The loss was re-derived by rendering under Unicode 16.0.0 and 15.1.0 and
+  differencing covered code-point sets (142,179 -> 137,877); re-derive it when
+  Unicode tables move rather than trusting this snapshot.
 
   The generator now reads the `UNICODE_VERSION` constant it has always emitted —
   under a comment saying it existed "so a mismatch is diagnosable", which nothing

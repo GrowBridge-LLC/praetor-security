@@ -75,7 +75,9 @@ jobs:
           # A local gate that pins the interpreter making it pass is a tautology,
           # not a verification. If these two pins ever drift again the generator
           # now says WRONG INTERPRETER rather than STALE, which is the difference
-          # between "regenerate" and "regenerating destroys 353 code points".
+          # between "regenerate" and "regenerating loses 4,302 code points".
+          # Re-derive by rendering under Unicode 16.0.0 and 15.1.0 and differencing
+          # covered code-point sets (142,179 -> 137,877); the value changes with tables.
           python-version: '3.14'
 
       # Deliberately no requirements install: the invariant tests must not need
