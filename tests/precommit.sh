@@ -320,5 +320,15 @@ else
   printf '%s\n' "$CAOUT" | sed 's/^/      /'
 fi
 
+VOLATILE_SOURCES=tests/kb-volatile-sources.py
+if [ ! -f "$VOLATILE_SOURCES" ]; then
+  fail "KB volatile-source gate MISSING ($VOLATILE_SOURCES)"
+elif VOUT="$(py -3.14 "$VOLATILE_SOURCES" 2>&1)"; then
+  pass "KB volatile-source gate passed"
+else
+  fail "KB volatile-source gate FAILED"
+  printf '%s\n' "$VOUT" | sed 's/^/      /'
+fi
+
 echo "== $([ "$FAILED" = 0 ] && echo 'ALL GATES PASSED' || echo 'GATE(S) FAILED') =="
 exit "$FAILED"
