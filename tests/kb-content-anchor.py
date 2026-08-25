@@ -8,7 +8,7 @@ import sys
 import unicodedata
 from pathlib import Path
 
-EXPECTED_UNRESOLVED = 57
+EXPECTED_UNRESOLVED = 30
 # The sweep in the F13-B audit reaches the existing 57-record pin at 20
 # lines (65, 60, 59, 57, 57... at windows 5, 10, 15, 20, 25...). Keeping
 # the knee makes future line insertions stricter without changing today's
@@ -39,7 +39,9 @@ def resolve(record: dict) -> bool:
     source = Path(record["source_file"])
     try:
         lines = source.read_text(encoding="utf-8").splitlines()
-        start = max(0, int(record["source_line"]) - 1)
+        # Quotes may begin in the hard-wrapped line immediately before the
+        # recorded line; one-line lookback is the measured knee (57 -> 34).
+        start = max(0, int(record["source_line"]) - 2)
     except (OSError, ValueError, KeyError):
         return False
     window = normalize("\n".join(lines[start : start + WINDOW_LINES]))
@@ -53,10 +55,22 @@ def resolve_without(record: dict, rule: str) -> bool:
         return True
     try:
         lines = Path(record["source_file"]).read_text(encoding="utf-8").splitlines()
-        start = max(0, int(record["source_line"]) - 1)
+        start = max(0, int(record["source_line"]) - 2)
     except (OSError, ValueError, KeyError):
         return False
     return quote in normalize("\n".join(lines[start : start + WINDOW_LINES]), rule)
+
+
+def resolve_without_lookback(record: dict) -> bool:
+    """Control path for proving the one-line lookback is load-bearing."""
+    try:
+        lines = Path(record["source_file"]).read_text(encoding="utf-8").splitlines()
+        start = max(0, int(record["source_line"]) - 1)
+    except (OSError, ValueError, KeyError):
+        return False
+    return normalize(str(record.get("verbatim") or "")) in normalize(
+        "\n".join(lines[start : start + WINDOW_LINES])
+    )
 
 
 def main() -> int:
@@ -82,6 +96,10 @@ def main() -> int:
     impossible = {"verbatim": "__KB_CONTENT_ANCHOR_SYNTHETIC_NEVER_PRESENT_7f3c__", "source_file": __file__, "source_line": 1}
     if resolve(impossible):
         print("kb-content-anchor: synthetic negative control resolved", file=sys.stderr)
+        return 1
+    lookback_control = next((r for r in records if r.get("id") == "ARCH-limits-0009"), None)
+    if lookback_control is None or not resolve(lookback_control) or resolve_without_lookback(lookback_control):
+        print("kb-content-anchor: lookback control failed", file=sys.stderr)
         return 1
     # Comment-prefix has dependents but no pure single-rule corpus control; NFKC
     # and smart-quote folding have none. Keep all three, but exercise mechanics
