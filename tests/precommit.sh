@@ -309,5 +309,15 @@ else
   printf '%s\n' "$EMPTYOUT" | sed 's/^/      /'
 fi
 
+CONTENT_ANCHOR=tests/kb-content-anchor.py
+if [ ! -f "$CONTENT_ANCHOR" ]; then
+  fail "KB content-anchor gate MISSING ($CONTENT_ANCHOR)"
+elif CAOUT="$(py -3.14 "$CONTENT_ANCHOR" 2>&1)"; then
+  pass "KB content-anchor pin holds (57 unresolved)"
+else
+  fail "KB content-anchor gate FAILED"
+  printf '%s\n' "$CAOUT" | sed 's/^/      /'
+fi
+
 echo "== $([ "$FAILED" = 0 ] && echo 'ALL GATES PASSED' || echo 'GATE(S) FAILED') =="
 exit "$FAILED"
