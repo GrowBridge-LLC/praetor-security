@@ -696,6 +696,64 @@ def test_zero_semgrep_errors_is_still_ok(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# CR-1: `--exclude` IS REGEX EVERYWHERE ELSE. SEMGREP'S OWN `--exclude` IS A
+# GLOB. Forwarding PRAETOR's regex straight into semgrep's flag desyncs SAST's
+# scope from the other three engines' -- the exact "two components disagree
+# about what was scanned" failure class this file's other tests exist for,
+# just reached through a different door. See scripts/engine_sast.py `run()`.
+# --------------------------------------------------------------------------- #
+
+def _find(path, rule="rules.vuln"):
+    return {"path": path, "check_id": rule, "start": {"line": 1}, "end": {"line": 1},
+            "extra": {"severity": "ERROR", "message": "x", "lines": "os.system(x)"}}
+
+
+def test_exclude_patterns_are_not_forwarded_to_semgreps_own_exclude_flag(tmp_path, monkeypatch):
+    """Layer 1. A regex anchor is not a valid glob; it must never reach argv."""
+    argv = []
+    pattern = r"vuln\.py$"
+    _semgrep_returning(monkeypatch, {
+        "results": [_find("vuln.py")], "paths": {"scanned": ["vuln.py", "keep.py"]},
+    }, argv)
+    engine_sast.run(str(tmp_path), bundled_rules="", use_registry=False,
+                    extra_configs=["p/ci"], excludes=[pattern], enumerated_code_files=2)
+    assert pattern not in argv, (
+        f"a regex --exclude pattern must not be handed to semgrep's glob-only "
+        f"--exclude flag; argv={argv}"
+    )
+
+
+def test_exclude_regex_filters_semgrep_results_like_the_walker_does(tmp_path, monkeypatch):
+    """🔴 THE HEADLINE. The predicate must match `core.walk_files()` exactly,
+    or a `--exclude` that works for secrets/aisec/sca silently does something
+    different for SAST -- an operator who excluded a path expects it excluded
+    everywhere, not partially.
+    """
+    _semgrep_returning(monkeypatch, {
+        "results": [_find("vuln.py"), _find("keep.py", rule="rules.other")],
+        "paths": {"scanned": ["vuln.py", "keep.py"]},
+    })
+    res = engine_sast.run(str(tmp_path), bundled_rules="", use_registry=False,
+                          extra_configs=["p/ci"], excludes=[r"vuln\.py$"],
+                          enumerated_code_files=1)
+    files = [f.file for f in res["findings"]]
+    assert files == ["keep.py"], (
+        f"excluded file's finding must be dropped, kept file's must survive; got {files}"
+    )
+
+
+def test_no_excludes_keeps_every_result(tmp_path, monkeypatch):
+    """KEEP DIRECTION. No `--exclude` given must not drop anything."""
+    _semgrep_returning(monkeypatch, {
+        "results": [_find("vuln.py"), _find("keep.py", rule="rules.other")],
+        "paths": {"scanned": ["vuln.py", "keep.py"]},
+    })
+    res = engine_sast.run(str(tmp_path), bundled_rules="", use_registry=False,
+                          extra_configs=["p/ci"], enumerated_code_files=2)
+    assert len(res["findings"]) == 2, f"no excludes must keep both; got {res['findings']}"
+
+
+# --------------------------------------------------------------------------- #
 # THE SKIP LIST IS AN ATTACKER-CONTROLLED SCOPE BOUNDARY
 #
 # core.DEFAULT_SKIP_DIRS is 36 directory names the walker will not enter, and the

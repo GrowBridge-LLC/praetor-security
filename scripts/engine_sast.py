@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 
@@ -499,10 +500,30 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
               # relocating cwd helps -- measured: semgrep resolves the ignore file
               # from the SCAN ROOT, not the working directory.
               _SEMGREPIGNORE_OFF]
-    # Semgrep --exclude takes a path/glob pattern; pass each exclude through so
-    # the SAST engine honors the same exclusions as the built-in engines.
-    for pat in (excludes or []):
-        common += ["--exclude", pat]
+    # 🔴 `--exclude` IS DOCUMENTED AND IMPLEMENTED AS REGEX EVERYWHERE ELSE IN
+    # THIS TOOL -- `core.walk_files()` and `engine_sca.py` both compile it with
+    # `re.compile()` and match with `.search()` against a relative path.
+    # Semgrep's OWN `--exclude` flag is a glob, not a regex. This function used
+    # to forward the same strings straight through to semgrep's flag, on the
+    # claim that doing so "honors the same exclusions as the built-in engines."
+    # It does not: a regex like `test_.*\.py$` is a valid glob only by
+    # coincidence, and most real patterns (anchors, alternation, char classes)
+    # either match nothing under glob semantics or match something unintended
+    # -- silently. That is a scope disagreement between SAST and the other
+    # three engines on every scan that passes a nontrivial `--exclude`, which
+    # is exactly the failure class the `.gitignore`/`.semgrepignore` comments
+    # above this one exist to prevent for a different cause.
+    #
+    # Fix: never ask semgrep to interpret PRAETOR's regex. Let it scan
+    # normally (still excluding DEFAULT_SKIP_DIRS below, which are literal
+    # directory names -- glob and regex agree on those), then drop matching
+    # results ourselves below, with the SAME predicate `core.walk_files()`
+    # uses, against the SAME relative-path form. Cost: semgrep spends time
+    # analysing files the operator excluded rather than skipping them at
+    # open-time. Correctness of scope outranks that; a future optimisation
+    # could pass an explicit `--include` file list instead, but that risks an
+    # argv-length regression on very large trees and is not this fix.
+    exclude_rxs = [re.compile(p) for p in (excludes or [])]
 
     # 🔴 `_SEMGREPIGNORE_OFF` DOES NOT ONLY DISABLE `.semgrepignore`. It also
     # disables semgrep's BUILT-IN default ignore set, which is how `node_modules`,
@@ -672,6 +693,8 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
         md = extra.get("metadata", {}) or {}
         raw_path = res.get("path", "")
         rel = _relative_to_report_root(raw_path, report_root)
+        if any(rx.search(rel) for rx in exclude_rxs):
+            continue
         rid = res.get("check_id", "semgrep-rule")
         short = rid.split(".")[-1]
         refs = md.get("references", []) or []
