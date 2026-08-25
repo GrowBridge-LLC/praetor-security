@@ -19,9 +19,14 @@ finding as a lead to verify, and every clean result as an incomplete negative.
 - **No inter-file dataflow / taint tracking** in the built-in engines. They work
   line- and file-locally. Semgrep adds intra-file dataflow for its rules, but
   whole-program taint analysis is out of scope.
-- **Text/source files only.** Compiled binaries, images, and archives are skipped.
-  A secret or payload inside a binary blob will not be seen (except the specific
-  base64-unwrap case).
+- **Allowlisted text/source files only.** The walker opens files whose extension or
+  extensionless name is in PRAETOR's `TEXT_EXTS`/`TEXT_NAMES` allowlists. Compiled
+  binaries, images, archives, and ordinary text-like formats outside those lists
+  (for example `.csv`, `.log`, `.jsonl`, `.ndjson`, `.har`, or `.out`) are skipped.
+  The exclusion list is not exhaustive and may change as formats are measured;
+  a clean result is not evidence that an unlisted format was read. A secret or
+  payload inside a binary blob will not be seen (except the specific base64-unwrap
+  case).
 - **Files above the size cap** (default 3 MB) are skipped; large minified bundles
   or data files may hide issues.
 
