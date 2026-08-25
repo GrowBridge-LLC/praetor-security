@@ -298,6 +298,8 @@ def _apply_reachability(findings, target, read_text):
     """
     cache: dict = {}
     for f in findings:
+        if getattr(f, "category", "") == "COVERAGE":
+            continue
         if getattr(f, "filtered", False) or f.engine not in _REACHABILITY_ENGINES:
             continue
         if not f.file or f.line <= 0 or not f.file.endswith(".py"):
@@ -412,6 +414,8 @@ def _apply_lexical_context(findings, target, read_text):
     """
     cache: dict = {}
     for f in findings:
+        if getattr(f, "category", "") == "COVERAGE":
+            continue
         if getattr(f, "filtered", False) or f.engine not in _LEXCTX_ENGINES:
             continue
         if not f.file or f.line <= 0:
