@@ -670,7 +670,7 @@ def scan(scan_files, read_text) -> list:
                             snippet=line.strip()[:200],
                             fix=fix, cwe=cwe, owasp=owasp, references=[REF_LLM],
                         ))
-        if skipped:
+        if skipped and not any(f.file == rel and f.category == "COVERAGE" for f in findings):
             findings.append(Finding(
                 engine="aisec", rule_id="aisec-long-line-skip",
                 title="AI-security coverage limited by long line",
