@@ -13,7 +13,9 @@ def _emitted_texts(source: str):
         if not isinstance(node, ast.Call):
             continue
         names = {kw.arg for kw in node.keywords if kw.arg in {"fix", "description"}}
-        if isinstance(node.func, ast.Name) and node.func.id in {"print", "write"}:
+        f = node.func
+        if ((isinstance(f, ast.Name) and f.id in {"print", "write"})
+                or (isinstance(f, ast.Attribute) and f.attr == "write")):
             names.add(node.func.id)
         if not names:
             continue
