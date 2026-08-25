@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import sys
+import argparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KB_DIR = os.path.join(ROOT, "references", "kb")
@@ -100,7 +101,13 @@ def _load_claims() -> list:
     return claims
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output", default=RECORDS_PATH,
+        help="write generated records here (default: committed records.jsonl)",
+    )
+    args = parser.parse_args(argv)
     claims = _load_claims()
     if not claims:
         sys.stderr.write(
@@ -166,15 +173,16 @@ def main() -> int:
         return 1
 
     records.sort(key=lambda r: r["id"])
-    os.makedirs(KB_DIR, exist_ok=True)
-    with open(RECORDS_PATH, "w", encoding="utf-8", newline="\n") as fh:
+    output_path = os.path.abspath(args.output)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
         for rec in records:
             fh.write(json.dumps(rec, sort_keys=True, ensure_ascii=False))
             fh.write("\n")
 
     n_volatile = sum(1 for r in records if r.get("volatile"))
     print(f"kb-build: {len(records)} record(s), {n_volatile} volatile, "
-          f"written to {os.path.relpath(RECORDS_PATH, ROOT)}")
+          f"written to {os.path.relpath(output_path, ROOT)}")
     return 0
 
 
