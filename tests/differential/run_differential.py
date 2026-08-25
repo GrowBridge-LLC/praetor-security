@@ -83,6 +83,7 @@ _MIN_SECRET_CASES = 25
 _REQUIRED_SECRET_RULES = {
     "aws-access-key-id", "aws-secret-access-key", "gcp-api-key",
     "gcp-oauth-client-secret", "google-oauth-refresh-token", "github-token",
+    "azure-storage-account-key",
     "github-fine-grained-pat", "slack-token", "slack-webhook",
     "stripe-secret-key", "openai-key", "anthropic-key",
     "twilio-account-sid-authtoken", "sendgrid-key", "npm-token", "jwt",
