@@ -314,7 +314,7 @@ CONTENT_ANCHOR=tests/kb-content-anchor.py
 if [ ! -f "$CONTENT_ANCHOR" ]; then
   fail "KB content-anchor gate MISSING ($CONTENT_ANCHOR)"
 elif CAOUT="$(py -3.14 "$CONTENT_ANCHOR" 2>&1)"; then
-  pass "KB content-anchor pin holds (57 unresolved)"
+  pass "KB content-anchor gate passed"
 else
   fail "KB content-anchor gate FAILED"
   printf '%s\n' "$CAOUT" | sed 's/^/      /'
