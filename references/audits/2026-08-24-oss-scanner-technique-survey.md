@@ -8,14 +8,40 @@ restriction was deliberate, not incidental: it is the same discipline PRAETOR ho
 itself to when reading a scanned target, applied here to reading a peer project.
 
 **What this is NOT.** A single research pass, one agent, no independent verification
-and no adversarial second read. Every claim below carries a source link so it can be
-checked; none of it has been checked by a second, differently-built reader the way
-this project's own code changes are (`AGENTS.md`'s collaboration model). Treat findings
-here the way any audit doc in this directory is treated — a claim to verify before
-building on it, not a ruling. `git log` this file if a "designed but not built" item
-below is later picked up, and check whether the *current* code has already superseded
-the finding — see `[[a-design-doc-does-not-know-what-happened-after-it-was-written]]`
-in this project's memory for exactly why that check matters.
+and no adversarial second read at the time it was first written. Every claim below
+carries a source link so it can be checked. Treat findings here the way any audit doc
+in this directory is treated — a claim to verify before building on it, not a ruling.
+`git log` this file if a "designed but not built" item below is later picked up, and
+check whether the *current* code has already superseded the finding — see
+`[[a-design-doc-does-not-know-what-happened-after-it-was-written]]` in this project's
+memory for exactly why that check matters.
+
+**Update, 2026-08-25.** It got the second, differently-built read the paragraph above
+said it hadn't had yet: CodeRabbit's first-ever review of this repository (`.coderabbit.yaml`
+had been configured and unused until this document's own commit finally opened a pull
+request). It found real defects, not style nits — an incomplete dependency list for
+`ripsecrets` (verified independently against the live manifest before accepting the
+correction), a technically wrong claim about `RegexSet` capture semantics (verified
+against PRAETOR's own existing Rust `secrets.rs`), a design flaw in the proposed
+baseline fingerprint, a mislabeled attribution of a proposed PRAETOR design as
+Semgrep's own implementation, an imprecise claim about `cargo-deny`'s execution
+model, and — the most serious one — this document originally recommended reusing
+`ignore`'s default `.gitignore`-awareness for PRAETOR's Rust secrets port without
+the caveat that PRAETOR's own secrets engine must NOT inherit that default, which
+would have recommended reintroducing the exact false-clean regression `0930947`
+already fixed once. All corrected in place below, each marked where it happened,
+after independently re-verifying the two most checkable claims (the ripsecrets
+manifest, and whether `serde-rs/serde#3023` is actually fixed) rather than trusting
+the review at face value either — the same discipline this document asks of its own
+future readers.
+
+**Citations below point to mutable `main`/`master` branches** rather than pinned
+commits or release tags (CodeRabbit flagged this too, correctly, as a lower-severity
+nitpick): a later upstream change could shift what a link shows without this
+document knowing. Every fact cited from one was verified as stated on 2026-08-24
+(the OSS-scanner survey) or 2026-08-25 (the corrections); if a citation and this
+document ever disagree, the document's stated access date is what to trust as "true
+when written," not the live link.
 
 Scope note up front: all seven targets had usable public documentation or source; none
 were skipped.
@@ -93,25 +119,62 @@ Sources: [trufflesecurity/trufflehog](https://github.com/trufflesecurity/truffle
 
 **Source:** `github.com/sirwart/ripsecrets`, its `Cargo.toml`.
 
-Its dependencies are the real finding: `regex`, `grep` and `ignore` (ripgrep's own
-matcher/searcher and gitignore-aware walking crates, reused rather than reimplemented),
-`num_cpus`, `clap`, `memoize`, `tempfile`, `lazy_static`. **No JSON crate at all** —
-ripsecrets has no structured-config input, so it has nothing to say directly about
-PRAETOR's own open JSON-crate question (see §8).
+**Corrected 2026-08-25 against the live manifest** (the version below was incomplete
+— it omitted a runtime dependency and did not separate build/dev dependencies from
+runtime ones, caught by CodeRabbit's first review pass on this document, verified
+independently by re-fetching `raw.githubusercontent.com/sirwart/ripsecrets/main/Cargo.toml`
+directly before accepting the correction):
 
-The speed story is architectural: all secret-pattern regexes compile into a **single
-combined regex/`RegexSet`** so each file is scanned in one pass rather than once per
-pattern, and file-walking is delegated to `ignore` + `grep` — literally ripgrep's own
-internal crates — rather than a hand-rolled traversal. `.gitignore`-aware walking by
-default is also a false-positive reduction: generated/vendored code with high-entropy
-strings never gets scanned.
+- **Runtime:** `regex`, `grep`, `ignore` (ripgrep's own matcher/searcher and
+  gitignore-aware walking crates, reused rather than reimplemented), `termcolor`,
+  `num_cpus`, `clap` (derive), `memoize`, `tempfile`, `lazy_static`.
+- **Build-time only** (`[build-dependencies]`, a *second*, separate `clap` entry plus
+  two more): `clap`, `clap_complete`, `clap_mangen` — shell-completion/man-page
+  generation, not part of the shipped scanning binary's runtime behaviour.
+- **Dev-only** (`[dev-dependencies]`): `criterion`, for its benchmark harness.
 
-**Adoptable, both directly usable in PRAETOR's Rust port:**
-- Reuse the `ignore` + `grep` crates rather than writing a custom walker/regex-apply
-  loop — a solved problem, the exact crates that make ripgrep itself correct on
-  `.gitignore` semantics.
-- Combine all secret-pattern regexes into one `RegexSet`/alternation before the file
-  loop, for O(1) passes per file rather than O(patterns).
+**No JSON crate at all** — ripsecrets has no structured-config input, so it has
+nothing to say directly about PRAETOR's own open JSON-crate question (see §8).
+
+The speed story is architectural: all secret-pattern regexes compile into a
+**`RegexSet`, used as a prefilter** — file-walking is delegated to `ignore` + `grep`
+— literally ripgrep's own internal crates — rather than a hand-rolled traversal.
+`.gitignore`-aware walking by default is also a false-positive reduction for
+ripsecrets: generated/vendored code with high-entropy strings never gets scanned.
+
+**Adoptable, with one caveat each — both corrected 2026-08-25 after the same review pass:**
+- Reuse the `ignore` + `grep` crates for file-walking rather than writing a custom
+  walker/regex-apply loop — a solved problem, the exact crates that make ripgrep
+  itself correct on `.gitignore` semantics. **🔴 CAVEAT, and it is not cosmetic: `ignore`'s
+  default `.gitignore`-awareness is exactly the property PRAETOR's OWN secrets engine
+  must NOT inherit.** `SECRETS_SKIP_DIRS` (`scripts/core.py`) is deliberately three
+  entries (`.git`, `.hg`, `.svn`) — far narrower than the walker's `DEFAULT_SKIP_DIRS`
+  — specifically so the secrets wide walk reads `vendor/`, `node_modules/`, `.venv/`,
+  `dist/`, `build/`, and every gitignored file, because a committed credential there
+  is disclosed exactly as much as one at the root. This is not a hypothetical: commit
+  `0930947` reverted an EARLIER attempt at exactly this kind of git/gitignore-status
+  narrowing after it turned a real gitignored credential into a false clean — see
+  `[[a-design-doc-does-not-know-what-happened-after-it-was-written]]` in this
+  project's memory, and `AGENTS.md`'s "Designed but not built" section, both about
+  the identical failure this survey nearly recommended repeating one file over. If the
+  Rust secrets port uses `ignore`, it must be built with default ignores explicitly
+  disabled (`ignore::WalkBuilder::standard_filters(false)` or equivalent) and
+  `SECRETS_SKIP_DIRS`'s narrower three-entry skip list applied instead — reusing the
+  crate for its walking mechanics, not its default policy.
+- Compile secret patterns into a `RegexSet` **as a prefilter only, not as the
+  extraction step.** `RegexSet` reports which pattern INDICES matched a haystack; per
+  Rust `regex` crate documentation, it does not return `Captures` or match locations
+  at all. Verified directly against PRAETOR's own existing Rust secrets engine
+  (`rust/praetor-core/src/secrets.rs`): it already does this correctly — 16 provider
+  patterns each with a named `(?P<secret>...)` group, matched via
+  `provider.regex.captures_iter(line)` and `.name("secret")`, feeding
+  `redact_line(line, secret)` — and does not currently use `RegexSet` at all. The
+  correct two-step shape, if `RegexSet` is added as a speed optimization: use it to
+  cheaply determine which pattern(s) matched, then re-run only the matched pattern's
+  individual `Regex` to extract the named `secret` capture for redaction/reporting.
+  Total matching cost is then "one `RegexSet` pass, plus one `Regex` pass per matched
+  pattern" — not O(1) per file as originally stated here, since the second pass's
+  cost still scales with how many patterns actually matched.
 
 **Nothing to avoid here** — architecturally aligned with PRAETOR's own constraints
 (local-only, no network, no execution).
@@ -146,10 +209,23 @@ PRAETOR's own rule says structural suppression must never apply there. It lets a
 mark "yes, this is a real credential, it's a test fixture I control, I accept the
 risk" without weakening the detector or writing a path-based carve-out — which
 `CLAUDE.md` separately flags as unsafe ("never suppress on path alone"). Concretely: a
-`praetor scan --baseline .praetor-baseline.json` mode recording finding fingerprints
-(file + rule id + hash of matched text), silently dropping only *exact* re-matches on
-later scans, with an `audit` command to review/relabel. Nothing here weakens the
-"unproven ⇒ keep" default for anything not already in the baseline.
+`praetor scan --baseline .praetor-baseline.json` mode recording finding fingerprints,
+silently dropping only *exact* re-matches on later scans, with an `audit` command to
+review/relabel. Nothing here weakens the "unproven ⇒ keep" default for anything not
+already in the baseline.
+
+**🔴 CORRECTED 2026-08-25 (caught in review): the fingerprint above must NOT be
+`file + rule id + hash of matched text` alone.** That is a SET identity, not a
+per-occurrence one — the same secret value appearing twice in one file under the
+same rule collapses to a single baseline entry, so a genuinely new second
+occurrence at a different line reads as "already baselined" and silently
+disappears, which is exactly the false-clean shape this whole document argues
+against elsewhere. The fingerprint needs an occurrence-distinguishing component
+(line number, or a stable occurrence index within the file) so two identical
+secrets at two different locations remain two distinct baseline entries. Any
+implementation of this idea needs a regression test asserting exactly that: two
+copies of the same credential in one file, baseline one occurrence, confirm the
+second still reports.
 
 **Do not adopt as-is:** detect-secrets' cross-plugin duplicate-finding behavior would
 add noise to PRAETOR's existing dedup/rank pass in `interpret.py`; a baseline should
@@ -174,25 +250,37 @@ converging on the same pre-filter pattern is worth treating as a real signal, an
 worth checking whether PRAETOR's own SAST/secrets engines already do this before
 invoking Semgrep or running regex over every file regardless of content.
 
-**Taint-mode's source/sink/sanitizer/propagator model is directly comparable to
-PRAETOR's `taint.py`.** Semgrep's taint carries **provenance** — which source rule
-produced it, and the call-chain that carried it — and merges to a `Both` state at
-control-flow joins where one branch is tainted and another isn't, rather than
-collapsing to one boolean. PRAETOR's own `CLAUDE.md` already documents the sharp edge
-in `is_provably_inert()`: a key declared in one file and used in another can't be
+**Taint-mode's source/sink/sanitizer/propagator RULE MODEL is directly comparable to
+PRAETOR's `taint.py`.** Semgrep's rule DSL declares `pattern-sources`,
+`pattern-sinks`, `pattern-sanitizers`, and propagators. **Correction, 2026-08-25:**
+the earlier version of this section attributed a specific `Clean` /
+`Tainted(sources)` / `Both` state-machine to Semgrep's own implementation as if it
+were documented fact; a live query against Semgrep's actual internals
+(`src/tainting/Shape_and_sig.ml` and related OCaml source) found its real
+field-sensitive dataflow tracking uses `Tainted` / `Clean` / `Bot` (an
+inherits-from-parent "no explicit marker" state, not a merge-of-two-branches
+`Both`), and that the specific three-state lattice named here does not appear as a
+documented architectural concept in Semgrep's own materials. PRAETOR's own
+`CLAUDE.md` already documents the sharp edge this comparison was reaching for, in
+`is_provably_inert()`: a key declared in one file and used in another can't be
 proven reachable *in that file* and reads as inert. Semgrep's inter-procedural
-(paid-tier) taint tracking targets exactly this gap via cross-file call graphs —
-confirming PRAETOR's known limitation is a recognized, named hard problem in this
-space, not a shortcut PRAETOR uniquely took, and that a real fix is a large
-undertaking Semgrep itself gates behind a paid tier.
+(paid-tier) taint tracking targets a related gap via cross-file call graphs —
+worth noting as a recognized, named hard problem in this space, not a shortcut
+PRAETOR uniquely took, and that a real fix is a large undertaking Semgrep itself
+gates behind a paid tier — but the specific state-machine below is now labeled
+correctly: ours, not theirs.
 
 **Adoptable:**
 - Literal-string prefiltering before any expensive per-file analysis, if not already
   uniform across PRAETOR's engines.
-- A **provenance-tagged taint state** (`Clean` / `Tainted(sources)` / `Both`) as a
-  richer return type than a boolean from `is_provably_inert()`, so a suppression
-  decision's report can say *which* source justified it — `CLAUDE.md` already requires
-  suppression to carry a stated reason, never silence.
+- **A PROPOSED PRAETOR design** (not a description of Semgrep's own implementation —
+  see the correction above): a provenance-tagged taint state (`Clean` /
+  `Tainted(sources)` / `Both`) as a richer return type than a boolean from
+  `is_provably_inert()`, so a suppression decision's report can say *which* source
+  justified it — `CLAUDE.md` already requires suppression to carry a stated reason,
+  never silence. The general idea — richer-than-boolean taint state — is inspired by
+  seeing that Semgrep's rule model separately tracks sources/sinks/sanitizers, not by
+  copying a specific Semgrep data structure.
 
 **Do not adopt:** cross-file taint tracking is a large-scope commitment (call graphs,
 per-function summaries) — reasonable to note as a known limitation with Semgrep's own
@@ -243,11 +331,26 @@ duplicate-version detection, as layered independently-configurable policy sectio
 
 **Directly answers an open question:** PRAETOR's Rust port will eventually need to
 audit its own Rust dependency tree, and this is exactly what these tools are for.
-Running `cargo audit` (or `cargo deny check`) as a `precommit.sh`/CI gate against
-PRAETOR's own `Cargo.lock` the moment the port has real dependencies is low-effort,
-high-value, and fully compatible with the never-execute invariant even when the
-"target" is PRAETOR's own tree — neither tool executes or builds the audited crates,
-only reads `Cargo.lock` and queries the advisory database.
+Running `cargo audit` as a `precommit.sh`/CI gate against PRAETOR's own `Cargo.lock`
+the moment the port has real dependencies is low-effort, high-value, and compatible
+with the never-execute invariant — it only reads `Cargo.lock` and queries the
+advisory database.
+
+**🔴 CORRECTED 2026-08-25: `cargo-deny` is not the same claim, and the original text
+here conflated the two tools.** `cargo deny check` invokes `cargo metadata`
+internally by default to build its dependency graph — confirmed against
+`cargo-deny`'s own documentation — and while `cargo metadata` does not execute build
+scripts itself, dependency-graph *resolution* is a different operation from `cargo
+audit`'s read-only `Cargo.lock` parse, and worth stating precisely rather than
+folding into one "neither executes anything" sentence. This is PRAETOR's own tree
+being resolved, not an attacker-controlled target, so it is not the invariant-1
+class of danger the never-execute rule exists for — but a self-scanning gate this
+project would add to its own precommit gate deserves the same precision this
+project demands of everything else it certifies as safe. If `cargo-deny` is adopted,
+prefer `cargo-deny --metadata-path <pre-generated-metadata.json> check` (documented,
+supported) over the implicit default, so the gate's own inputs stay explicit and
+the network/resolution step is a visible, separate command rather than hidden
+inside the check.
 
 Sources: [RustSec/rustsec – cargo-audit](https://github.com/RustSec/rustsec/tree/main/cargo-audit), [rustsec/advisory-db](https://github.com/rustsec/advisory-db), [rustsec.org](https://rustsec.org/)
 
@@ -276,15 +379,34 @@ there is a concrete, documented safety wrinkle relevant to exactly PRAETOR's use
 limit (128, via a `remaining_depth` counter) against stack-overflow DoS from
 deeply-nested JSON — but (a) this guard was found bypassable when deserializing from
 an already-built `serde_json::Value` using `IgnoredAny` rather than going through
-`from_str` directly (fixed upstream, `serde-rs/serde` issue #3023), and (b)
-`serde_json` ships an optional `unbounded_depth` feature that disables the limit
-entirely and **must never be enabled** on a manifest-parsing path reading
-attacker-controlled content. If PRAETOR adopts `serde_json`: parse MCP manifests via
-`from_str`/`from_slice` directly into a typed struct (not a generic `Value` walked
-with a discard-visitor), confirm `unbounded_depth` is absent from the enabled feature
-set, and add a deeply-nested-JSON fixture that must fail cleanly as one of the "add
-its test" cases `CLAUDE.md` already requires for any engine widening the never-execute
+`from_str` directly. **🔴 CORRECTED 2026-08-25: this is NOT fixed upstream.**
+Independently re-checked directly against the GitHub API (`gh api
+repos/serde-rs/serde/issues/3023`) before accepting the correction: `state: open`,
+`closed_at: null`, as of this writing — the earlier version of this document
+asserted a fix that does not exist. The guidance below does not depend on the issue
+being fixed and is unchanged by the correction. And (b) `serde_json` ships an
+optional `unbounded_depth` feature that disables the limit entirely and **must
+never be enabled** on a manifest-parsing path reading attacker-controlled content.
+If PRAETOR adopts `serde_json`: parse MCP manifests via `from_str`/`from_slice`
+directly into a typed struct (not a generic `Value` walked with a
+discard-visitor — the `IgnoredAny` bypass in issue #3023 is exactly that path),
+confirm `unbounded_depth` is absent from the enabled feature set, and add a
+deeply-nested-JSON fixture that must fail cleanly as one of the "add its test"
+cases `CLAUDE.md` already requires for any engine widening the never-execute
 surface.
+
+⚠️ **This creates a real tension with `ADR-001` Amendment 3's own cost measurement,
+worth stating rather than leaving implicit.** That measurement's "4 new crates"
+figure explicitly assumes parsing into a generic `serde_json::Value` — its own text
+says the `serde_derive`/`syn`/`quote`/`proc-macro2` chain "never enters `cargo
+tree`'s actual compile graph... because parsing a generic `Value`... does not use
+`serde`'s derive machinery," and separately flags that a typed-struct approach
+"would pull the derive chain in for real." The security recommendation directly
+above this paragraph says to use a typed struct, not a generic `Value` — so the
+true dependency cost of following this survey's own safety guidance is higher than
+Amendment 3's headline "4 new crates," and whoever rules on Amendment 3 should
+re-measure `cargo tree` against a typed-struct parse path before treating "4 new
+crates" as the number that decision is made against.
 
 For regex: ripsecrets' plain `regex` crate plus ripgrep's own `grep`/`ignore` crates
 for file-walking is the clean precedent for PRAETOR's Rust secrets engine — `regex`
@@ -312,11 +434,15 @@ Sources: [ripsecrets Cargo.toml](https://raw.githubusercontent.com/sirwart/ripse
 5. **[Medium / low]** `secretGroup`-style capture-group separation and
    `stopwords`-on-extracted-value (Gitleaks), complementary to existing suppression.
 6. **[Medium / medium]** Reuse ripgrep's own `ignore` + `grep` crates in the Rust
-   secrets-engine port; combine all secret patterns into one `RegexSet`.
+   secrets-engine port **with default ignores explicitly disabled and
+   `SECRETS_SKIP_DIRS` applied instead** (see §3's caveat — this is not optional);
+   add a `RegexSet` prefilter ahead of the existing per-pattern captures, not in
+   place of them.
 7. **[Medium / medium]** Trivy's `Class`-discriminated unified per-target `Result`
    struct as the target shape for merging PRAETOR's four engines' output.
-8. **[Low / medium]** Provenance-tagged taint state (`Clean`/`Tainted(sources)`/`Both`)
-   in `taint.py`, borrowed from Semgrep's taint model — nice-to-have, not urgent.
+8. **[Low / medium]** A PROPOSED (not Semgrep's own) provenance-tagged taint state
+   (`Clean`/`Tainted(sources)`/`Both`) in `taint.py`, inspired by Semgrep's
+   source/sink/sanitizer rule model — nice-to-have, not urgent.
 9. **[Do not adopt]** TruffleHog's live credential verification — directly conflicts
    with the never-execute/never-network invariant.
 10. **[Do not adopt / watch only]** Trivy's implicit vulnerability-database

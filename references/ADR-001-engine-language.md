@@ -228,7 +228,7 @@ no JSON parser. Re-verified 2026-08-24: still exactly one call site.
 (`git checkout --`, confirmed restored byte-identical to the pre-measurement `Cargo.toml`) — nothing
 here is committed or authorised by having been measured.
 
-```
+```text
 praetor-core v0.1.0
 ├── base64 v0.23.1                (existing, Amendment 2)
 ├── regex v1.13.1  + 4 transitive  (existing, Amendment 1)
@@ -252,7 +252,7 @@ real.
 executes at build time."** That property does NOT hold for `serde_json`. Checked directly, not
 assumed:
 
-```
+```text
 serde_json-1.0.151/build.rs   PRESENT
 serde_core-1.0.229/build.rs   PRESENT
 zmij-1.0.23/build.rs          PRESENT
