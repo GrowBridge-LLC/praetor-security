@@ -18,8 +18,14 @@ Every new SCA backend widens this surface. Add a test here when you add one.
 
 import os
 import subprocess
+import contextlib
+import io
+import json
 
 import engine_sca
+import engine_sast
+import core
+import praetor
 import report
 
 
@@ -197,6 +203,51 @@ def test_sast_retry_removes_only_rejected_nosem_flag(monkeypatch, tmp_path):
     assert "--disable-nosem" not in calls[1]
     assert "--x-ignore-semgrepignore-files" in calls[1]
     assert "rejected --disable-nosem" in result["detail"]
+
+
+def test_nosemgrep_outcome_is_filtered_with_reason_and_without_marker_active(monkeypatch, tmp_path):
+    """Pin the composed outcome, not only the Semgrep argv mechanism."""
+    calls = []
+
+    def fake_sast_run(*args, **kwargs):
+        calls.append(1)
+        return {
+            "status": "ok",
+            "detail": "fixture",
+            "runtime": "test",
+            "findings": [core.Finding(
+                engine="sast", rule_id="praetor-py-subprocess-shell-true",
+                title="shell=True", severity=core.Severity.HIGH,
+                file="fixture.py", line=1, category="INJECTION", cwe="CWE-78",
+            )],
+        }
+
+    monkeypatch.setattr(engine_sast, "run", fake_sast_run)
+
+    def scan(source):
+        (tmp_path / "fixture.py").write_text(source, encoding="utf-8")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = praetor.main([
+                str(tmp_path), "--format", "json", "--quiet", "--engines", "sast",
+                "--fail-on", "HIGH", "--no-registry",
+            ])
+        return rc, json.loads(out.getvalue())
+
+    filtered_rc, filtered_doc = scan("subprocess.call(cmd, shell=True)  # nosemgrep\n")
+    assert filtered_rc == 0
+    assert filtered_doc["findings"] == []
+    assert len(filtered_doc["filtered"]) == 1
+    assert filtered_doc["filtered"][0]["filter_reason"] == (
+        "suppressed by inline ignore marker on the flagged line"
+    )
+
+    active_rc, active_doc = scan("subprocess.call(cmd, shell=True)\n")
+    assert active_rc == 1
+    assert len(active_doc["findings"]) == 1
+    assert active_doc["findings"][0]["rule_id"] == "praetor-py-subprocess-shell-true"
+    assert not active_doc["filtered"]
+    assert len(calls) == 2
 
 
 def test_the_docker_runtime_mounts_the_target_read_only(tmp_path):
