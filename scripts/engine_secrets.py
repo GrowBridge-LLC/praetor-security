@@ -15,7 +15,8 @@ Two complementary strategies:
 It also unwraps base64 blobs and re-checks the decoded content, catching
 base64-wrapped keys that naive denylists miss.
 
-The reported snippet is ALWAYS redacted -- PRAETOR never emits a live secret.
+Provider-recognised credentials are redacted centrally at the Finding boundary;
+formats without a provider rule may still require a future detector.
 """
 
 from __future__ import annotations

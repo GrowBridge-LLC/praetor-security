@@ -424,7 +424,7 @@ def _first(x):
 
 
 def _source_line(path: str, line_no: int, cache: dict) -> str:
-    """Read a single source line for a redacted snippet. Static read only."""
+    """Read a single source line; the shared Finding boundary masks known providers."""
     if line_no <= 0:
         return ""
     if path not in cache:
