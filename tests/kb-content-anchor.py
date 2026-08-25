@@ -32,8 +32,8 @@ def normalize(value: str, disabled: str | None = None) -> str:
     return value.strip().lower()
 
 
-def resolve(record: dict) -> bool:
-    quote = normalize(str(record.get("verbatim") or ""))
+def resolve(record: dict, disabled: str | None = None, lookback: int = 1) -> bool:
+    quote = normalize(str(record.get("verbatim") or ""), disabled)
     if not quote:
         return True
     source = Path(record["source_file"])
@@ -41,36 +41,11 @@ def resolve(record: dict) -> bool:
         lines = source.read_text(encoding="utf-8").splitlines()
         # Quotes may begin in the hard-wrapped line immediately before the
         # recorded line; one-line lookback is the measured knee (57 -> 34).
-        start = max(0, int(record["source_line"]) - 2)
+        start = max(0, int(record["source_line"]) - 1 - lookback)
     except (OSError, ValueError, KeyError):
         return False
-    window = normalize("\n".join(lines[start : start + WINDOW_LINES]))
+    window = normalize("\n".join(lines[start : start + WINDOW_LINES]), disabled)
     return quote in window
-
-
-def resolve_without(record: dict, rule: str) -> bool:
-    """Resolve a record with one named normalization rule disabled."""
-    quote = normalize(str(record.get("verbatim") or ""), rule)
-    if not quote:
-        return True
-    try:
-        lines = Path(record["source_file"]).read_text(encoding="utf-8").splitlines()
-        start = max(0, int(record["source_line"]) - 2)
-    except (OSError, ValueError, KeyError):
-        return False
-    return quote in normalize("\n".join(lines[start : start + WINDOW_LINES]), rule)
-
-
-def resolve_without_lookback(record: dict) -> bool:
-    """Control path for proving the one-line lookback is load-bearing."""
-    try:
-        lines = Path(record["source_file"]).read_text(encoding="utf-8").splitlines()
-        start = max(0, int(record["source_line"]) - 1)
-    except (OSError, ValueError, KeyError):
-        return False
-    return normalize(str(record.get("verbatim") or "")) in normalize(
-        "\n".join(lines[start : start + WINDOW_LINES])
-    )
 
 
 def main() -> int:
@@ -88,17 +63,21 @@ def main() -> int:
         print("kb-content-anchor: POSITIVE CONTROL FAILED", file=sys.stderr)
         return 1
     for rule, record in (controls[name] for name in ("wrapped", "dash", "markdown")):
-        if record is None or not resolve(record) or resolve_without(record, rule):
+        if record is None or not resolve(record) or resolve(record, disabled=rule):
             print(f"kb-content-anchor: POSITIVE CONTROL FAILED ({rule})", file=sys.stderr)
             return 1
     # A synthetic quote that cannot occur in this source is the negative control;
     # unlike the old unresolved-set tautology, a broken matcher makes this fail.
-    impossible = {"verbatim": "__KB_CONTENT_ANCHOR_SYNTHETIC_NEVER_PRESENT_7f3c__", "source_file": __file__, "source_line": 1}
+    impossible = {
+        "verbatim": "__KB_CONTENT_ANCHOR_SYNTHETIC_" + "NEVER_PRESENT_7f3c__",
+        "source_file": __file__,
+        "source_line": 1,
+    }
     if resolve(impossible):
         print("kb-content-anchor: synthetic negative control resolved", file=sys.stderr)
         return 1
     lookback_control = next((r for r in records if r.get("id") == "ARCH-limits-0009"), None)
-    if lookback_control is None or not resolve(lookback_control) or resolve_without_lookback(lookback_control):
+    if lookback_control is None or not resolve(lookback_control) or resolve(lookback_control, lookback=0):
         print("kb-content-anchor: lookback control failed", file=sys.stderr)
         return 1
     # Comment-prefix has dependents but no pure single-rule corpus control; NFKC
