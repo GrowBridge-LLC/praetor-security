@@ -55,6 +55,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 
 # make sibling engine modules importable no matter the CWD
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -81,7 +82,18 @@ def _atomic_write_text(path: str, content: str) -> None:
             fh.write(content)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(temp_path, path)
+        for attempt in range(3):
+            try:
+                os.replace(temp_path, path)
+                break
+            except PermissionError as exc:
+                if attempt == 2:
+                    # Never fall back to open(path, "w"): that would reintroduce
+                    # torn reports. A blocked atomic publish must fail loudly.
+                    raise RuntimeError(
+                        f"atomic report publish failed for {path}: destination is in use"
+                    ) from exc
+                time.sleep(0.01 * (attempt + 1))
     except BaseException:
         try:
             os.unlink(temp_path)
