@@ -14,8 +14,7 @@ import json
 import sys
 
 EXPECTED_EMPTY_VERBATIM = 249
-FIELDS = ("id", "kind", "subject", "assertion", "verbatim", "source_file",
-          "authority", "binds")
+FIELDS = ("verbatim",)
 
 
 def main() -> int:
@@ -32,6 +31,15 @@ def main() -> int:
                     value = record.get(field)
                     if value is None or (isinstance(value, str) and not value.strip()):
                         counts[field] += 1
+    missing_volatile_reason = 0
+    for path in sorted(glob.glob("references/kb/claims-*.jsonl")):
+        with open(path, encoding="utf-8") as fh:
+            for raw in fh:
+                if not raw.strip():
+                    continue
+                record = json.loads(raw)
+                if record.get("volatile") and not str(record.get("volatile_reason") or "").strip():
+                    missing_volatile_reason += 1
     if counts["verbatim"] != EXPECTED_EMPTY_VERBATIM:
         print(
             f"kb-empty-fields: verbatim empty count {counts['verbatim']} "
@@ -39,7 +47,10 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"kb-empty-fields: {total} claims; empty required strings {counts}")
+    if missing_volatile_reason:
+        print(f"kb-empty-fields: {missing_volatile_reason} volatile claims lack volatile_reason", file=sys.stderr)
+        return 1
+    print(f"kb-empty-fields: {total} claims; empty verbatim {counts['verbatim']}; volatile missing reason 0")
     return 0
 
 

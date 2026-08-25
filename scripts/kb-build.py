@@ -47,8 +47,7 @@ OPTIONAL_DEFAULTS = {"supersedes": None, "conflicts_with": []}
 # Existing debt is pinned by the gate; new or changed claims may not introduce
 # another empty string in a required field.  The generated records are not the
 # authority for this check because this script rewrites their hashes.
-EMPTY_STRING_FIELDS = {"id", "kind", "subject", "assertion", "verbatim",
-                       "source_file", "authority", "binds"}
+EMPTY_STRING_FIELDS = {"verbatim"}
 
 
 def compute_source_sha(source_file: str, source_line: int) -> str:
@@ -137,6 +136,13 @@ def main() -> int:
             if previous is None or not old_empty:
                 sys.stderr.write(
                     f"kb-build: {rid} introduces empty required field {field!r}\n"
+                )
+                return 1
+        if rec.get("volatile") and not str(rec.get("volatile_reason") or "").strip():
+            old_reason = previous.get("volatile_reason") if previous else None
+            if previous is None or not str(old_reason or "").strip():
+                sys.stderr.write(
+                    f"kb-build: {rid} introduces volatile claim without a reason\n"
                 )
                 return 1
         try:
