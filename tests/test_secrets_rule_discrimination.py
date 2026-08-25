@@ -27,6 +27,8 @@ prefixes. `test_every_provider_rule_wins_its_own_token` runs EVERY rule in
 nobody thought of, and keeps answering it for rules added later.
 """
 
+import base64
+import hashlib
 import os
 
 import pytest
@@ -73,6 +75,11 @@ def _run(n: int) -> str:
     """Exactly n alphanumeric characters, deterministic and placeholder-safe."""
     return (_ALPHABET * (n // len(_ALPHABET) + 1))[:n]
 
+
+def _azure_key() -> str:
+    """Deterministic high-entropy Azure-shaped material, never a word/example."""
+    return base64.b64encode(hashlib.sha256(b"praetor-f18-azure").digest()).decode()
+
 EXAMPLES = {
     "aws-access-key-id":            "AKIA" + "QRSTUVWX23456789",
     "aws-secret-access-key":        'aws_secret_access_key = "' + "Qr7Tz" + _B62 + "wLm9Ke2Vd" + '"',
@@ -90,6 +97,7 @@ EXAMPLES = {
     "sendgrid-key":                 "SG." + "Qr7TzWmK9Le2Vd4Nb8XcJf" + "." + "Qr7TzWmK9Le2Vd4Nb8Xc" + "Jf5Hp3Rt6Yw2Sg8BnKd4Mz7",
     "npm-token":                    "npm_" + _run(36),
     "jwt":                          "eyJ" + "hbGciOiJIUzI1NiJ9" + ".eyJ" + "zdWIiOiJRcjdUeldtSzlMZTIifQ" + "." + "Qr7TzWmK9Le2Vd4Nb8XcJf5Hp3Rt6Yw",
+    "azure-storage-account-key":    "DefaultEndpointsProtocol=https;AccountName=fixture;AccountKey=" + _azure_key() + ";EndpointSuffix=core.windows.net",
 }
 
 
@@ -172,6 +180,24 @@ def test_openai_key_still_reported_as_openai(tmp_path):
     assert active[0].rule_id == "openai-key", (
         f"reported as {active[0].rule_id!r}; the OpenAI rule must still win its own token"
     )
+
+
+def test_azure_storage_key_inside_connection_string_gates(tmp_path):
+    """The named Azure envelope must be detected at provider severity."""
+    findings = _survivors(tmp_path, EXAMPLES["azure-storage-account-key"] + "\n")
+    active = [f for f in findings if not f.filtered]
+    assert active, "wrapped Azure storage key produced no active finding"
+    azure = [f for f in active if f.rule_id == "azure-storage-account-key"]
+    assert azure, f"wrapped Azure key was not reported by its provider rule: {[f.rule_id for f in active]}"
+    assert azure[0].severity >= engine_secrets.Severity.MEDIUM
+
+
+def test_covered_aws_key_still_gates_inside_an_envelope(tmp_path):
+    """Positive control: a covered provider remains visible when embedded."""
+    wrapped = "DefaultEndpointsProtocol=https;AccessKey=" + EXAMPLES["aws-access-key-id"] + ";EndpointSuffix=amazonaws.com"
+    findings = _survivors(tmp_path, wrapped + "\n")
+    active = [f for f in findings if not f.filtered]
+    assert any(f.rule_id == "aws-access-key-id" for f in active), "AWS provider control stopped gating inside an envelope"
 
 
 def test_collapsed_rule_is_disclosed_not_silently_dropped(tmp_path):

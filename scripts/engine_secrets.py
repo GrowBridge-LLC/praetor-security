@@ -8,7 +8,9 @@ Two complementary strategies:
      (e.g. DATABASE_URL=postgres://user:pass@host/db). These are HIGH confidence.
   2. Generic keyword-assignment + Shannon-entropy detection for high-entropy
      strings that no provider pattern covers (MEDIUM/LOW confidence, aggressively
-     filtered against placeholders and known false-positive shapes).
+     filtered against placeholders and known false-positive shapes). Coverage
+     outside the provider list rests on entropy; entropy can be diluted by
+     embedding a credential in a configuration envelope.
 
 It also unwraps base64 blobs and re-checks the decoded content, catching
 base64-wrapped keys that naive denylists miss.
@@ -48,6 +50,11 @@ PROVIDERS = [
      re.compile(r"(?i)aws[_\-. ]?(?:secret|sk)[_\-. ]?(?:access)?[_\-. ]?key[\"'\s:=]{1,6}[\"']?(?P<secret>[A-Za-z0-9/+]{40})[\"']?"),
      _S.CRITICAL, _P.HIGH,
      "Rotate the AWS secret key immediately; never commit it -- use IAM roles or a secrets manager."),
+
+    ("azure-storage-account-key", "Azure Storage Account Key",
+     re.compile(r"(?i)(?=[^\r\n]*core\.windows\.net)[^\r\n]*AccountKey\s*=\s*(?P<secret>[A-Za-z0-9+/]{40,}={0,2})"),
+     _S.HIGH, _P.HIGH,
+     "Rotate the Azure storage account key; store it in a secret manager and use managed identity where possible."),
 
     ("gcp-api-key", "Google API Key",
      re.compile(r"\b(?P<secret>AIza[0-9A-Za-z_\-]{35})\b"),
