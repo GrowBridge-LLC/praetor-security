@@ -638,6 +638,40 @@ class ScanFile:
     contains_nul: bool = False
 
 
+def _consider_file(ap: str, rel: str, max_bytes: int, excludes: list,
+                    stats: Optional[dict]) -> Optional["ScanFile"]:
+    """The single per-file admission decision used by `walk_files()`'s
+    directory-walk loop: symlink refusal, the exclude regex, the size cap,
+    the binary/NUL sniff. Factored out so a future second file selector (a
+    different candidate SET, same admission RULE) cannot silently diverge
+    from this one -- see the git-tracked-selection design note in
+    `references/audits/2026-08-13-scope-and-cost-research.md` §3 for why that
+    matters and why it was not built: `git log 0930947` reverted an earlier
+    attempt after it turned a real, gitignored credential into a false clean.
+    """
+    if os.path.islink(ap):
+        return None
+    if any(rx.search(rel) for rx in excludes):
+        if stats is not None:
+            stats["excluded_by_pattern"] += 1
+        return None
+    fn = os.path.basename(rel)
+    if not scannable(fn):
+        return None
+    try:
+        size = os.path.getsize(ap)
+    except OSError:
+        return None
+    if size > max_bytes:
+        return None
+    binary, has_nul = _binary_and_nul_in_sniff(ap)
+    if binary:
+        return None
+    if stats is not None and is_code(fn):
+        stats["kept_code_files"] += 1
+    return ScanFile(ap, rel, size, has_nul)
+
+
 def walk_files(
     target: str,
     skip_dirs: Optional[set] = None,
@@ -736,26 +770,9 @@ def walk_files(
         for fn in files:
             ap = os.path.join(root, fn)
             rel = os.path.relpath(ap, target).replace("\\", "/")
-            if os.path.islink(ap):
-                continue
-            if any(rx.search(rel) for rx in excludes):
-                if stats is not None:
-                    stats["excluded_by_pattern"] += 1
-                continue
-            if not scannable(fn):
-                continue
-            try:
-                size = os.path.getsize(ap)
-            except OSError:
-                continue
-            if size > max_bytes:
-                continue
-            binary, has_nul = _binary_and_nul_in_sniff(ap)
-            if binary:
-                continue
-            out.append(ScanFile(ap, rel, size, has_nul))
-            if stats is not None and is_code(fn):
-                stats["kept_code_files"] += 1
+            sf = _consider_file(ap, rel, max_bytes, excludes, stats)
+            if sf is not None:
+                out.append(sf)
     return out
 
 

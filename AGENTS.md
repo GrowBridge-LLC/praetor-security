@@ -206,12 +206,36 @@ on your own branch. Do not write to the auditor's handoff.
 
 ## Designed but not built — reasonable places to pick up work
 
-Not exhaustive; `references/audits/` has the full record. These are named,
-authorized-or-open design decisions with no code behind them yet:
+Not exhaustive; `references/audits/` has the full record. Both items below
+were previously listed here as open design work; both are now closed --
+one TRIED AND REVERTED, one DECIDED AGAINST -- so nothing in this section is
+currently a "pick this up" item. Read them anyway before proposing either
+again; that is the point of writing them down here rather than only in the
+audit doc.
 
-- Git-tracked file selection for the wide-walk engines — measured 56× fewer
-  files scanned on a real repository, same coverage, and it closes the
-  directory-name-evasion hole a hardcoded skip-list can't.
+- **TRIED, FOUND UNSAFE, REVERTED — do not rebuild without solving the actual
+  problem, not the one this description states.** Git-tracked file selection
+  for the secrets engine's wide walk was measured at 56× fewer files scanned
+  on a real repository, same coverage, and closing a directory-name-evasion
+  hole a hardcoded skip-list can't
+  (`references/audits/2026-08-13-scope-and-cost-research.md` §3) — that part
+  is still true. **It was built, shipped, found to turn a real gitignored
+  credential into a false clean, and reverted in `0930947`** ("fix: preserve
+  secrets scope and fail on engine malfunction" — see its `CHANGELOG.md`
+  entry: "A target-controlled `.gitignore` is not a scope boundary: ordinary
+  ignored files remain eligible because live credentials commonly live in
+  local configuration."). A basename-pattern safety net for known
+  credential-shaped filenames (`.env`, SSH keys, `.pem`/`.key`) does not fix
+  this: "local configuration" is an open-ended category, not a finite one to
+  enumerate, and an allowlist that cannot be completed by enumerating is the
+  same failure shape CLAUDE.md's suppression rules warn about, applied to
+  scope instead of to a single finding. `scripts/praetor.py`'s own comment at
+  the `secret_files` call site states the current, correct design and why.
+  If someone wants this cost win back, the fix has to keep secrets' recall on
+  ordinary gitignored local config -- narrowing candidate files by directory-
+  or-git-status alone cannot do that; the property that actually distinguishes
+  a safe-to-skip file (vendored, generated, reproducible from a lockfile) from
+  an unsafe-to-skip one (hand-edited local config) is not "is it tracked".
 - **DECIDED, NOT BUILT: "restore Semgrep's own measured default-ignore set
   (ten directories) instead of PRAETOR's broader `DEFAULT_SKIP_DIRS`" was
   considered and rejected 2026-08-24.** It reads as a coverage win in
