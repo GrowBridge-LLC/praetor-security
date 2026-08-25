@@ -360,8 +360,19 @@ def _apply_injection_exemplar(findings, target, read_text):
         m = rx.search(line)
         if m is None or not _span_is_quoted(line, m.start(), m.end()):
             continue
-        # Look at the line itself plus one either side: the warning often precedes
+        # The line itself plus one either side, because the warning often precedes
         # or follows the specimen rather than sharing its line.
+        #
+        # This window is LOAD-BEARING. It is not conservatism, and it is not a
+        # tuning knob. The framing text is the entire reason the specimen is
+        # treated as inert, so the frame has to be close enough that any reader
+        # who receives the specimen also receives the frame. A reader that takes
+        # the file in chunks -- which is the normal case for the agents this
+        # engine exists to protect -- can be handed the specimen with a distant
+        # frame left outside its chunk. Widening this to a paragraph, a section,
+        # or "anywhere in the file" reads like a harmless relaxation and is not
+        # one: at that point the suppression no longer tracks what the reader
+        # actually sees.
         lo, hi = max(0, f.line - 2), min(len(lines), f.line + 1)
         if not _DEFENSIVE_FRAME.search(" ".join(lines[lo:hi])):
             continue                      # quoted but unframed -> KEEP
