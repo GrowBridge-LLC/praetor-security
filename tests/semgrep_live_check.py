@@ -46,6 +46,7 @@ _VULN = (
     + "def handler(evt):" + chr(10)
     + "    " + "os." + "system(" + '"ls " + evt["p"]' + ")" + chr(10)
 )
+_VULN_NOSEM = _VULN.replace(")" + chr(10), ")  # nosemgrep" + chr(10))
 
 failures = []
 
@@ -109,7 +110,25 @@ def main():
         check("a .semgrepignore in the target does not silence SAST", n2 >= 1,
               "got %d findings, rc=%d" % (n2, p2.returncode))
 
-        # 3. THE FLAG WAS ACCEPTED, not silently fallen back on. engine_sast
+        # 3. OUTCOME. A real finding carrying an inline nosemgrep marker must
+        # move to the filtered bucket with its reason, never vanish from both
+        # active and filtered output. This is deliberately armed by the
+        # preceding control; an empty result here is otherwise vacuous.
+        with open(os.path.join(src, "app.py"), "w", encoding="utf-8") as fh:
+            fh.write(_VULN_NOSEM)
+        out3 = os.path.join(td, "out3")
+        p3 = run_praetor(src, "--out", out3)
+        with open(os.path.join(out3, "praetor-report.json"), encoding="utf-8") as fh:
+            data3 = json.load(fh)
+        filtered3 = data3.get("filtered", [])
+        reasons3 = [item.get("filter_reason") for item in filtered3 if isinstance(item, dict)]
+        check("a nosemgrep finding is filtered with a reason", 
+              len(data3.get("findings", [])) == 0 and len(filtered3) >= 1
+              and any(reason for reason in reasons3),
+              "findings=%d filtered=%d rc=%d" %
+              (len(data3.get("findings", [])), len(filtered3), p3.returncode))
+
+        # 4. THE FLAGS WERE ACCEPTED, not silently fallen back on. engine_sast
         #    retries once without the flag when semgrep rejects it, and records
         #    that in `detail`. A green result via the fallback still means this
         #    semgrep no longer supports the flag, which is the thing to catch.
@@ -125,10 +144,16 @@ def main():
             check("this semgrep accepts the scope flag (no fallback)", False,
                   "could not read meta.engines.sast.detail -- report shape changed; "
                   "refusing to treat an unreadable field as a pass")
+            check("this semgrep accepts --disable-nosem (no fallback)", False,
+                  "could not read meta.engines.sast.detail -- report shape changed; "
+                  "refusing to treat an unreadable field as a pass")
         else:
             detail = sast_meta.get("detail") or ""
             check("this semgrep accepts the scope flag (no fallback)",
-                  "rejected" not in detail,
+                  "rejected --x-ignore-semgrepignore-files" not in detail,
+                  ("detail said: ..." + detail[-110:]) if "rejected" in detail else "")
+            check("this semgrep accepts --disable-nosem (no fallback)",
+                  "rejected --disable-nosem" not in detail,
                   ("detail said: ..." + detail[-110:]) if "rejected" in detail else "")
 
     print("== %s ==" % ("ALL LIVE CHECKS PASSED" if not failures
