@@ -120,13 +120,17 @@ Before changing anything:
 - Run `git log --oneline -20` and compare it against whatever a handoff or
   audit claims as HEAD. A stale claim treated as current is how a fixed
   regression ships a second time.
-- As of commit `8f46d3b`, two findings from an external review
+- Two findings from an external review
   (`references/audits/2026-08-13-scope-and-cost-research.md`, labeled CR-1
-  and CR-2) were recorded open and unresolved in the code that ships — a
-  regex/glob mismatch in how `--exclude` reaches Semgrep, and an `ok` status
-  that survives a scope-narrowing fallback. If you're told they're closed,
-  verify directly against `scripts/core.py` (`re.compile` at line ~538) and
-  `scripts/engine_sast.py` before relying on it.
+  and CR-2) were recorded open as of commit `8f46d3b`. **CR-1 (regex/glob
+  mismatch in how `--exclude` reaches Semgrep) is fixed as of `bbce4a5`** —
+  `engine_sast.py` no longer forwards user `--exclude` patterns to Semgrep's
+  own glob-only flag; it post-filters Semgrep's results with the same regex
+  predicate `core.walk_files()` uses. **CR-2 (an `ok` status that survives a
+  scope-narrowing fallback) is still open.** If you're told CR-2 is closed,
+  verify directly against `scripts/engine_sast.py` before relying on it — the
+  same "a claim in conversation is a claim, not a fact" rule this section
+  opens with applies to this bullet too, including after it's edited again.
 
 ## No AI-tool branding in anything that ships
 
