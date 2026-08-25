@@ -12,9 +12,15 @@ and no adversarial second read at the time it was first written. Every claim bel
 carries a source link so it can be checked. Treat findings here the way any audit doc
 in this directory is treated — a claim to verify before building on it, not a ruling.
 `git log` this file if a "designed but not built" item below is later picked up, and
-check whether the *current* code has already superseded the finding — see
-`[[a-design-doc-does-not-know-what-happened-after-it-was-written]]` in this project's
-memory for exactly why that check matters.
+check whether the *current* code has already superseded the finding — commit
+`0930947` and `AGENTS.md`'s "Designed but not built" section are the exact,
+independently-checkable example: an earlier attempt at exactly the kind of
+git/gitignore-status scope-narrowing this document's §3 caveat now warns against
+was already built, shipped, and reverted after it caused a real false clean, and a
+prior version of this document nearly recommended repeating it without knowing
+that history existed. (The internal note this replaces pointed at a private
+session-memory file with no public link; corrected 2026-08-25 to point at
+verifiable repository artifacts instead, per CodeRabbit's review.)
 
 **Update, 2026-08-25.** It got the second, differently-built read the paragraph above
 said it hadn't had yet: CodeRabbit's first-ever review of this repository (`.coderabbit.yaml`
@@ -34,6 +40,25 @@ after independently re-verifying the two most checkable claims (the ripsecrets
 manifest, and whether `serde-rs/serde#3023` is actually fixed) rather than trusting
 the review at face value either — the same discipline this document asks of its own
 future readers.
+
+**Second review round, same day.** CodeRabbit re-reviewed the corrected document and
+found five more, of which two were defects in the *first round's own fixes* — which
+is the part worth noticing. The fingerprint repair I wrote in round one ("add a line
+number") was itself insufficient: two identical findings on the *same* line still
+collide. And the internal memory-file link I replaced was replaced in one place and
+not the other. The three genuinely new findings: a baseline written inside the
+scanned checkout is attacker-writable and needs a stated trust boundary; `cargo audit`
+fetches its advisory database over git **by default**, which the round-one text still
+implied it did not; and the `cargo-deny` citation needed an official version-pinned
+source rather than a repository link. All five are corrected below and marked where
+they happened. Verifying them turned up a sixth that CodeRabbit did not raise and I
+had asserted without checking — I had called `--metadata-path` a documented `check`
+flag; it is real, but it is a **top-level** argument and does not appear in `check`'s
+documented flag list at all. ⇒ **The generalisable lesson, recorded because it cost
+two rounds: a fix written immediately after reading a finding is the least-reviewed
+code in the change.** Its author has just been thinking about the defect class, which
+feels like immunity and is not. This repository's own CLAUDE.md already says so under
+"a fix is unaudited code"; this document is now a second instance of it.
 
 **Citations below point to mutable `main`/`master` branches** rather than pinned
 commits or release tags (CodeRabbit flagged this too, correctly, as a lower-severity
@@ -154,9 +179,8 @@ ripsecrets: generated/vendored code with high-entropy strings never gets scanned
   is disclosed exactly as much as one at the root. This is not a hypothetical: commit
   `0930947` reverted an EARLIER attempt at exactly this kind of git/gitignore-status
   narrowing after it turned a real gitignored credential into a false clean — see
-  `[[a-design-doc-does-not-know-what-happened-after-it-was-written]]` in this
-  project's memory, and `AGENTS.md`'s "Designed but not built" section, both about
-  the identical failure this survey nearly recommended repeating one file over. If the
+  that commit and `AGENTS.md`'s "Designed but not built" section, both about the
+  identical failure this survey nearly recommended repeating one file over. If the
   Rust secrets port uses `ignore`, it must be built with default ignores explicitly
   disabled (`ignore::WalkBuilder::standard_filters(false)` or equivalent) and
   `SECRETS_SKIP_DIRS`'s narrower three-entry skip list applied instead — reusing the
@@ -214,18 +238,32 @@ silently dropping only *exact* re-matches on later scans, with an `audit` comman
 review/relabel. Nothing here weakens the "unproven ⇒ keep" default for anything not
 already in the baseline.
 
-**🔴 CORRECTED 2026-08-25 (caught in review): the fingerprint above must NOT be
-`file + rule id + hash of matched text` alone.** That is a SET identity, not a
-per-occurrence one — the same secret value appearing twice in one file under the
-same rule collapses to a single baseline entry, so a genuinely new second
-occurrence at a different line reads as "already baselined" and silently
-disappears, which is exactly the false-clean shape this whole document argues
-against elsewhere. The fingerprint needs an occurrence-distinguishing component
-(line number, or a stable occurrence index within the file) so two identical
-secrets at two different locations remain two distinct baseline entries. Any
-implementation of this idea needs a regression test asserting exactly that: two
-copies of the same credential in one file, baseline one occurrence, confirm the
-second still reports.
+**🔴 CORRECTED 2026-08-25, twice, both caught in review: the fingerprint above must
+NOT be `file + rule id + hash of matched text` alone, and line number is not
+sufficient to fix it either.** `file + rule id + hash` is a SET identity: the same
+secret value appearing twice in one file under the same rule collapses to a single
+baseline entry, so a genuinely new second occurrence silently disappears —
+exactly the false-clean shape this whole document argues against elsewhere. Adding
+a bare line number narrows but does not close the gap: two identical findings on
+the *same* line (`TOKEN="x"; OTHER="x"` matching the same rule twice) still
+collide. The fingerprint needs a byte/column span or a deterministic
+match-position ordinal within the file, not merely a line number, to guarantee
+two distinct occurrences never share an identity. Any implementation of this idea
+needs two regression tests: two copies of one credential on separate lines, and
+two copies on the *same* line — baseline one occurrence in each case, confirm the
+other still reports.
+
+**🔴 A second gap, not present in the original text at all: who is trusted to write
+the baseline matters as much as what it matches.** If `.praetor-baseline.json`
+lives inside the same checkout being scanned, then any contributor whose ordinary
+changes land through the normal path could add a real secret's fingerprint to the
+baseline in the same change that introduces the secret, pre-suppressing detection of it
+— turning the baseline into an attacker-writable allowlist for exactly the thing
+it exists to catch. Any implementation needs a trust boundary stated explicitly
+(protected-path ownership on the baseline file, or a signature/review requirement
+separate from ordinary commits) and must report the count of baseline-suppressed
+findings in every scan's output, visibly, so a baseline silently growing is itself
+observable rather than a second silent channel next to the first.
 
 **Do not adopt as-is:** detect-secrets' cross-plugin duplicate-finding behavior would
 add noise to PRAETOR's existing dedup/rank pass in `interpret.py`; a baseline should
@@ -336,6 +374,29 @@ the moment the port has real dependencies is low-effort, high-value, and compati
 with the never-execute invariant — it only reads `Cargo.lock` and queries the
 advisory database.
 
+**🔴 CORRECTED 2026-08-25: "it only reads `Cargo.lock` and queries the advisory
+database" understates what `cargo audit` does on a default invocation.** It performs
+a **git fetch of the advisory database before auditing**, and that is the default,
+not an opt-in. Verified against the tool's own `audit.toml.example`, whose
+`[database]` section documents `fetch = true` as the default alongside
+`path = "~/.cargo/advisory-db"`, `url`, and `stale = false`. The CLI carries the
+same switch as `-n, --no-fetch` ("do not perform a git fetch on the advisory
+database"), with `--db <path>` to point at a local clone and `--stale` to permit a
+database with no commits in 90 days.
+
+This is a network operation, not code execution, so it is not an invariant-1
+violation — but PRAETOR's precommit gate is a place where "this step reaches the
+network" must be a stated property rather than a surprise. **Either** provision a
+local advisory database, set `[database] fetch = false` (or pass `--no-fetch --db
+<path>`), and run database updates as a separate, visibly networked step — **or**
+state explicitly that this gate runs outside the never-network path. What is not
+acceptable is leaving it implicit. ⚠️ Note the trade-off in the first option and do
+not paper over it: a gate pinned to a local database with fetching off will keep
+reporting clean against an advisory set that has stopped growing. `stale = false`
+is the control for that, and it must stay on — otherwise disabling the fetch
+converts a network dependency into a silent staleness problem, which is a worse
+failure than the one being avoided.
+
 **🔴 CORRECTED 2026-08-25: `cargo-deny` is not the same claim, and the original text
 here conflated the two tools.** `cargo deny check` invokes `cargo metadata`
 internally by default to build its dependency graph — confirmed against
@@ -347,12 +408,23 @@ being resolved, not an attacker-controlled target, so it is not the invariant-1
 class of danger the never-execute rule exists for — but a self-scanning gate this
 project would add to its own precommit gate deserves the same precision this
 project demands of everything else it certifies as safe. If `cargo-deny` is adopted,
-prefer `cargo-deny --metadata-path <pre-generated-metadata.json> check` (documented,
-supported) over the implicit default, so the gate's own inputs stay explicit and
-the network/resolution step is a visible, separate command rather than hidden
-inside the check.
+prefer `cargo deny --metadata-path <pre-generated-metadata.json> check` over the
+implicit default, so the gate's own inputs stay explicit and the resolution step is
+a visible, separate command rather than hidden inside the check.
 
-Sources: [RustSec/rustsec – cargo-audit](https://github.com/RustSec/rustsec/tree/main/cargo-audit), [rustsec/advisory-db](https://github.com/rustsec/advisory-db), [rustsec.org](https://rustsec.org/)
+⚠️ **Flag placement matters and I got the emphasis wrong the first time.**
+`--metadata-path` is a **top-level** `cargo-deny` argument, not a `check` subcommand
+argument — it does not appear in the `check` command's documented flag list, which is
+what makes it easy to conclude it does not exist. Verified in `cargo-deny`'s own
+`src/cargo-deny/main.rs`, where it is defined as `.long("metadata-path")` with the
+doc comment *"Path to cargo metadata json"* and the extended help *"By default we use
+`cargo metadata` to generate the metadata json, but you can override that behaviour
+by providing the path to the output of `cargo metadata`."* The same top-level
+argument set also carries `--offline`, `--frozen` and `--locked`, which are the
+relevant controls if `cargo-deny` is ever run somewhere network access must not
+happen.
+
+Sources: [RustSec/rustsec – cargo-audit](https://github.com/RustSec/rustsec/tree/main/cargo-audit), [rustsec/advisory-db](https://github.com/rustsec/advisory-db), [rustsec.org](https://rustsec.org/), [cargo-audit `audit.toml.example` (docs.rs, latest)](https://docs.rs/crate/cargo-audit/latest/source/audit.toml.example), [cargo-deny book – `check`](https://embarkstudios.github.io/cargo-deny/cli/check.html), [cargo-deny `src/cargo-deny/main.rs` (docs.rs, latest)](https://docs.rs/crate/cargo-deny/latest/source/src/cargo-deny/main.rs). All accessed 2026-08-25; `cargo-deny` documentation as published for the latest release at that date (the book states 0.14.1 only as the release that changed exit codes, not as the version the book covers).
 
 ---
 
