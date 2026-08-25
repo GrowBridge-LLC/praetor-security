@@ -1,6 +1,7 @@
 """Pin existing KB empty-string debt without allowing it to grow.
 
-The current debt is 249 claims with a null/empty ``verbatim`` value.  This is
+The current debt is 206 claims with a null/empty ``verbatim`` value after the
+bounded F12 backfill of the smallest claims file.  This is
 deliberately not backfilled here: ``verbatim`` is the only required citation
 field that ``kb-build.py`` does not regenerate, so an empty value removes the
 independent check on that record's source anchor.  The pin stops new debt while
@@ -13,7 +14,9 @@ import glob
 import json
 import sys
 
-EXPECTED_EMPTY_VERBATIM = 249
+# F12 bounded backfill: 43 citations in the smallest claims file now carry
+# source-line verbatim anchors; the remaining debt is 206 claims.
+EXPECTED_EMPTY_VERBATIM = 206
 FIELDS = ("verbatim",)
 
 

@@ -303,7 +303,7 @@ EMPTY_FIELDS=tests/kb-empty-fields.py
 if [ ! -f "$EMPTY_FIELDS" ]; then
   fail "KB empty-field pin MISSING ($EMPTY_FIELDS)"
 elif EMPTYOUT="$(py -3.14 "$EMPTY_FIELDS" 2>&1)"; then
-  pass "KB empty-field pin holds (EXPECTED_EMPTY_VERBATIM=249)"
+  pass "KB empty-field pin holds (EXPECTED_EMPTY_VERBATIM=206)"
 else
   fail "KB empty-field pin FAILED"
   printf '%s\n' "$EMPTYOUT" | sed 's/^/      /'
