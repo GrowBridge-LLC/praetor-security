@@ -209,9 +209,6 @@ on your own branch. Do not write to the auditor's handoff.
 Not exhaustive; `references/audits/` has the full record. These are named,
 authorized-or-open design decisions with no code behind them yet:
 
-- `references/DESIGN-LF2-malfunction-vs-unavailable.md` — a scanner exit-code
-  gap: `praetor .` with no `--fail-on` and a dead engine currently exits 0,
-  so a caller can't distinguish "scanned, clean" from "didn't run."
 - Git-tracked file selection for the wide-walk engines — measured 56× fewer
   files scanned on a real repository, same coverage, and it closes the
   directory-name-evasion hole a hardcoded skip-list can't.
