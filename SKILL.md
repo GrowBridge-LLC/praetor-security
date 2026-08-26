@@ -54,29 +54,32 @@ python <skill_dir>/scripts/praetor.py <TARGET_PATH> [options]
 ```
 
 Get `<skill_dir>` with `git clone` (or a `git archive`/checkout of a pinned ref),
-not a raw directory copy. `references/test-corpus/` holds deliberately fake
-secrets used for this project's own self-testing and is gitignored for exactly
-that reason -- a `git clone` never sees it; a `cp -r` of a local working tree
-does, and a consumer that vendors it that way inherits fixtures shaped like
-real credentials with no way to tell them apart from a genuine leak.
+not a raw directory copy. `references/test-corpus/vulnerable/` and
+`references/test-corpus/clean/` hold deliberately fake secrets used for this
+project's own self-testing, and both are gitignored for exactly that reason. The
+parent `references/test-corpus/` IS tracked -- a `git clone` gets its README and
+generator but never the generated payloads. A `cp -r` of a working tree where
+someone has run the generator does, and a consumer that vendors it that way
+inherits fixtures shaped like real credentials with no way to tell them apart
+from a genuine leak.
 
 Common invocations:
 
 ```bash
 # Full scan of a repo, human-readable report
-python scripts/praetor.py /path/to/repo
+python <skill_dir>/scripts/praetor.py /path/to/repo
 
 # Machine-readable JSON, written to a directory, for CI / another agent
-python scripts/praetor.py /path/to/repo --format json --out ./praetor-out
+python <skill_dir>/scripts/praetor.py /path/to/repo --format json --out ./praetor-out
 
 # Only the AI-security + secret engines (fast; no external tools needed)
-python scripts/praetor.py /path/to/skill --engines aisec,secrets
+python <skill_dir>/scripts/praetor.py /path/to/skill --engines aisec,secrets
 
 # Offline: bundled Semgrep rules only, no registry fetch
-python scripts/praetor.py /path/to/repo --no-registry
+python <skill_dir>/scripts/praetor.py /path/to/repo --no-registry
 
 # CI gate: exit 1 if anything HIGH or worse is found
-python scripts/praetor.py /path/to/repo --fail-on HIGH --format json
+python <skill_dir>/scripts/praetor.py /path/to/repo --fail-on HIGH --format json
 ```
 
 Key options (see `--help` for all): `--engines`, `--format {text,json,both}`,
