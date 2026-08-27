@@ -22,6 +22,7 @@ formats without a provider rule may still require a future detector.
 from __future__ import annotations
 
 import base64
+import hashlib
 import math
 import re
 
@@ -325,6 +326,21 @@ def _path_is_test_or_example(relpath: str) -> bool:
     return any(seg in low for seg in ("/test", "test/", "/tests", "tests/", "fixture", "example", "sample", "mock", "__mocks__", "spec/"))
 
 
+def _secret_dedup_key(relpath: str, line: int, raw_secret: str) -> str:
+    """Give equal raw secrets one identity without retaining their display text."""
+    norm_file = (relpath or "").replace("\\", "/").lstrip("./").lower()
+    raw_hash = hashlib.sha256(str(raw_secret).encode("utf-8", "replace")).hexdigest()
+    basis = f"{norm_file}|{line}|secret|{raw_hash}"
+    return hashlib.sha256(basis.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def _add_line_secret(findings: list, values: list, finding: Finding, raw_secret: str) -> None:
+    """Retain raw-value identity until every value on this line is redacted."""
+    finding.dedup_key = _secret_dedup_key(finding.file, finding.line, raw_secret)
+    findings.append(finding)
+    values.append(raw_secret)
+
+
 # --------------------------------------------------------------------------- #
 # Engine entry
 # --------------------------------------------------------------------------- #
@@ -371,6 +387,8 @@ def scan(scan_files, read_text) -> list:
             if len(line) > 4000:  # skip absurd minified lines
                 skipped += 1
                 continue
+            line_findings: list = []
+            line_secrets: list = []
 
             # provider patterns
             for rule_id, title, rx, sev, conf, fix in PROVIDERS:
@@ -392,13 +410,13 @@ def scan(scan_files, read_text) -> list:
                     if secret in KNOWN_EXAMPLES:
                         f.filtered = True
                         f.filter_reason = "well-known published documentation example token (not a live credential)"
-                    findings.append(f)
+                    _add_line_secret(line_findings, line_secrets, f, secret)
             # connection strings w/ embedded password
             for m in CONNSTR.finditer(line):
                 pw = m.group("secret")
                 if is_dummy(pw):
                     continue
-                findings.append(Finding(
+                _add_line_secret(line_findings, line_secrets, Finding(
                     engine="secrets", rule_id="db-connection-string-password",
                     title="Database connection string with embedded password",
                     severity=Severity.HIGH, confidence=Confidence.HIGH,
@@ -407,7 +425,7 @@ def scan(scan_files, read_text) -> list:
                     snippet=redact_line(line, pw),
                     fix="Move the credential to an environment variable / secret manager and reference it; rotate the exposed password.",
                     cwe=CWE_SECRET, owasp=OWASP_SECRET, references=REF_SECRET,
-                ))
+                ), pw)
 
             # generic keyword assignment (+ entropy gate)
             for m in GENERIC.finditer(line):
@@ -422,7 +440,7 @@ def scan(scan_files, read_text) -> list:
                 if ent < 3.0 and len(value) < 16:
                     continue
                 conf = Confidence.MEDIUM if ent >= 3.5 else Confidence.LOW
-                findings.append(Finding(
+                _add_line_secret(line_findings, line_secrets, Finding(
                     engine="secrets", rule_id="hardcoded-secret-assignment",
                     title=f"Possible hard-coded secret assigned to `{name}`",
                     severity=Severity.MEDIUM, confidence=conf,
@@ -431,14 +449,14 @@ def scan(scan_files, read_text) -> list:
                     snippet=redact_line(line, value),
                     fix="If this is a real credential, rotate it and load it from configuration/secret storage.",
                     cwe=CWE_SECRET, owasp=OWASP_SECRET, references=REF_SECRET,
-                ))
+                ), value)
 
             # base64-wrapped secret unwrap
             for m in B64BLOB.finditer(line):
                 blob = m.group("blob")
                 reason = _b64_unwrap_hit(blob)
                 if reason:
-                    findings.append(Finding(
+                    _add_line_secret(line_findings, line_secrets, Finding(
                         engine="secrets", rule_id="base64-wrapped-secret",
                         title=f"Base64-wrapped secret ({reason})",
                         severity=Severity.HIGH, confidence=Confidence.MEDIUM,
@@ -447,7 +465,7 @@ def scan(scan_files, read_text) -> list:
                         snippet=redact_line(line, blob),
                         fix="Remove and rotate the underlying credential; base64 is encoding, not encryption.",
                         cwe=CWE_SECRET, owasp=OWASP_SECRET, references=REF_SECRET,
-                    ))
+                    ), blob)
 
             # standalone high-entropy token in a lockfile-free context (LOW confidence)
             if not _path_is_lockfile(rel):
@@ -457,9 +475,9 @@ def scan(scan_files, read_text) -> list:
                     ent = shannon_entropy(tok)
                     if ent >= 4.3 and len(tok) >= 32:
                         # avoid double-reporting something a provider already caught on this line
-                        if any(f.line == i and f.file == rel and f.category == "SECRET" for f in findings):
+                        if line_findings:
                             continue
-                        findings.append(Finding(
+                        _add_line_secret(line_findings, line_secrets, Finding(
                             engine="secrets", rule_id="high-entropy-string",
                             title="High-entropy string (possible secret)",
                             severity=Severity.LOW, confidence=Confidence.LOW,
@@ -468,7 +486,14 @@ def scan(scan_files, read_text) -> list:
                             snippet=redact_line(line, tok),
                             fix="Confirm whether this is a credential; if so, rotate and externalize it.",
                             cwe=CWE_SECRET, owasp=OWASP_SECRET, references=REF_SECRET,
-                        ))
+                        ), tok)
+            if line_findings:
+                shared_snippet = line
+                for secret in dict.fromkeys(line_secrets):
+                    shared_snippet = redact_line(shared_snippet, secret)
+                for finding in line_findings:
+                    finding.snippet = shared_snippet
+                findings.extend(line_findings)
         if skipped:
             findings.append(Finding(
                 engine="secrets", rule_id="secrets-long-line-skip",

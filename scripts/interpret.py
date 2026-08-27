@@ -120,6 +120,21 @@ def _is_lockfile(file_low: str) -> bool:
     return base in _LOCKFILE_NAMES
 
 
+_DOCUMENTATION_BASENAMES = frozenset({
+    name + suffix
+    for name in ("readme", "changelog", "license", "notice", "contributing")
+    for suffix in ("", ".md", ".rst", ".txt")
+})
+
+
+def _is_documentation_path(file_low: str) -> bool:
+    """True for known documentation basenames or real docs/doc directories."""
+    parts = file_low.replace("\\", "/").split("/")
+    return parts[-1] in _DOCUMENTATION_BASENAMES or any(
+        part in {"docs", "doc"} for part in parts[:-1]
+    )
+
+
 def _fp_assessment(f: Finding) -> tuple:
     file_low = (f.file or "").lower()
 
@@ -167,9 +182,8 @@ def _fp_assessment(f: Finding) -> tuple:
     # 3. LOW-confidence prompt-injection phrasing found in this tool's own docs or
     #    obvious security-education material is expected (a scanner's rules mention
     #    the very phrases it hunts for).
-    if f.engine == "aisec" and f.confidence == Confidence.LOW and any(
-        seg in file_low for seg in ("readme", "changelog", "docs/", "/doc/", "license", "limits", "architecture")
-    ):
+    if (f.engine == "aisec" and f.confidence == Confidence.LOW
+            and _is_documentation_path(file_low)):
         return True, "low-confidence AI-security phrasing in documentation (frequently discusses these patterns by nature)"
 
     # 4. Generic secret assignment that is very short and low-confidence.
