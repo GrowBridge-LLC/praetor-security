@@ -137,11 +137,31 @@ def _osv_severity(vuln: dict) -> Severity:
     return Severity.MEDIUM
 
 
-def _run_osv(target: str) -> dict:
+def _osv_exclude_pattern(pattern: str) -> str:
+    """Translate PRAETOR's relative-path regex into OSV's absolute-path regex."""
+    body = str(pattern)
+    if body.startswith("^"):
+        body = body[1:]
+    if body.endswith("$"):
+        # A file-specific exclusion must retain its end anchor.
+        return "r:.*" + body.replace("/", r"[\\/]")
+    # PRAETOR's trailing slash means descendants below this directory. OSV must
+    # match the directory itself or it will descend before the rule can apply.
+    body = body.rstrip("/")
+    return "r:.*" + body.replace("/", r"[\\/]") + ".*"
+
+
+def _run_osv(target: str, excludes=None) -> dict:
     exe = shutil.which("osv-scanner")
     if not exe:
         return {"ok": False}
-    cmd = [exe, "--format", "json", "--recursive", os.path.abspath(target)]
+    cmd = [exe, "--format", "json", "--recursive"]
+    for pattern in excludes or []:
+        # OSV's recursive walk is its scan surface. Filtering findings afterward
+        # would leave excluded nested worktrees costly (and possibly blocking) to
+        # inspect, so send PRAETOR's regex to OSV before it opens the target.
+        cmd.extend(["--experimental-exclude", _osv_exclude_pattern(pattern)])
+    cmd.append(os.path.abspath(target))
     try:
         r = core.run_tool(cmd, timeout=_TIMEOUT)
     except Exception as e:  # noqa
@@ -453,7 +473,7 @@ def run(target: str, backend: str = "auto", excludes=None) -> dict:
     tried = []
 
     def try_osv():
-        res = _run_osv(target)
+        res = _run_osv(target, excludes=excludes)
         if res.get("ok"):
             return res
         tried.append("osv-scanner: not installed")
