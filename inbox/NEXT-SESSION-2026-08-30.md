@@ -89,7 +89,35 @@ engine.
   gitignored churn** — canonical 1124 ignored against 100 tracked, builder 2446
   against 109. A one-file loss among ~100 real deliverables cannot register
   against ~2400 churning bytecode and cache files, and running the test suite
-  moves the number. **The floors are 100 and 109.**
+  moves the number.
+
+  🔴 **But `git ls-files` is only half the answer, and the missing half is
+  the point of the check.** It reads the INDEX, so it cannot see an untracked
+  file at all — and the work a careless cleanup destroys is exactly the
+  untracked work. A tracked file that disappears shows in `git status`; an
+  untracked one leaves no trace, and `git ls-files` returns the same number
+  before and after. Measured here: 100 before adding an untracked file, 100
+  after.
+
+  **Three instruments, three different blindnesses, all aimed at the same
+  population:**
+
+  | instrument | misses |
+  |---|---|
+  | `find . -type f` | 92-96% churn drowns any real loss |
+  | `git ls-files` | every untracked file |
+  | `git ls-files --others --exclude-standard` | every **ignored** file |
+
+  The third one matters most here. `.local/` is gitignored by design — it must
+  never enter this public repo — and it holds **67 files**, including the audit
+  state, the pair channel, and the coordination half of this very plan. All of
+  them are **invisible to both** proposed counts.
+
+  ⇒ **Do not try to protect unversioned work with a count.** For tracked work
+  use `git ls-files | wc -l` (floors here: 100 canonical, 109 builder). For
+  anything ignored-but-precious, **enumerate the paths by name** and check the
+  names, not a total. A population you cannot enumerate is one you cannot
+  notice losing.
 - **The two branches disagree about what a clean scan is.** `tests/precommit.sh`
   pins `EXPECT_ACTIVE=13` on `main` and `31` on the builder branch. Both gates
   pass, each against its own tree. **At merge time one pin wins, and if the
