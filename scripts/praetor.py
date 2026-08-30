@@ -409,19 +409,8 @@ def _apply_injection_exemplar(findings, target, read_text):
         m = rx.search(line)
         if m is None or not _span_is_quoted(line, m.start(), m.end()):
             continue
-        # The line itself plus one either side, because the warning often precedes
+        # Look at the line itself plus one either side: the warning often precedes
         # or follows the specimen rather than sharing its line.
-        #
-        # This window is LOAD-BEARING. It is not conservatism, and it is not a
-        # tuning knob. The framing text is the entire reason the specimen is
-        # treated as inert, so the frame has to be close enough that any reader
-        # who receives the specimen also receives the frame. A reader that takes
-        # the file in chunks -- which is the normal case for the agents this
-        # engine exists to protect -- can be handed the specimen with a distant
-        # frame left outside its chunk. Widening this to a paragraph, a section,
-        # or "anywhere in the file" reads like a harmless relaxation and is not
-        # one: at that point the suppression no longer tracks what the reader
-        # actually sees.
         lo, hi = max(0, f.line - 2), min(len(lines), f.line + 1)
         if not _DEFENSIVE_FRAME.search(" ".join(lines[lo:hi])):
             continue                      # quoted but unframed -> KEEP
@@ -439,7 +428,11 @@ def _apply_lexical_context(findings, target, read_text):
     Suppression is recorded with a rationale, never deleted, and it fails SAFE --
     an unreadable file or an unclear line resolves to CODE and the finding is KEPT.
     """
-    cache: dict = {}
+    source_cache: dict = {}
+    # Bound to this suppression pass, so a whole-tree scan cannot retain labels
+    # after its findings have been processed.  File identity is part of the key:
+    # identical text may be Markdown in one file and Python in another.
+    label_cache: dict = {}
     for f in findings:
         if getattr(f, "category", "") == "COVERAGE":
             continue
@@ -448,9 +441,12 @@ def _apply_lexical_context(findings, target, read_text):
         if not f.file or f.line <= 0:
             continue
         ap = _finding_source_path(target, f.file)
-        if ap not in cache:
-            cache[ap] = read_text(ap) or ""
-        ctx = lexctx.context_of(cache[ap], f.line, f.file)
+        if ap not in source_cache:
+            source_cache[ap] = read_text(ap) or ""
+        cache_key = (ap, f.file)
+        if cache_key not in label_cache:
+            label_cache[cache_key] = lexctx.classify_lines(source_cache[ap], f.file)
+        ctx = lexctx.context_from_labels(label_cache[cache_key], f.line)
         reason = _LEXCTX_REASONS.get(ctx)
         if reason:
             f.filtered = True

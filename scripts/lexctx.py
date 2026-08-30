@@ -255,9 +255,13 @@ def classify_lines(text: str, file_identity: str) -> list:
     return labels
 
 
-def context_of(text: str, lineno: int, file_identity: str) -> str:
-    """Context label for a single 1-based line. Out-of-range resolves to CODE."""
-    labels = classify_lines(text, file_identity)
+def context_from_labels(labels: list, lineno: int) -> str:
+    """Context label from an already-classified file; unknown lines are CODE."""
     if not (1 <= lineno <= len(labels)):
         return CODE
     return labels[lineno - 1]
+
+
+def context_of(text: str, lineno: int, file_identity: str) -> str:
+    """Context label for a single 1-based line. Out-of-range resolves to CODE."""
+    return context_from_labels(classify_lines(text, file_identity), lineno)
