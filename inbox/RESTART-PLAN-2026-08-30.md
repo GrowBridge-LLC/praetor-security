@@ -62,10 +62,12 @@ Zero steps is a ghost run from the Actions outage and means nothing. **The red o
 
 ---
 
-## 1a. 🔴 ITEM ONE — F39, the `aisec` hang. Assigned, not built.
+## 1a. ✅ DONE — F39, the `aisec` hang. LANDED at `70c4765`.
 
-**This blocked another project's 409 commits and forced Mike to run a push by
-hand.** It is the top technical item.
+**Was item one. It blocked another project's push and cost Mike a manual
+push. It is fixed, verified and on the remote.** The file that hung for
+60+ seconds now scans in **0.988 s**. Recorded here rather than deleted,
+because the mechanism is the reusable part.
 
 **Mechanism, measured end to end:**
 
@@ -85,12 +87,20 @@ scan stages 0.15 s, per-line loop 0.39 s, `interpret()` 0.00 s, the other three
 suppression passes 0.00 s. **Only `aisec` hangs because `_LEXCTX_ENGINES =
 ("aisec",)`.**
 
-**Fix:** memoize the classification per file. **Do NOT change what
+**Fix, as landed:** memoization keyed on `(absolute path, file_identity)`,
+**pass-local** so a whole-tree scan cannot retain labels.
+`classify_lines` was NOT changed, so no label moved and the secrets
+carve-out is intact. Verified identical output — 1 active, 25 filtered,
+every `filter_reason` byte-identical. ⚠️ **The filtered count is what proves
+it a fix and not a bypass: a cache that made the pass do nothing would
+also have been fast and would have shown zero.**
+
+**The rule it came from, kept for next time: do NOT change what
 `classify_lines` returns** — a wrong label cached is worse than a slow correct
 one. Key on text AND `file_identity`; the identity selects comment syntax, so
 keying on text alone would classify a Markdown file as Python. Bound the cache.
 
-**Also add a scan timeout that FAILS LOUDLY** rather than silently producing no
+🔴 **STILL OPEN — the one deferred piece: add a scan timeout that FAILS LOUDLY** rather than silently producing no
 artifact. That turns any future hang into a legible error, and it is already an
 acceptance gate on the App spec below.
 
