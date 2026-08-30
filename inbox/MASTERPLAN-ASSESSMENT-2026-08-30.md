@@ -66,7 +66,7 @@ the next open decision on this track.
 | # | Condition | Status |
 |---|---|---|
 | 1 | `aisec` ports first | **SUPERSEDED** by Amendment 2 Part B. Table not updated. |
-| 2 | The never-execute invariant test ports BEFORE the backend it guards | **NOT YET DUE** — no Rust backend exists to guard |
+| 2 | The never-execute invariant test ports BEFORE the backend it guards | **NARROWED.** An earlier draft said "no Rust backend exists" — disproven: `rust/praetor-core/src/sca.rs` carries argv construction **and an in-module `--disable-pip` invariant test**. What is true is that no Rust backend is WIRED to the binary, which still refuses to scan. Whether the ordering was honoured historically is not established from source alone. |
 | 3 | Acceptance is DIFFERENTIAL, and the harness must be green and blocking | **LIVE** — `tests/precommit.sh:250` fails if the runner is missing |
 | 4 | `SELF-SCAN-BASELINE.json` is the regression floor for both | **HELD** — never regenerated |
 

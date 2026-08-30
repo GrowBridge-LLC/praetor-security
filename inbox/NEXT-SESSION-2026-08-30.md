@@ -1,5 +1,21 @@
 # PRAETOR — next-session plan, written 2026-08-30
 
+> 🔴 **SUPERSEDED IN PART — READ THIS BEFORE ANY SECTION BELOW.**
+>
+> Sections 0 and 1 were written BEFORE the merge and describe a world that no
+> longer exists. They say F35/F36/F37 are accepted but unmerged, name `a62a977`
+> as the builder tip and `681f844`/`b80f7f8` as main, and present a 45-commit
+> merge with a KB conflict as the next action. **All of that has happened.**
+>
+> Current: `main` = `origin/main` = `9cbbe4c`, the branch is landed, the builder
+> has zero unlanded commits, and F38 is accepted and held for push.
+>
+> **This file is HISTORY. For live state read
+> `C:\projects\PRAETOR\.local\AUDIT-STATE.md`**, and for direction read
+> `inbox/MASTERPLAN-ASSESSMENT-2026-08-30.md`. The technical content below —
+> the file-count defects, the regeneration mechanism, the exit-code collision —
+> is still accurate and still worth reading.
+
 Written for a session with zero memory of this one. Every number below has the
 command that produced it. Re-run them; do not cite them as current.
 
