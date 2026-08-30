@@ -648,3 +648,71 @@ not an assertion about external consumers; the detached audit must reproduce it.
 `7f6e5ce33054f85d488653b9dad9b1ca86f854ca`. The working tree now has the pre-existing/owned handoff
 append plus the F35 source and test candidate; nothing is staged. Independent Claude-F audit is the only
 remaining F35 blocker. All other held findings and all Gate 1 backup-ref/history work remain separate.
+
+### 2026-08-30 — Medium-tier restart record: F38 accepted, push held, planning inventory reconciled
+
+**CURRENT REFS / OWNERSHIP:** Builder worktree is on `codex-f/build` at
+`26bd23321dac49024a9ba41cdfbad93e8a87de0e`; local `main` is
+`fcb4be193f6d1d98ed4e115ab167b5351292c9e6`; `origin/main` is
+`9cbbe4c77c9617ebd29a6dc02d938ba699bdc52f`. At re-derivation,
+`git status --porcelain=v1 -uall` printed no rows, `main...HEAD` was `11 1`,
+and `origin/main...HEAD` was `8 1`. The right-side one is F38; the left-side
+commits are not permission to merge, rebase, or resolve histories. No refs were
+moved by this session.
+
+**F38 — ACCEPTED, NOT PUSHED:** F38 is exactly `26bd233`, changing only
+`tests/test_output_atomicity.py`. It corrects the test's platform assertion,
+not the atomic writer: Windows sharing refusal must be loud and preserve the
+destination; POSIX replacement may succeed while the old open reader remains
+consistent and the destination becomes the replacement. Builder evidence:
+Windows and Ubuntu WSL focused runs each reported `2 passed`; a Windows predicate
+mutation and a POSIX old-destination mutation each reported `1 failed, 1
+passed`; Windows full suite reported `343 passed`; `bash tests/precommit.sh`
+reported all 13 checks passed. Claude-F independently recorded ACCEPT in the
+current local audit ledger. It remains held pending a direct push release.
+
+**RESTART-PLAN INVENTORY:** The current planning work is committed on local
+`main` as `55171f4` and `fcb4be1`, not merged into this builder branch. Its
+source-verified outcomes are: README's no-detector Rust claim is stale; ADR-001's
+visible first-port table is superseded by its own secrets-first amendment; the
+two required differential paths are both present and the runner refuses either
+one's removal; and the old NEXT-SESSION plan is history, not live instructions.
+The recovery ref exists, but the refreshed backlog says no recovery item is open;
+that ambiguity is a decision-owner review item, not authority to revive work.
+
+**WIKI / REMOTE FACTS:** Read-only repository API returned public, unarchived,
+`main`, and Wiki enabled. Primary `git ls-remote` succeeded; the conventional
+Wiki Git remote returned `Repository not found` and the public Wiki URL redirected
+to the repository page. Therefore Wiki page population is CANNOT_DERIVE, not
+empty; no initialization, clone-for-write, or publication is authorized.
+
+**EXACT NEXT BOUNDED ACTION:** Re-read `AGENTS.md`, `CLAUDE.md`, this handoff,
+the current audit ledger, and the pair log; then obtain a new bounded contract
+for any README/ADR/restart-document repair. Before a future push, independently
+re-derive branch/remote/account, the accepted F38 hash, clean status, project
+gate, real CI step count, and direct push release. Enterprise capacity
+provisioning alone is not that release.
+
+**NO-GO / LIMITS:** No push, merge, rebase, deployment, Wiki publication,
+recovery-branch action, deletion, or self-acceptance. The one read-only watcher
+is deliberately retained for counterpart state changes; do not assume its
+terminal session survives a restart—re-derive the audit ledger and pair log
+instead. No memory-store update was requested or made.
+
+### 2026-08-30 — Handoff correction: Wiki is enabled but has no initial page
+
+The preceding Wiki result was deliberately conservative pending a discriminator.
+It is now resolved: the repository API reports Wiki enabled; the primary remote
+is reachable with the configured credential; the corresponding Wiki Git remote
+returns `Repository not found`; and GitHub's Wiki documentation says cloning the
+Wiki repository becomes available only after an initial Wiki page is created.
+Together, these establish that no initial Wiki page has been created. The public
+Wiki therefore has no current page content, while every future page remains an
+irreversible public publication requiring direct, per-page approval. This
+correction does not authorize initialization, drafting in the Wiki, publication,
+or any remote write.
+
+**COUNT SNAPSHOT LIMIT:** The divergence counts above were measured before the
+subsequent handoff commits. A restart reader must rerun the named `git rev-list`
+commands and classify later documentation commits from `git log`; exact equality
+with this record's historic right-side count is neither expected nor an error.
