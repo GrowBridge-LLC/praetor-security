@@ -124,6 +124,54 @@ engine.
   higher one does, the gate silently loosens with no red anywhere.** Account for
   the delta before merging; do not regenerate the baseline to make it disappear.
 
+### 🔴 Exit code 1 means two opposite things (open, assigned)
+
+The documented contract at `scripts/praetor.py:28-45` says:
+
+```
+0  no active findings at/above --fail-on
+1  active findings at/above --fail-on
+2  usage / internal error
+3  THE SCAN DID NOT COMPLETE safely enough to pass
+```
+
+The entry point handles exactly one exception:
+
+```python
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(2)
+```
+
+**Everything else propagates, and Python exits 1** — the code we document as the
+ordinary "we found something" result. Proved by injecting a crash immediately
+before the report write:
+
+```
+PRAETOR rc=1
+report written? -> 0 file(s)
+```
+
+**Exit 1, no report, externally byte-identical to a healthy scan that found a
+HIGH finding.** Our own comment at line 122 says an exit code is this tool's
+entire contract with CI — and code 1 currently carries "I worked and found
+things" and "I crashed" at once. Separating those is the only thing an exit code
+exists to do.
+
+The requirement is **never 1**; whether the right answer is 2 (internal error)
+or 3 (scan did not complete) is open. ⚠️ **The wrong fix is catching `Exception`
+inside `main()`** — that converts a crash into a *quiet* result and loses the
+traceback. A silent 2 is worse than a noisy 1. The handler belongs at the entry
+point. Writing no report on that path is correct: a partial report is worse than
+none, and a consumer checking freshness will refuse.
+
+⚠️ **This defect is real and proved. Do not attach it to any particular
+incident** — a causal claim of that kind was made and retracted the same day.
+A mechanism that explains every observation is not thereby the mechanism that
+produced them.
+
 ### A standing risk that is not ours to solve
 
 **The unlanded commits on the builder branch have no off-disk copy.** A
