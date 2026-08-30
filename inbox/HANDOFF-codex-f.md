@@ -698,3 +698,16 @@ recovery-branch action, deletion, or self-acceptance. The one read-only watcher
 is deliberately retained for counterpart state changes; do not assume its
 terminal session survives a restart—re-derive the audit ledger and pair log
 instead. No memory-store update was requested or made.
+
+### 2026-08-30 — Handoff correction: Wiki is enabled but has no initial page
+
+The preceding Wiki result was deliberately conservative pending a discriminator.
+It is now resolved: the repository API reports Wiki enabled; the primary remote
+is reachable with the configured credential; the corresponding Wiki Git remote
+returns `Repository not found`; and GitHub's Wiki documentation says cloning the
+Wiki repository becomes available only after an initial Wiki page is created.
+Together, these establish that no initial Wiki page has been created. The public
+Wiki therefore has no current page content, while every future page remains an
+irreversible public publication requiring direct, per-page approval. This
+correction does not authorize initialization, drafting in the Wiki, publication,
+or any remote write.
