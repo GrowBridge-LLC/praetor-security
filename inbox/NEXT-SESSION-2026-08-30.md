@@ -10,9 +10,100 @@ machine — is deliberately NOT in this file. It is at
 gitignored and absent from worktrees, hence the absolute path. **Read that file
 too; this one alone is not the whole plan.**
 
+🔴 **Two working files, and they answer different questions.** The pair
+channel is **append-only**, so every verdict in it is a LOG ENTRY: reading the
+tail tells you what was true when that line was written, never what is true now,
+and nothing in the format distinguishes the two. A superseded verdict still
+reads as authoritative at its own line. That produced three stale-state
+collisions in one day, in three different directions, between careful readers.
+
+- `.local\PAIR-CHANNEL.md` — append-only LOG. Reasoning and history.
+- `.local\AUDIT-STATE.md` — **overwritten, never appended.** One writer.
+  Current verdicts, open items, standing constraints.
+
+**Read AUDIT-STATE.md for STATE. Read the channel for REASONING.** No collision
+has occurred since the split.
+
 The split is not tidiness. Pre-commit gate 8 (`public-hygiene`) rejected the
 combined file, correctly, for naming a sibling repository and using lane
 framing. The finding was right and the file was in the wrong place.
+
+## 0. What happened after this file was first written
+
+Read this section first. The rest of the file was accurate when written and
+parts of it have been overtaken.
+
+### A real behavioural defect in this scanner, found and fixed but NOT MERGED
+
+**All four suppression passes were silent no-ops when the scan target was a
+single FILE rather than a directory.** They resolved a finding's source path by
+joining it onto the target; when the target is already a file, that builds
+`file.py/file.py`, the read fails, the bounds check fails, and the pass returns
+having done nothing. No error, no warning, no `filter_reason`. It reported as a
+clean scan.
+
+Same file, two invocations, before the fix:
+
+```bash
+python scripts/praetor.py DIR/subject.py --engines aisec   # -> active 1, filtered 0
+python scripts/praetor.py DIR            --engines aisec   # -> active 0, filtered 1
+```
+
+**Direction of failure is SAFE** — it keeps findings rather than dropping them,
+so it is not a false-negative hole. Two consequences that matter anyway:
+
+- The documented false-positive suppression does not work for the single-file
+  invocation, which is the invocation `SKILL.md` teaches.
+- **A single-file scan's FILTERED count is not trustworthy** in any build that
+  does not carry the fix. If you are triaging findings, scan the directory.
+
+The fix is one shared path resolver used by all four passes. It is **accepted
+and unmerged** — it lives on the builder branch, not on `main`. Until the merge
+happens, `main` still has the defect.
+
+### The regression test for it is guarded against a coincidence
+
+The end-to-end test for that fix can pass while the fix is broken, depending on
+where you run it from. Derived predicate, verified:
+
+> **The false green occurs if and only if N == T**, where N is the number of
+> `..` in the finding's reported path and T is the subject file's depth below
+> the prefix it shares with the current working directory.
+
+Windows cancels `subject.py\..` textually, without checking that `subject.py`
+is a directory, so when N == T the broken join lands back on the real file. Two
+people ran the identical mutation and got opposite results for this reason
+alone.
+
+**Root cause is `scripts/core.py`:** a finding's `file` field is
+**cwd-relative** for a single-file target (`core.py:732`) and **target-relative**
+for a directory (`core.py:772`). Every consumer of `f.file` has to know which
+mode produced it and none of them are told. That dual contract is unfixed and
+deliberately out of scope for the test repair — changing it touches every
+engine.
+
+### Two corrections to the measurements in section 1
+
+- **The file-count instrument changed.** `find | wc -l` is withdrawn. Use
+  `git ls-files | wc -l`. Measured here: **92-96% of the old population was
+  gitignored churn** — canonical 1124 ignored against 100 tracked, builder 2446
+  against 109. A one-file loss among ~100 real deliverables cannot register
+  against ~2400 churning bytecode and cache files, and running the test suite
+  moves the number. **The floors are 100 and 109.**
+- **The two branches disagree about what a clean scan is.** `tests/precommit.sh`
+  pins `EXPECT_ACTIVE=13` on `main` and `31` on the builder branch. Both gates
+  pass, each against its own tree. **At merge time one pin wins, and if the
+  higher one does, the gate silently loosens with no red anywhere.** Account for
+  the delta before merging; do not regenerate the baseline to make it disappear.
+
+### A standing risk that is not ours to solve
+
+**The unlanded commits on the builder branch have no off-disk copy.** A
+machine-global guard blocks `git push` for any ref whose name matches a
+force-push pattern, and the builder branch name matches it. A backup ref can
+therefore only ever be **local** — it protects against a bad history operation
+and **not against disk loss**. Do not route around the guard; it is firing as
+written and another owner maintains it.
 
 ## 1. Where things stand
 
@@ -127,6 +218,14 @@ is irreversible.
   retired. The two disagree and were not reconciled.
 - **That the regeneration in §2 produces a correct `records.jsonl`.** Nobody has
   run it.
+- **That the accepted single-file suppression fix behaves correctly once merged.**
+  It is accepted against one commit hash only, on a branch that has not been
+  merged. Acceptance of a commit is not a claim about the merged tree.
+- **That the repaired regression test is location-independent in general.** The
+  predicate above is derived and reproducible; a repair for it was assigned and
+  has not been delivered or audited.
+- **The exact depth arithmetic in every layout.** N == T is verified in five
+  measured cases, not proven for all.
 - **The exact read ceiling on the memory index.** Its current size is measured;
   that it is under the ceiling is not established.
 - **That any push of the builder branch would succeed.** It was never attempted.
