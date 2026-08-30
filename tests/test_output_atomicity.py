@@ -1,5 +1,6 @@
 """Concurrent report publication must expose only complete artifacts."""
 
+import os
 import threading
 
 import praetor
@@ -46,19 +47,28 @@ def test_concurrent_reader_never_observes_partial_report(tmp_path):
 def test_blocked_windows_publish_fails_loudly_without_clobbering(tmp_path):
     target = tmp_path / "praetor-report.json"
     original = '{"generation":"old"}'
+    replacement = '{"generation":"new"}'
     target.write_text(original, encoding="utf-8")
     handle = target.open("r", encoding="utf-8")
+    blocked = False
     try:
         try:
-            praetor._atomic_write_text(str(target), '{"generation":"new"}')
+            praetor._atomic_write_text(str(target), replacement)
         except RuntimeError as exc:
+            blocked = True
+            # A sharing refusal is the Windows contract. On POSIX a reader does
+            # not block rename, so treating an unexpected failure as equivalent
+            # would hide a broken atomic publication path.
+            assert os.name == "nt"
             assert str(target) in str(exc)
             assert "destination is in use" in str(exc)
         else:
-            # POSIX permits replacement while a reader is open; this control is
-            # specifically asserted on Windows where the sharing refusal occurs.
-            if __import__("os").name == "nt":
-                raise AssertionError("blocked Windows publish unexpectedly succeeded")
+            # POSIX permits replacement while a reader is open. The old file
+            # descriptor must remain a consistent view even though the pathname
+            # now resolves to the replacement.
+            assert os.name != "nt", "blocked Windows publish unexpectedly succeeded"
+        assert handle.read() == original
     finally:
         handle.close()
-    assert target.read_text(encoding="utf-8") == original
+    expected_destination = original if blocked else replacement
+    assert target.read_text(encoding="utf-8") == expected_destination
