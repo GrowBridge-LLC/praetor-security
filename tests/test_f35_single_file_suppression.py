@@ -116,18 +116,39 @@ def _scan_inline_fixture(monkeypatch, target: Path):
         ("run()  # ordinary note\n", (1, 0)),
     ],
 )
+@pytest.mark.parametrize("cwd_depth", [2, 3], ids=["dotdot-equals-tail", "dotdot-differs-tail"])
 def test_f35_real_scan_matches_file_and_directory_target_outcome(
-    tmp_path, monkeypatch, source, expected
+    tmp_path, monkeypatch, source, expected, cwd_depth
 ):
     root = tmp_path / "fixture"
     root.mkdir()
     path = root / "subject.py"
     path.write_text(source, encoding="utf-8")
 
+    cwd = tmp_path
+    for component in range(cwd_depth):
+        cwd = cwd / f"cwd-{component}"
+    cwd.mkdir(parents=True)
+    monkeypatch.chdir(cwd)
+
+    opened = []
+    real_read_text = core.read_text
+
+    def recording_read_text(candidate, max_bytes=core.DEFAULT_MAX_BYTES):
+        opened.append(candidate)
+        return real_read_text(candidate, max_bytes)
+
+    monkeypatch.setattr(core, "read_text", recording_read_text)
+
     directory = _scan_inline_fixture(monkeypatch, root)
     single_file = _scan_inline_fixture(monkeypatch, path)
 
     assert directory[:2] == expected, "positive and negative controls must be live"
+    assert opened, "positive control: the suppression passes must reopen source text"
+    assert all(candidate == str(path) for candidate in opened), (
+        "each suppression pass must reopen the exact source path, not a path that "
+        "only normalizes to it from this working directory"
+    )
     assert single_file == directory, (
         "the actual pipeline disagreed when the same fixture was supplied as a "
         "file instead of as its parent directory"
