@@ -121,6 +121,49 @@ def test_osv_real_output_still_reports_ok(tmp_path, monkeypatch):
     assert not res["findings"]
 
 
+def test_osv_receives_excludes_before_scanning_the_target(tmp_path, monkeypatch):
+    """F34: exclusions must constrain OSV's recursive walk, not just its output."""
+    calls = _fake_exec(
+        monkeypatch, "osv-scanner", _Completed(returncode=0, stdout='{"results": []}')
+    )
+    nested_checkout = "dark" + "factory" + "-codex"
+    pattern = r"^\.codex/" + nested_checkout + "/"
+
+    res = engine_sca.run(str(tmp_path), backend="osv", excludes=[pattern])
+
+    assert res["status"] == "ok", f"fixture did not reach the OSV success path: {res}"
+    assert len(calls) == 1, f"expected one OSV invocation, got {calls!r}"
+    argv = calls[0]
+    values = [argv[i + 1] for i, arg in enumerate(argv[:-1])
+              if arg == "--experimental-exclude"]
+    assert values == [r"r:.*\.codex[\\/]" + nested_checkout + r".*"], (
+        "F34: OSV must receive PRAETOR's exclusion as a runtime regex before its "
+        f"recursive walk; argv={argv!r}"
+    )
+
+
+def test_osv_exclude_translation_preserves_exact_file_patterns():
+    """A directory translation must not turn a `$`-anchored file rule into a glob."""
+    assert engine_sca._osv_exclude_pattern(r"^nested/package-lock\.json$") == (
+        r"r:.*nested[\\/]package-lock\.json$"
+    )
+
+
+def test_osv_without_excludes_keeps_its_unconstrained_scan(tmp_path, monkeypatch):
+    """Keep direction: no operator exclusion must not silently narrow SCA scope."""
+    calls = _fake_exec(
+        monkeypatch, "osv-scanner", _Completed(returncode=0, stdout='{"results": []}')
+    )
+
+    res = engine_sca.run(str(tmp_path), backend="osv")
+
+    assert res["status"] == "ok", f"fixture did not reach the OSV success path: {res}"
+    assert len(calls) == 1, f"expected one OSV invocation, got {calls!r}"
+    assert "--experimental-exclude" not in calls[0], (
+        f"an absent --exclude must leave OSV unrestricted; argv={calls[0]!r}"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # The cross-backend invariant -- this is the one that guards FUTURE backends
 # --------------------------------------------------------------------------- #

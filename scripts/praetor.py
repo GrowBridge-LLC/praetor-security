@@ -54,6 +54,9 @@ import argparse
 import os
 import re
 import sys
+import tempfile
+import time
+import traceback
 
 # make sibling engine modules importable no matter the CWD
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -69,6 +72,35 @@ import interpret                # noqa: E402
 import lexctx                   # noqa: E402
 import taint                    # noqa: E402
 import report                   # noqa: E402
+
+
+def _atomic_write_text(path: str, content: str) -> None:
+    """Publish a complete report without exposing a partially-written file."""
+    directory = os.path.dirname(path) or "."
+    fd, temp_path = tempfile.mkstemp(prefix=".praetor-report-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+            fh.flush()
+            os.fsync(fh.fileno())
+        for attempt in range(3):
+            try:
+                os.replace(temp_path, path)
+                break
+            except PermissionError as exc:
+                if attempt == 2:
+                    # Never fall back to open(path, "w"): that would reintroduce
+                    # torn reports. A blocked atomic publish must fail loudly.
+                    raise RuntimeError(
+                        f"atomic report publish failed for {path}: destination is in use"
+                    ) from exc
+                time.sleep(0.01 * (attempt + 1))
+    except BaseException:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
+        raise
 
 VERSION = "1.0.0"
 def _find_bundled_rules():
@@ -204,6 +236,19 @@ _IGNORE_WORD_RE = re.compile(
 )
 
 
+def _finding_source_path(target: str, finding_file: str) -> str:
+    """Return the source path a suppression pass must reopen.
+
+    The walker reports a finding path relative to the scan target for directory
+    scans, but a single-file target is already the source file.  Joining its
+    reported path again produces ``file/file`` and makes every suppression pass
+    silently inert, so all four passes use this shared resolver.
+    """
+    if os.path.isfile(target):
+        return target
+    return os.path.join(target, finding_file.replace("/", os.sep))
+
+
 def _apply_inline_ignores(findings, target, read_text):
     """
     Mark findings filtered when their flagged source line carries an inline ignore
@@ -212,9 +257,11 @@ def _apply_inline_ignores(findings, target, read_text):
     """
     cache: dict = {}
     for f in findings:
+        if getattr(f, "category", "") == "COVERAGE":
+            continue
         if not f.file or f.line <= 0:
             continue
-        ap = os.path.join(target, f.file.replace("/", os.sep))
+        ap = _finding_source_path(target, f.file)
         if ap not in cache:
             txt = read_text(ap)
             # core.split_lines, NEVER str.splitlines: `f.line` is \n-based, and
@@ -267,11 +314,13 @@ def _apply_reachability(findings, target, read_text):
     """
     cache: dict = {}
     for f in findings:
+        if getattr(f, "category", "") == "COVERAGE":
+            continue
         if getattr(f, "filtered", False) or f.engine not in _REACHABILITY_ENGINES:
             continue
         if not f.file or f.line <= 0 or not f.file.endswith(".py"):
             continue
-        ap = os.path.join(target, f.file.replace("/", os.sep))
+        ap = _finding_source_path(target, f.file)
         if ap not in cache:
             cache[ap] = read_text(ap) or ""
         if taint.is_provably_inert(cache[ap], f.line):
@@ -350,7 +399,7 @@ def _apply_injection_exemplar(findings, target, read_text):
         rx = by_id.get(f.rule_id)
         if rx is None:
             continue
-        ap = os.path.join(target, f.file.replace("/", os.sep))
+        ap = _finding_source_path(target, f.file)
         if ap not in cache:
             cache[ap] = read_text(ap) or ""
         lines = core.split_lines(cache[ap])
@@ -392,11 +441,13 @@ def _apply_lexical_context(findings, target, read_text):
     """
     cache: dict = {}
     for f in findings:
+        if getattr(f, "category", "") == "COVERAGE":
+            continue
         if getattr(f, "filtered", False) or f.engine not in _LEXCTX_ENGINES:
             continue
         if not f.file or f.line <= 0:
             continue
-        ap = os.path.join(target, f.file.replace("/", os.sep))
+        ap = _finding_source_path(target, f.file)
         if ap not in cache:
             cache[ap] = read_text(ap) or ""
         ctx = lexctx.context_of(cache[ap], f.line, f.file)
@@ -715,10 +766,11 @@ def main(argv=None):
 
     if args.out:
         os.makedirs(args.out, exist_ok=True)
-        with open(os.path.join(args.out, "praetor-report.txt"), "w", encoding="utf-8") as fh:
-            fh.write(text)
-        with open(os.path.join(args.out, "praetor-report.json"), "w", encoding="utf-8") as fh:
-            fh.write(js)
+        # Concurrent scans sharing one --out use last-writer-wins semantics;
+        # each artifact is nevertheless published atomically, so readers see
+        # only a complete prior or complete new report, never a torn write.
+        _atomic_write_text(os.path.join(args.out, "praetor-report.txt"), text)
+        _atomic_write_text(os.path.join(args.out, "praetor-report.json"), js)
         _log(args.quiet, f"  reports written to {args.out}")
 
     if args.format in ("text", "both"):
@@ -921,4 +973,9 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
+        sys.exit(2)
+    except Exception:
+        # Exit 1 means a completed scan found active findings.  Preserve the
+        # traceback and reserve 2 for an entry-point failure that wrote no report.
+        traceback.print_exc()
         sys.exit(2)

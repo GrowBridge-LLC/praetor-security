@@ -36,6 +36,8 @@ in tools/classify_baseline.py and does not come here.
 
 from __future__ import annotations
 
+import re
+
 # The ONLY import, and it is deliberate: `split_lines` is the toolchain's single
 # definition of a line. This module stays pure -- text in, label out, no I/O and
 # no policy -- and importing a pure helper does not change that.
@@ -130,9 +132,28 @@ def comment_text(line: str, file_identity: str) -> str:
     bare = _strip_inline_strings(line)
     first = None
     for intro in comment_introducers(file_identity):
-        idx = bare.find(intro)
-        if idx != -1 and (first is None or idx < first):
-            first = idx
+        search_from = 0
+        while True:
+            idx = bare.find(intro, search_from)
+            if idx == -1:
+                break
+            # In C-like source, the two slashes in a URL are not a comment
+            # introducer.  Keep ordinary ``// note`` comments intact, while
+            # recognising scheme-position URLs and protocol-relative hosts.
+            if intro == "//":
+                before = bare[:idx]
+                after = bare[idx + 2:]
+                scheme_url = before.endswith(":")
+                protocol_relative = (
+                    (not before.strip() or before.rstrip().endswith(("(", "=", ",", "[", "{")))
+                    and bool(re.match(r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/|\s|$)", after))
+                )
+                if scheme_url or protocol_relative:
+                    search_from = idx + 2
+                    continue
+            if first is None or idx < first:
+                first = idx
+            break
     return "" if first is None else bare[first:]
 
 
@@ -147,11 +168,15 @@ def classify_lines(text: str, file_identity: str) -> list:
 
     ⚠️ Approximate by construction, in the SAFE direction: anything it cannot
     confidently prove is inert is labelled CODE, so an unclear case is KEPT
-    rather than suppressed. Nested/escaped exotica resolves to CODE.
+    rather than suppressed. Nested/escaped exotica resolves to CODE. Line-by-line
+    classification cannot model multi-line string constructs; heredocs and raw
+    string literals are not handled and may still mislabel a line as a comment.
     """
     comment_prefixes = comment_introducers(file_identity)
     allow_docstrings = _extension(file_identity) in _PYTHON_EXTENSIONS
+    slash_comments = "//" in comment_prefixes
     labels, in_triple, delim = [], False, None
+    in_template = False
 
     # 🔴 split_lines, never str.splitlines. This list is indexed BY LINE NUMBER
     # by the caller, so a disagreement about what a line is relabels live code as
@@ -166,12 +191,45 @@ def classify_lines(text: str, file_identity: str) -> list:
 
         stripped = raw.strip()
 
+        template_at_start = in_template
+
         opened = None
-        if allow_docstrings:
-            for t in _TRIPLES:
-                if t in raw:
-                    opened = t
+        token = None
+        quote = None
+        i = 0
+        while i < len(raw):
+            if quote is None:
+                if slash_comments and raw[i] == "`":
+                    in_template = not in_template
+                    i += 1
+                    continue
+                if slash_comments and in_template:
+                    if raw[i] == "\\":
+                        i += 2
+                    else:
+                        i += 1
+                    continue
+                if allow_docstrings and (raw.startswith('"""', i) or raw.startswith("'''", i)):
+                    token = ("triple", raw[i:i + 3], i)
                     break
+                if any(raw.startswith(prefix, i) for prefix in comment_prefixes):
+                    prefix = next(prefix for prefix in comment_prefixes if raw.startswith(prefix, i))
+                    token = ("comment", prefix, i)
+                    break
+                if raw[i] in "'\"":
+                    quote = raw[i]
+                i += 1
+            else:
+                if raw[i] == "\\":
+                    i += 2
+                elif raw[i] == quote:
+                    quote = None
+                    i += 1
+                else:
+                    i += 1
+
+        if token and token[0] == "triple":
+            opened = token[1]
 
         if opened is not None:
             # A triple-quote that opens and closes on the same line is a
@@ -183,13 +241,12 @@ def classify_lines(text: str, file_identity: str) -> list:
             in_triple, delim = True, opened
             continue
 
-        if any(stripped.startswith(p) for p in comment_prefixes):
-            labels.append(COMMENT)
+        # A line is inert only when the comment introducer starts the line
+        # (apart from whitespace). Trailing comments on live code stay CODE.
+        if template_at_start:
+            labels.append(CODE)
             continue
-
-        # Trailing comment: only if the marker survives string-stripping.
-        bare = _strip_inline_strings(raw)
-        if any(p in bare for p in comment_prefixes):
+        if token and token[0] == "comment" and not raw[:token[2]].strip():
             labels.append(COMMENT)
             continue
 

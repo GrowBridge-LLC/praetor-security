@@ -139,8 +139,10 @@ def test_python_and_the_table_agree_on_the_characters_that_matter():
 # CI pinned 3.12 (Unicode 15.0.0) against a table generated from 16.0.0, so it
 # reported the second as the first, with a remediation naming `py -3.14` -- the
 # Windows launcher, absent on the Linux runner printing it. The reachable
-# substitute regenerated against the older database: exit 0, "wrote ...", 353
-# code points discarded, and the downgraded table then PASSED --check.
+# substitute regenerated against the older database: exit 0, "wrote ...", 4,302
+# code points discarded, and the downgraded table then PASSED --check. Re-derive
+# by rendering under Unicode 16.0.0 and 15.1.0 and differencing covered sets
+# (142,179 -> 137,877); this snapshot changes when Unicode tables move.
 #
 # These tests exist because the recorded version was already in the file, under
 # a comment saying it was there "so a mismatch is diagnosable", and nothing read

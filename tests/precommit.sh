@@ -104,7 +104,15 @@ fi
 # If false positives fall while 'needs review' rises, suppression is eating
 # real findings -- so BOTH numbers are pinned, and a change (either way) stops
 # the commit for a human to look, never silently.
-EXPECT_ACTIVE=13
+# F10 deliberately adds two active findings from TSV and six active JSONL
+# findings; the five JSONL identities are duplicated across claims/records,
+# yielding ten raw instances, with four claim-file instances filtered as
+# documentation phrasing. The measured pin is 22 active / 56 filtered (+1 Azure corpus case, intentionally detected).
+# 2026-08-27 F29: documentation filtering now requires an anchored basename or
+# a real docs/doc directory. Re-measured at this source revision: 9
+# `sensitive-file-read` findings whose paths merely contain `ARCHITECTURE` or
+# `LIMITS` correctly moved filtered -> active (22 -> 31; 56 -> 47).
+EXPECT_ACTIVE=31
 # 2026-08-12: 45 -> 53, deliberately, and NOT because false positives improved.
 # The two causes were measured separately by reverting each change on its own:
 #   +3  the dedup fix stopped DISCARDING findings. A filtered finding could win
@@ -122,7 +130,7 @@ EXPECT_ACTIVE=13
 # comment. Reintroducing only that unsafe Markdown mapping returned exactly
 # 12 active / 53 filtered (one finding moved back); file-type-aware syntax keeps
 # the agent-facing heading active. The regression baseline was NOT regenerated.
-EXPECT_FILTERED=52
+EXPECT_FILTERED=47
 # 🔴 SCOPE DECISION, stated next to the code because it is one.
 # The self-scan pin must measure what PRAETOR SHIPS. Gate 5 already defines the
 # shipping set as tracked + untracked-but-not-ignored; this scan walks the tree
@@ -158,9 +166,10 @@ EXPECT_FILTERED=52
 # catches that loudly. A coverage percentage, a lint sweep or a duplicate-code
 # check absorbs it silently and still reports a number.
 SS="$(py -3.14 scripts/praetor.py . --no-registry --exclude '^\.local/' --exclude '^\.claude/' --exclude '^\.codex/PRAETOR-codex/' 2>&1)"
+SS_RC=$?
 GOT_ACTIVE="$(printf '%s' "$SS" | grep -oE 'Findings \(active\): [0-9]+' | grep -oE '[0-9]+$')"
 GOT_FILTERED="$(printf '%s' "$SS" | grep -oE 'Filtered \(likely FP / low-signal, shown separately\): [0-9]+' | grep -oE '[0-9]+$')"
-if [ "$GOT_ACTIVE" = "$EXPECT_ACTIVE" ] && [ "$GOT_FILTERED" = "$EXPECT_FILTERED" ]; then
+if [ "$SS_RC" -eq 0 ] && [ "$GOT_ACTIVE" = "$EXPECT_ACTIVE" ] && [ "$GOT_FILTERED" = "$EXPECT_FILTERED" ]; then
   pass "self-scan unchanged (${GOT_ACTIVE} active / ${GOT_FILTERED} filtered)"
 else
   fail "self-scan DRIFTED: got ${GOT_ACTIVE:-?} active / ${GOT_FILTERED:-?} filtered, expected ${EXPECT_ACTIVE} / ${EXPECT_FILTERED}"
@@ -293,6 +302,36 @@ elif KBOUT="$(py -3.14 "$KB_DRIFT" 2>&1)"; then
 else
   fail "KB drift gate FAILED -- run: py -3.14 $KB_DRIFT"
   printf '%s\n' "$KBOUT" | sed 's/^/      /'
+fi
+
+EMPTY_FIELDS=tests/kb-empty-fields.py
+if [ ! -f "$EMPTY_FIELDS" ]; then
+  fail "KB empty-field pin MISSING ($EMPTY_FIELDS)"
+elif EMPTYOUT="$(py -3.14 "$EMPTY_FIELDS" 2>&1)"; then
+  pass "KB empty-field pin holds (EXPECTED_EMPTY_VERBATIM=9)"
+else
+  fail "KB empty-field pin FAILED"
+  printf '%s\n' "$EMPTYOUT" | sed 's/^/      /'
+fi
+
+CONTENT_ANCHOR=tests/kb-content-anchor.py
+if [ ! -f "$CONTENT_ANCHOR" ]; then
+  fail "KB content-anchor gate MISSING ($CONTENT_ANCHOR)"
+elif CAOUT="$(py -3.14 "$CONTENT_ANCHOR" 2>&1)"; then
+  pass "KB content-anchor gate passed"
+else
+  fail "KB content-anchor gate FAILED"
+  printf '%s\n' "$CAOUT" | sed 's/^/      /'
+fi
+
+VOLATILE_SOURCES=tests/kb-volatile-sources.py
+if [ ! -f "$VOLATILE_SOURCES" ]; then
+  fail "KB volatile-source gate MISSING ($VOLATILE_SOURCES)"
+elif VOUT="$(py -3.14 "$VOLATILE_SOURCES" 2>&1)"; then
+  pass "KB volatile-source gate passed"
+else
+  fail "KB volatile-source gate FAILED"
+  printf '%s\n' "$VOUT" | sed 's/^/      /'
 fi
 
 echo "== $([ "$FAILED" = 0 ] && echo 'ALL GATES PASSED' || echo 'GATE(S) FAILED') =="

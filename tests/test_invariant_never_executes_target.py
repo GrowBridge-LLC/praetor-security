@@ -18,8 +18,14 @@ Every new SCA backend widens this surface. Add a test here when you add one.
 
 import os
 import subprocess
+import contextlib
+import io
+import json
 
 import engine_sca
+import engine_sast
+import core
+import praetor
 import report
 
 
@@ -156,6 +162,92 @@ def _capture_sast_argv(monkeypatch, mode):
         "available": True, "detail": "test", "version": "test"})
     monkeypatch.setattr(_core, "run_tool", fake_run_tool)
     return calls
+
+
+def test_sast_argv_carries_disable_nosem(monkeypatch, tmp_path):
+    """Semgrep must report nosemgrep lines so PRAETOR can filter them with reasons."""
+    calls = _capture_sast_argv(monkeypatch, "native")
+    (tmp_path / "a.py").write_text("subprocess.call(cmd)\n", encoding="utf-8")
+    engine_sast.run(str(tmp_path), bundled_rules="", use_registry=False,
+                    extra_configs=["p/ci"], enumerated_code_files=1)
+    assert calls and "--disable-nosem" in calls[-1][0]
+
+
+def test_sast_retry_removes_only_rejected_nosem_flag(monkeypatch, tmp_path):
+    """An old Semgrep retry must drop exactly the flag it rejected."""
+    calls = []
+
+    def fake_run_tool(cmd, **kwargs):
+        calls.append(list(cmd))
+
+        class _R:
+            stderr = "unknown option --disable-nosem"
+            returncode = 2
+            stdout = ""
+
+        if "--disable-nosem" not in cmd:
+            _R.returncode = 0
+            _R.stderr = ""
+            _R.stdout = '{"results": [], "paths": {"scanned": ["a.py"]}}'
+        return _R()
+
+    monkeypatch.setattr(engine_sast, "detect_runtime", lambda *a, **kw: {
+        "mode": "native", "prefix": ["semgrep"], "available": True,
+        "detail": "test", "version": "test"})
+    monkeypatch.setattr(_core, "run_tool", fake_run_tool)
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    result = engine_sast.run(str(tmp_path), bundled_rules="", use_registry=False,
+                             extra_configs=["p/ci"], enumerated_code_files=1)
+    assert len(calls) == 2, calls
+    assert "--disable-nosem" in calls[0]
+    assert "--disable-nosem" not in calls[1]
+    assert "--x-ignore-semgrepignore-files" in calls[1]
+    assert "rejected --disable-nosem" in result["detail"]
+
+
+def test_nosemgrep_outcome_is_filtered_with_reason_and_without_marker_active(monkeypatch, tmp_path):
+    """Pin the composed outcome, not only the Semgrep argv mechanism."""
+    calls = []
+
+    def fake_sast_run(*args, **kwargs):
+        calls.append(1)
+        return {
+            "status": "ok",
+            "detail": "fixture",
+            "runtime": "test",
+            "findings": [core.Finding(
+                engine="sast", rule_id="praetor-py-subprocess-shell-true",
+                title="shell=True", severity=core.Severity.HIGH,
+                file="fixture.py", line=1, category="INJECTION", cwe="CWE-78",
+            )],
+        }
+
+    monkeypatch.setattr(engine_sast, "run", fake_sast_run)
+
+    def scan(source):
+        (tmp_path / "fixture.py").write_text(source, encoding="utf-8")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = praetor.main([
+                str(tmp_path), "--format", "json", "--quiet", "--engines", "sast",
+                "--fail-on", "HIGH", "--no-registry",
+            ])
+        return rc, json.loads(out.getvalue())
+
+    filtered_rc, filtered_doc = scan("subprocess.call(cmd, shell=True)  # nosemgrep\n")
+    assert filtered_rc == 0
+    assert filtered_doc["findings"] == []
+    assert len(filtered_doc["filtered"]) == 1
+    assert filtered_doc["filtered"][0]["filter_reason"] == (
+        "suppressed by inline ignore marker on the flagged line"
+    )
+
+    active_rc, active_doc = scan("subprocess.call(cmd, shell=True)\n")
+    assert active_rc == 1
+    assert len(active_doc["findings"]) == 1
+    assert active_doc["findings"][0]["rule_id"] == "praetor-py-subprocess-shell-true"
+    assert not active_doc["filtered"]
+    assert len(calls) == 2
 
 
 def test_the_docker_runtime_mounts_the_target_read_only(tmp_path):

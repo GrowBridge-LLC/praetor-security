@@ -85,6 +85,7 @@ type ProviderDef = (
 const PROVIDER_DEFS: &[ProviderDef] = &[
     ("aws-access-key-id", "AWS Access Key ID", r"\b(?P<secret>(?:AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|A3T[A-Z0-9])[A-Z0-9]{16})\b", Severity::High, Confidence::High, "Revoke the key in IAM, rotate it, and load credentials from the environment or an instance role instead of source."),
     ("aws-secret-access-key", "AWS Secret Access Key", r#"(?i)aws[_\-. ]?(?:secret|sk)[_\-. ]?(?:access)?[_\-. ]?key[\"'\s:=]{1,6}[\"']?(?P<secret>[A-Za-z0-9/+]{40})[\"']?"#, Severity::Critical, Confidence::High, "Rotate the AWS secret key immediately; never commit it -- use IAM roles or a secrets manager."),
+    ("azure-storage-account-key", "Azure Storage Account Key", r#"(?i)AccountKey[=:][\"']?(?P<secret>[A-Za-z0-9+/]{40,})[\"']?;EndpointSuffix=core\.windows\.net"#, Severity::High, Confidence::High, "Rotate the Azure storage account key and store it in a secret manager."),
     ("gcp-api-key", "Google API Key", r"\b(?P<secret>AIza[0-9A-Za-z_\-]{35})\b", Severity::High, Confidence::High, "Restrict and rotate the key in the Google Cloud console; scope it to specific APIs/referrers."),
     ("gcp-oauth-client-secret", "Google OAuth Client Secret", r"\b(?P<secret>GOCSPX-[A-Za-z0-9_\-]{20,})\b", Severity::High, Confidence::High, "Rotate the OAuth client secret in Google Cloud; store it server-side only."),
     ("google-oauth-refresh-token", "Google OAuth Refresh Token", r"\b(?P<secret>1//0[A-Za-z0-9_\-]{30,})\b", Severity::Critical, Confidence::High, "Revoke the refresh token (it grants long-lived access); rotate the associated OAuth client."),
@@ -502,9 +503,11 @@ fn scan_one(relpath: &str, text: &str, findings: &mut Vec<Finding>) {
         ));
     }
 
+    let mut skipped = 0usize;
     for (index, line) in split_lines(text).into_iter().enumerate() {
         let line_no = index + 1;
         if line.chars().count() > 4000 {
+            skipped += 1;
             continue;
         }
 
@@ -661,6 +664,27 @@ fn scan_one(relpath: &str, text: &str, findings: &mut Vec<Finding>) {
             }
         }
     }
+    if skipped > 0 {
+        findings.push(Finding {
+            engine: "secrets",
+            rule_id: "secrets-long-line-skip",
+            title: "Secret-scanning coverage limited by long line".to_string(),
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            file: relpath.to_string(),
+            line: 1,
+            category: "COVERAGE",
+            specificity: 0,
+            description: format!("{skipped} line(s) exceeded the 4000-character analysis cap and were skipped by secret scanning."),
+            snippet: format!("skipped_lines={skipped}; cap=4000"),
+            fix: "Split oversized lines before scanning to restore secret-detection coverage.",
+            cwe: CWE_SECRET,
+            owasp: OWASP_SECRET,
+            references: REF_SECRET,
+            filtered: false,
+            filter_reason: String::new(),
+        });
+    }
 }
 
 pub mod differential {
@@ -769,8 +793,9 @@ mod tests {
     use super::*;
 
     #[test]
+    // This checks provider count and unique IDs; differential testing checks cross-port parity.
     fn every_python_provider_pattern_is_present() {
-        assert_eq!(providers().len(), 16);
+        assert_eq!(providers().len(), 17);
         let names: HashSet<_> = providers()
             .iter()
             .map(|provider| provider.rule_id)

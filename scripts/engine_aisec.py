@@ -179,12 +179,16 @@ def _script_of(ch: str) -> str:
 
 def _scan_homoglyphs(text: str, rel: str) -> list:
     out: list = []
+    skipped = 0
     # split_lines, not str.splitlines: `_scan_unicode` counts \n, and two
     # detectors in one engine must not disagree about what a line is.
     for ln, line in enumerate(split_lines(text), start=1):
         # Fast path AND a correctness statement: a mixed-script token requires at
         # least one non-ASCII character, so an all-ASCII line cannot contain one.
-        if line.isascii() or len(line) > 6000:
+        if len(line) > 6000:
+            skipped += 1
+            continue
+        if line.isascii():
             continue
         for tok in _WORD_RE.findall(line):
             if tok.isascii():
@@ -220,7 +224,18 @@ def _scan_homoglyphs(text: str, rel: str) -> list:
                 references=[REF_LLM, "https://www.unicode.org/reports/tr39/"],
             ))
             if len(out) >= 20:
-                return out
+                break
+    if skipped:
+        out.append(Finding(
+            engine="aisec", rule_id="aisec-long-line-skip",
+            title="AI-security coverage limited by long line",
+            severity=Severity.INFO, confidence=Confidence.HIGH,
+            file=rel, line=1, category="COVERAGE",
+            description=f"{skipped} line(s) exceeded the 6000-character analysis cap and were skipped by homoglyph scanning.",
+            snippet=f"skipped_lines={skipped}; cap=6000",
+            fix="Split oversized lines before scanning to restore full AI-security coverage.",
+            references=[REF_LLM],
+        ))
     return out
 
 
@@ -640,8 +655,10 @@ def scan(scan_files, read_text) -> list:
         findings.extend(_scan_mcp(text, rel))
 
         lines = split_lines(text)
+        skipped = 0
         for i, line in enumerate(lines, start=1):
             if len(line) > 6000:
+                skipped += 1
                 continue
             for group in (INJECTION, EXFIL):
                 for rule_id, title, rx, sev, conf, cat, cwe, owasp, fix in group:
@@ -653,4 +670,15 @@ def scan(scan_files, read_text) -> list:
                             snippet=line.strip()[:200],
                             fix=fix, cwe=cwe, owasp=owasp, references=[REF_LLM],
                         ))
+        if skipped and not any(f.file == rel and f.category == "COVERAGE" for f in findings):
+            findings.append(Finding(
+                engine="aisec", rule_id="aisec-long-line-skip",
+                title="AI-security coverage limited by long line",
+                severity=Severity.INFO, confidence=Confidence.HIGH,
+                file=rel, line=1, category="COVERAGE",
+                description=f"{skipped} line(s) exceeded the 6000-character analysis cap and were skipped by injection/exfiltration scanning.",
+                snippet=f"skipped_lines={skipped}; cap=6000",
+                fix="Split oversized lines before scanning to restore full AI-security coverage.",
+                references=[REF_LLM],
+            ))
     return findings

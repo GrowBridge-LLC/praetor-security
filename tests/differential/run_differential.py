@@ -83,11 +83,13 @@ _MIN_SECRET_CASES = 25
 _REQUIRED_SECRET_RULES = {
     "aws-access-key-id", "aws-secret-access-key", "gcp-api-key",
     "gcp-oauth-client-secret", "google-oauth-refresh-token", "github-token",
+    "azure-storage-account-key",
     "github-fine-grained-pat", "slack-token", "slack-webhook",
     "stripe-secret-key", "openai-key", "anthropic-key",
     "twilio-account-sid-authtoken", "sendgrid-key", "npm-token", "jwt",
     "private-key-pem", "gcp-service-account-key", "db-connection-string-password",
     "hardcoded-secret-assignment", "base64-wrapped-secret", "high-entropy-string",
+    "secrets-long-line-skip",
 }
 _REQUIRED_SECRET_NEGATIVE_PATHS = {
     "config/placeholder.py", "config/revision.py", "package-lock.json",

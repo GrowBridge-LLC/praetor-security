@@ -290,6 +290,13 @@ class Finding:
     # a stable per-finding key used to merge duplicates across engines
     dedup_key: str = ""
 
+    def __post_init__(self):
+        # Redact provider-shaped credentials at the shared Finding boundary so
+        # every engine receives the same report-safety guarantee. This covers
+        # only formats known to the secrets provider table; unknown formats may
+        # still require a future provider rule.
+        self.snippet = redact_finding_snippet(self.snippet)
+
     def compute_dedup_key(self) -> str:
         """
         Collapse findings that describe the SAME issue at the SAME place, while
@@ -403,6 +410,27 @@ def redact_line(line: str, secret: str, keep: int = 4) -> str:
     return line.replace(secret, redact(secret, keep)).strip()[:200]
 
 
+def redact_finding_snippet(snippet: str) -> str:
+    """Mask provider-recognised credentials in any engine's finding snippet."""
+    if not snippet:
+        return snippet
+    text = str(snippet)
+    try:
+        from engine_secrets import PROVIDERS
+    except (ImportError, AttributeError):
+        return text
+    for _rule_id, _title, pattern, _severity, _confidence, _fix in PROVIDERS:
+        for match in pattern.finditer(text):
+            secret = match.groupdict().get("secret") if match.groupdict() else None
+            if not secret:
+                try:
+                    secret = match.group(1)
+                except IndexError:
+                    continue
+            text = text.replace(secret, redact(secret))
+    return text
+
+
 # --------------------------------------------------------------------------- #
 # File walking
 # --------------------------------------------------------------------------- #
@@ -460,6 +488,10 @@ TEXT_EXTS = {
     ".html", ".htm", ".xml", ".svg",
     ".json", ".jsonc", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
     ".env", ".properties", ".tf", ".tfvars", ".hcl",
+    # Structured exports, logs, and HTTP archives are ordinary text-bearing
+    # formats.  Keep them in the allowlist so the text engines can inspect
+    # credentials and instruction payloads in these common artifacts.
+    ".csv", ".tsv", ".log", ".out", ".ndjson", ".jsonl", ".har",
     ".md", ".markdown", ".mdx", ".mdc", ".rst", ".txt", ".text",
     ".dockerfile", ".gitconfig", ".npmrc",
     # 🔴 DEPLOYMENT AND TEMPLATE CODE. Every one of these was MEASURED going unread

@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import sys
+import argparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KB_DIR = os.path.join(ROOT, "references", "kb")
@@ -43,6 +44,11 @@ REQUIRED_FIELDS = (
 # within `assertion` on both sides (per the directive's own instruction not to
 # resolve them), not necessarily linked here by id yet.
 OPTIONAL_DEFAULTS = {"supersedes": None, "conflicts_with": []}
+
+# Existing debt is pinned by the gate; new or changed claims may not introduce
+# another empty string in a required field.  The generated records are not the
+# authority for this check because this script rewrites their hashes.
+EMPTY_STRING_FIELDS = {"verbatim"}
 
 
 def compute_source_sha(source_file: str, source_line: int) -> str:
@@ -95,7 +101,13 @@ def _load_claims() -> list:
     return claims
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output", default=RECORDS_PATH,
+        help="write generated records here (default: committed records.jsonl)",
+    )
+    args = parser.parse_args(argv)
     claims = _load_claims()
     if not claims:
         sys.stderr.write(
@@ -103,6 +115,14 @@ def main() -> int:
             "A zero-claim KB is not a clean result, it is an unmeasured one.\n"
         )
         return 2
+
+    existing = {}
+    if os.path.exists(RECORDS_PATH):
+        with open(RECORDS_PATH, encoding="utf-8") as fh:
+            for line in fh:
+                if line.strip():
+                    rec = json.loads(line)
+                    existing[rec.get("id")] = rec
 
     seen_ids = set()
     unresolved = []
@@ -113,6 +133,25 @@ def main() -> int:
             sys.stderr.write(f"kb-build: duplicate id '{rid}' across claims files\n")
             return 2
         seen_ids.add(rid)
+        previous = existing.get(rid)
+        for field in EMPTY_STRING_FIELDS:
+            value = rec.get(field)
+            if value is not None and (not isinstance(value, str) or value.strip()):
+                continue
+            old_value = previous.get(field) if previous else None
+            old_empty = old_value is None or (isinstance(old_value, str) and not old_value.strip())
+            if previous is None or not old_empty:
+                sys.stderr.write(
+                    f"kb-build: {rid} introduces empty required field {field!r}\n"
+                )
+                return 1
+        if rec.get("volatile") and not str(rec.get("volatile_reason") or "").strip():
+            old_reason = previous.get("volatile_reason") if previous else None
+            if previous is None or not str(old_reason or "").strip():
+                sys.stderr.write(
+                    f"kb-build: {rid} introduces volatile claim without a reason\n"
+                )
+                return 1
         try:
             source_sha = compute_source_sha(rec["source_file"], rec["source_line"])
         except (OSError, IndexError) as exc:
@@ -134,15 +173,16 @@ def main() -> int:
         return 1
 
     records.sort(key=lambda r: r["id"])
-    os.makedirs(KB_DIR, exist_ok=True)
-    with open(RECORDS_PATH, "w", encoding="utf-8", newline="\n") as fh:
+    output_path = os.path.abspath(args.output)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
         for rec in records:
             fh.write(json.dumps(rec, sort_keys=True, ensure_ascii=False))
             fh.write("\n")
 
     n_volatile = sum(1 for r in records if r.get("volatile"))
     print(f"kb-build: {len(records)} record(s), {n_volatile} volatile, "
-          f"written to {os.path.relpath(RECORDS_PATH, ROOT)}")
+          f"written to {os.path.relpath(output_path, ROOT)}")
     return 0
 
 

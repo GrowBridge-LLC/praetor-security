@@ -14,6 +14,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   # A SECOND JOB, because the one below deliberately installs no tools -- the
   # invariant tests must not need the tools they guard.
@@ -28,8 +31,8 @@ jobs:
   semgrep-live:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5
         with:
           python-version: '3.14'
       - name: Install semgrep
@@ -59,9 +62,9 @@ jobs:
   invariants:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5
         with:
           # 🔴 MUST MATCH tests/precommit.sh, WHICH PINS py -3.14.
           #
@@ -75,7 +78,9 @@ jobs:
           # A local gate that pins the interpreter making it pass is a tautology,
           # not a verification. If these two pins ever drift again the generator
           # now says WRONG INTERPRETER rather than STALE, which is the difference
-          # between "regenerate" and "regenerating destroys 353 code points".
+          # between "regenerate" and "regenerating loses 4,302 code points".
+          # Re-derive by rendering under Unicode 16.0.0 and 15.1.0 and differencing
+          # covered code-point sets (142,179 -> 137,877); the value changes with tables.
           python-version: '3.14'
 
       # Deliberately no requirements install: the invariant tests must not need

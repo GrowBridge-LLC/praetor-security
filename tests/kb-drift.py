@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
+import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
@@ -63,6 +65,25 @@ def main() -> int:
                 f"hash changed ({stored_sha} -> {current_sha}) -- "
                 f"'{rec.get('assertion')}' may no longer be true"
             )
+
+    with tempfile.TemporaryDirectory(prefix="praetor-kb-drift-") as temp_dir:
+        rebuilt_path = os.path.join(temp_dir, "records.jsonl")
+        result = subprocess.run(
+            [sys.executable, os.path.join(ROOT, "scripts", "kb-build.py"),
+             "--output", rebuilt_path],
+            cwd=ROOT, capture_output=True, text=True,
+        )
+        if result.returncode:
+            sys.stderr.write("kb-drift: temporary rebuild failed:\n")
+            sys.stderr.write(result.stderr)
+            return result.returncode
+        with open(rebuilt_path, encoding="utf-8") as fh:
+            rebuilt = [json.loads(line) for line in fh if line.strip()]
+        old_by_id = {r.get("id"): r for r in records}
+        new_by_id = {r.get("id"): r for r in rebuilt}
+        for rid in sorted(set(old_by_id) | set(new_by_id)):
+            if old_by_id.get(rid) != new_by_id.get(rid):
+                drifted.append(f"{rid}: generated record differs")
 
     if drifted:
         sys.stderr.write(f"kb-drift: {len(drifted)} of {len(records)} record(s) drifted:\n")
