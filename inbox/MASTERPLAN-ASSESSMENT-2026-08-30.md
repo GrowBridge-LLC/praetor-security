@@ -70,30 +70,46 @@ the next open decision on this track.
 | 3 | Acceptance is DIFFERENTIAL, and the harness must be green and blocking | **LIVE** — `tests/precommit.sh:250` fails if the runner is missing |
 | 4 | `SELF-SCAN-BASELINE.json` is the regression floor for both | **HELD** — never regenerated |
 
-### 🔴 Condition 3's corpus requirement is HALF met — measured
+### ✅ Condition 3's corpus requirement is FULLY MET — and enforced
+
+**An earlier version of this file said "HALF met". That was wrong, and the error
+is worth more than the finding was.**
 
 The ADR requires the differential corpus to include cases the Python engine
-currently MISSES, *"otherwise identical output is satisfied by two engines that
-are identically blind, and the port certifies the existing hole into a second
-language."* It names two. Measured:
+MISSES, *"otherwise identical output is satisfied by two engines that are
+identically blind."* It names two. Measured:
 
-| required case | present? |
+| required case | present |
 |---|---|
-| `.cursor/hooks.json`-shaped agent hook config | ✅ **YES** — `secrets.tsv` row 14, a real case: `github-token  .cursor/hooks.json  ghp_ ...` |
-| extensionless instruction dotfile | ❌ **NO** — absent from every corpus file |
+| `.cursor/hooks.json`-shaped agent hook config | ✅ `secrets.tsv` row 14 → `secrets|github-token|.cursor/hooks.json|1` |
+| extensionless instruction dotfile | ✅ `secrets.tsv` row 11 → `secrets|gcp-api-key|.agent-instructions|2` |
 
-The `secrets` corpus holds **27 rows**. `aisec` has **no differential contract at
-all**, which is consistent with Amendment 2 deferring it.
+**Stronger than presence: the runner ENFORCES them.**
+`tests/differential/run_differential.py:477` —
+`for required_path in {".cursor/hooks.json", ".agent-instructions"}` — so the
+corpus cannot silently lose either case. A third extensionless case (the npm
+registry config) sits in the corpus beyond the required floor — named here
+without its literal filename, because writing that path into a shipping file
+trips our own `sensitive-file-read` rule, correctly. It did, on the first draft
+of this paragraph.
 
-⚠️ **This is a partial solve that reads as a solve.** One blind-spot case was
-added, the condition was presumably considered addressed, and the second case
-never arrived. Nothing in a status column distinguishes half a corpus from a
-whole one — the harness is green either way, because green means the two
-implementations agree, never that they are right.
+🔴 **How I got it wrong, because the method matters.** I searched the corpus for
+`.cursor/hooks.json` — the THING — and found it. For the second case I searched
+for `extensionless` and `dotfile` — the DESCRIPTION — and found nothing. **A
+corpus file contains paths, never the prose that describes them.** Two checks in
+one paragraph, different methods, and only the second was wrong.
 
-⇒ **The specific unfinished item: add an extensionless instruction dotfile case
-to `references/differential/secrets.tsv`.** Small, and it is the difference
-between the condition being met and appearing met.
+⇒ **I reported an absence with no positive control.** The rule I apply to
+everything else is: before reporting a zero, prove the instrument returns
+non-zero for the class you claim is missing. A grep for `dotfile` cannot return
+non-zero against any corpus, so its zero carried no information at all.
+
+The builder caught it by checking the claim against source before carrying it
+into a plan.
+
+**`aisec` still has no differential contract**, consistent with Amendment 2
+deferring it. That is a real open item and it is NOT evidence that the secrets
+corpus is incomplete — conflating the two was part of the same error.
 
 ## 3. The pre-rollout backlog — mostly closed, and it says so honestly
 
