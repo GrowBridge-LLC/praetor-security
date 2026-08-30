@@ -325,3 +325,326 @@ observation/report, targeted regression, or non-zero repository gate.
 
 **PERSISTENCE:** this handoff update and implementation are committed on
 `codex-f/build`; nothing was pushed. Claude must independently audit before landing.
+
+### 2026-08-25 — pre-close state
+
+The operator requested a pre-close audit and asked that the counterpart be informed. This is a
+closeout preparation point, not a claim that the long-running communication goal is complete.
+
+**LIVE STATE (re-derived):** worktree is `C:\projects\PRAETOR\.codex\PRAETOR-codex`; branch is
+`codex-f/build`; `HEAD` is `1ccf9d10dcd1f4000561b85d9c53feb2c67a0578` (`Add live nosemgrep outcome
+coverage`). `git status --short` produced no entries. `git rev-list --left-right --count
+origin/main...HEAD` returned `1 43` (local branch is one commit ahead and 43 commits behind the
+remote main tip); nothing was pushed.
+
+**CURRENT ASSIGNMENT:** F22 remains the bounded assignment recorded in the live lane; no new
+counterpart assignment was present in the latest own-lane read. The durable Zulip inbox continues
+to report a limit-hit floor; the latest cycle reported 190 unread in 38 conversations, with
+`INBOX_RC=0`. Own-lane read returned `OWN_LANE_RC=0`; heartbeat `who --json` returned `WHO_RC=0`,
+`fresh_seconds=300`, slug `codex-f`. No messages were marked read in that cycle.
+
+**VERIFICATION NOTE:** Two prescribed `bash tests/precommit.sh` attempts were started during this
+closeout but produced only the initial banner within the bounded tool window and did not yield a
+usable exit code. They were explicitly terminated, and a process sweep found no surviving
+precommit process attributable to those attempts. Therefore do not claim a fresh precommit pass
+from this closeout; the last recorded successful repository gate remains the earlier F22 evidence
+in this file. The portable skill gate's linked-worktree `.git` limitation remains known and is not
+a reason to reinterpret the repository gate.
+
+**MUST NOT LOSE:** do not push, merge, deploy, cross repositories, take floor action, or manage
+watchers. The active user override prohibits watcher creation, inspection, or alteration. Keep
+the ignored absolute pair channel at `C:\projects\PRAETOR\.local\PAIR-CHANNEL.md`; do not revive the
+obsolete tracked channel. The next session must re-read the standing goal, `AGENTS.md`,
+`CLAUDE.md`, this handoff, and the live pair channel before acting.
+
+**OPEN:** counterpart acknowledgement of this closeout notice is still required; the persistent
+communication goal remains active until the operator ends it. No independent subagent audit was
+dispatched in this closeout because the user asked to inform the counterpart and the current
+watcher prohibition and no-push boundary remain controlling.
+
+### 2026-08-25 — final pre-close gate attempt
+
+Ran the prescribed bounded command with a 300-second allowance, capturing the gate output to
+`C:\Users\Admin\AppData\Local\Temp\codex-f-preclose-gate-final.txt` and capturing the exit code
+immediately in the Git Bash command. The captured output reached only:
+
+```text
+== PRAETOR pre-commit gate ==
+  OK    python suite (322 passed, 0 skipped)
+  OK    rust suite (11 passed, 0 ignored)
+  OK    unicode tables current
+  OK    self-scan unchanged (22 active / 56 filtered)
+  OK    public-hygiene sweep (107 shipping files, tracked+untracked)
+```
+
+No `PRECOMMIT_RC` marker was produced, so the final gate result is `CANNOT-DERIVE`; this is not a
+green claim. The current process sweep found no surviving precommit process attributable to the
+attempt. Git state remains `1ccf9d1`, branch `codex-f/build`, `git status --short` shows only this
+handoff update, and `git rev-list --left-right --count origin/main...HEAD` remains `1 43`.
+
+The requested task archive operation is not available through the currently exposed Codex tools.
+The handoff is therefore ready for a fresh session, but task archival itself remains an external UI
+operation and must not be claimed as completed here.
+
+### 2026-08-28 — Mike-directed reorientation correction (supersedes only stale current-state prose above)
+
+**METHOD / READ SET:** Re-read the current task's five most recent transcript entries through the
+Codex task reader, the PRAETOR memory registry and its two available PRAETOR rollout summaries, this
+handoff, the standing goal, and the live ignored channel. The durable PRAETOR transcript summaries
+available locally cover 2026-08-22 and 2026-08-27; no additional historical PRAETOR rollout summaries
+were present, so claims below are derived from live Git and the current channel rather than invented
+from absent transcript content.
+
+**LIVE BRANCH / DIRTY OWNERSHIP:** `codex-f/build` is at
+`a62a97715a42a595c022351e7ded5e5017bf0805`; local `main` is
+`681f844d95374771c8d0756193029a7381ed6626`; `origin/main` is
+`b80f7f8e75c87758e1630eabfa424f19ee74e2e9`; merge base is
+`513880de269c05520d01970208c7f2d8c1989336`. Against the current tracking ref, the builder branch
+is 45 commits ahead and 2 behind (`origin/main..HEAD` / `HEAD..origin/main`). At reorientation start
+`git status --porcelain=v1` named only this handoff as modified; its pre-existing diff was 60 added
+lines. Preserve that work and this append; do not stage broadly, clean, reset, rebase, merge, or push.
+
+**AUDIT / CANDIDATE LEDGER:** `d8ffacfb48273ef0d82b5fe140e44f949f626871` (F29/F33) has a detached
+`claude-f` ACCEPT, including independent red-source mutations. `a62a977` (F34) remains BLOCKED:
+the OSV regex translator silently fails the real downstream separator-class pattern
+`(^|[\\/])\\.codex[\\/]`; F34 needs a named red-first control for that pattern as well as the existing
+PRAETOR-relative form. F30's exact-content identity predicate is accepted for build only if hashes are
+derived from actual shipped detector files at runtime/build time and the implementation explicitly starts
+with `engine_secrets.py` rather than claiming the whole detector class is solved. F31/F32 remain
+report-visible, gate-only category work, not ordinary suppression.
+
+The range remains branch-wide BLOCK, not mergeable clearance: A2 (KB rebuild self-dependency), A4
+(Rust Azure-padding parity), A5 (homoglyph cap), and A7 (LIMITS.md contradicts `TEXT_EXTS`) were
+re-verified at this tip. A3 is also OPEN: the correct read-only command
+`git merge-tree --trivial-merge $(git merge-base main codex-f/build) main codex-f/build` produced
+`+<<<<<<< .our` / `+>>>>>>> .their` for `references/kb/records.jsonl`. The earlier unflagged
+`git merge-tree` invocation was unsupported by this Git version and is not evidence of a clean merge.
+
+**NEXT TARGET / OWNER / ACCEPTANCE:** `claude-f` assigns A2/A4/A5/A7 ahead of F30/F31/F32 and suggests
+A7 first (correct the public extension-coverage statement in `references/LIMITS.md` to match current
+`core.TEXT_EXTS`). `codex-f` is builder; `claude-f` is detached auditor/integrator. The current message
+does not state a separate A7 red-first test, exact persistence commit, or explicit failure predicate;
+therefore an A7 implementation is not yet started. Obtain that acceptance-bearing detail before mutation.
+A2 requires a design proposal before building; A3 has no assigned resolution mechanism. Any future
+acceptance must include a direct exit-status gate and fail if the stated code/doc discrepancy, parity
+gap, cap bypass, KB self-dependency, F34 real-regex miss, or unresolved merge conflict remains.
+
+**NO-GO:** Do not claim a fresh gate from historical output; do not execute, import, install, or build a
+scanned target; do not push, merge, deploy, run live OSV against an unbounded target, resolve A3, alter
+baseline/rulings to green a result, or broaden into F30/F31/F32 until their assigned slice is accepted.
+Green builder checks are not detached audit or shipment clearance.
+
+### 2026-08-28 — official Claude-F hold-status receipt
+
+Reorientation status was sent through the official Zulip wrapper as `codex-f` to the known `claude-f`
+seat, topic `PRAETOR reorientation hold`. Wrapper receipt: `sent id=5158`; the server confirmed both
+direct-message recipients (`claude-f-bot@zulip.localdomain` and `codex-f-bot@zulip.localdomain`). The
+post reported only the existing owner, A7 contract gap, A2/A3/A4/A5/A7 and F34 holds, and no-go scope.
+It did not authorize or perform a source, staging, commit, merge, push, deployment, or lifecycle action.
+
+### 2026-08-28 — fresh held-range packet for Factory coordination
+
+**BUILDER TIP / PERSISTENCE:** `codex-f/build` remains at
+`a62a97715a42a595c022351e7ded5e5017bf0805`; the only dirty path is this durable builder handoff.
+`origin/main...HEAD` remains `2 45`. This packet is status coordination only and is persisted here,
+uncommitted, to preserve all existing dirty work.
+
+**VERDICTS / PREREQUISITES:** F29/F33 are detached-ACCEPT at
+`d8ffacfb48273ef0d82b5fe140e44f949f626871`. F34 is BLOCK at `a62a977`: the actual downstream
+`(^|[\\/])\\.codex[\\/]` exclude pattern is translated into a nonmatching expression. F30's
+exact-content predicate is conditionally accepted only if hashes are derived from shipped files and
+the initial scope is explicitly `engine_secrets.py`; F31/F32 remain report-visible, gate-only work.
+The branch-wide independent audit is still BLOCK: A2/A3/A4/A5/A7 remain open, and A3's read-only
+`git merge-tree --trivial-merge $(git merge-base main codex-f/build) main codex-f/build` emits
+`+<<<<<<< .our` and `+>>>>>>> .their` for `references/kb/records.jsonl`.
+
+**NEXT SLICE / ACCEPTANCE:** Preserve the agreed A2/A4/A5/A7 before F30/F31/F32 order. A7 is the
+first suggested bounded slice (`references/LIMITS.md` must agree with `core.TEXT_EXTS`) but is NOT
+assigned for mutation: an exact red-first acceptance command, persistence commit target, and explicit
+failure predicate are CANNOT-DERIVE from the current Claude-F assignment. Until supplied, attempted
+acceptance fails because the four-field builder contract is incomplete. Any supplied check must fail
+if the stated LIMITS/TEXT_EXTS discrepancy remains.
+
+**AUDIT ROUTE / NO-GO:** `claude-f` is the required detached BLOCK-first auditor and integration route;
+`codex-f` does not send work sideways outside its designated counterpart route. I am available to independently audit a future,
+separately delivered exact-hash Hermes or rotation candidate only after its builder supplies a bounded
+artifact, scope/exclusions, red-first acceptance command and failure condition, and persistence
+revision. No such audit has begun, and no code, credential, host, service, lifecycle, merge, push, or
+deployment action is authorized or performed.
+
+### 2026-08-28 — overnight single-slice receipt: A7 contract pending
+
+**READ SET / STATE LIMIT:** Re-read the five newest completed PRAETOR task turns, the PRAETOR memory
+registry, this handoff, the standing goal, live ignored Claude-F lane record, and live worktree state.
+The official Zulip wrapper reported `199 unread for codex-f, in 57 conversation(s)` but also reported
+its fetch cap of 200; that number is a floor and is NOT an inbox-clearance claim. The only relevant
+current assignment source remains the Claude-F lane record below; no new acceptance-bearing A7 contract
+was derived from a capped inbox listing.
+
+**ONE ORDERED NEXT SLICE — A7 ONLY:** Correct the false extension-coverage sentence in
+`references/LIMITS.md` so it agrees with the current `scripts/core.py` `TEXT_EXTS` treatment of
+`.csv`, `.log`, `.jsonl`, `.ndjson`, `.har`, and `.out`. `codex-f` is the builder only after Claude-F
+supplies the bounded contract; `claude-f` owns contract issuance, detached BLOCK-first audit, and
+integration.
+
+**EXCLUSIONS:** No A2, A3, A4, A5, F34, F30, F31, or F32 work; no source outside the named A7 document
+slice; no baseline/ruling edits, test or CI alteration, staging, commit, merge, push, deploy, credential,
+host/service, or lifecycle action. F29/F33's detached ACCEPT and F34's separate BLOCK stay distinct.
+
+**RED-FIRST ACCEPTANCE / FAILURE:** The required exact A7 red-first acceptance command is
+`CANNOT-DERIVE`: Claude-F has not provided a command, precise test artifact, or explicit exit-status
+predicate. The acceptance contract must fail before correction while the LIMITS sentence says those six
+extensions are skipped despite their membership in `TEXT_EXTS`, and pass only after the named mismatch is
+removed without widening scope. Until an exact command and expected failure are supplied, any builder
+claim or mutation fails this receipt's contract.
+
+**AUDIT / PERSISTENCE:** A future A7 result must be persisted as an exact named revision on
+`codex-f/build`, with the command, exit status, and red-first evidence recorded in this handoff; then
+Claude-F must independently audit that exact revision from BLOCK before any acceptance or integration
+claim. No such revision or verdict exists.
+
+**CURRENT BLOCKERS:** missing four-field A7 contract; branch-wide A2/A3/A4/A5 hold; A3 conflict in
+`references/kb/records.jsonl`; and F34's unresolved real-pattern translator defect. Builder tip remains
+`a62a97715a42a595c022351e7ded5e5017bf0805`; this handoff remains the only dirty path.
+
+### 2026-08-28 — durable reorientation refresh: A7 remains contract-pending
+
+**EVIDENCE READ:** Reviewed the five newest completed PRAETOR task turns, PRAETOR memory records, this
+handoff, the standing goal, the live Claude-F pair record, current Git state, and official Zulip inbox.
+The wrapper again reports `199 unread for codex-f, in 57 conversation(s)` and its 200-message fetch cap;
+the count is a floor, so neither an empty inbox nor a new contract can be inferred from it.
+
+**EXACT TARGET / ALLOWED SCOPE:** The sole ordered next slice is A7: correct only the false
+`references/LIMITS.md` extension-coverage claim so it matches `scripts/core.py` `TEXT_EXTS` for `.csv`,
+`.log`, `.jsonl`, `.ndjson`, `.har`, and `.out`. No mutation is currently allowed because the necessary
+acceptance-bearing contract is absent.
+
+**OWNER / DEPENDENCIES:** `codex-f` is builder only after a contract; `claude-f` owns the four-field
+assignment, detached BLOCK-first audit, and integration. Dependencies are the exact A7 red-first command,
+expected failure, allowed file set, and persistence revision. They are all CANNOT_DERIVE except the
+already-named A7 document target.
+
+**ACCEPTANCE / EXPECTED FAILURE:** Exact command: CANNOT_DERIVE. Required failure: before correction,
+the named command must fail because LIMITS calls those `TEXT_EXTS` members skipped; it can pass only when
+that mismatch is removed without changing the code allowlist or expanding scope. No builder may treat this
+descriptive failure condition as an authorized substitute for the missing command.
+
+**EXCLUSIONS:** A2/A3/A4/A5, F34, F30/F31/F32, fan/Hermes/rotation or other externally supplied candidate work,
+all source other than the named A7 document, baselines/rulings, CI/test changes, staging, commits, merge,
+push, deployment, credentials, live/host/network actions, and lifecycle changes. F29/F33 ACCEPT and F34
+BLOCK remain separate verdicts.
+
+**DIRTY / PERSISTENCE:** `codex-f/build` is at `a62a97715a42a595c022351e7ded5e5017bf0805`, with local
+`main` `681f844d95374771c8d0756193029a7381ed6626` and `origin/main`
+`b80f7f8e75c87758e1630eabfa424f19ee74e2e9`; `origin/main...HEAD` is `2 45`. `git status --porcelain=v1`
+shows only this handoff modified (unstaged); no staged or untracked path was reported. This record itself
+is the persistence location and remains uncommitted to preserve existing dirty work. A future result must
+be a named builder revision plus command/exits/red-first evidence here, followed by Claude-F's detached
+audit of that exact revision.
+
+**BLOCKERS / DECISION OWNERS:** Claude-F must decide/provide the A7 contract. Separate blockers remain
+A2 (KB self-dependency), A3 (read-only merge-tree still emits `+<<<<<<< .our` / `+>>>>>>> .their` for
+`references/kb/records.jsonl`), A4 (Rust Azure-padding parity), A5 (homoglyph cap), and F34 (real
+separator-class pattern translation). No audit verdict, live/account/deploy, or cross-lane authority is
+derived from this reorientation request.
+
+### 2026-08-29 — Light-tier pre-close: CPU shutdown-ready
+
+**TIER / METHOD:** Light tier under `pre-close-audit`: this session only re-derived and persisted
+PRAETOR held-range/coordinator status. It made no source, test, CI, configuration, service, lifecycle,
+or commit change. Therefore no independent audit was dispatched and no memory/CHANGELOG update is owed.
+
+**LOCAL SURVIVAL / PROFILE CONTINUITY:** Local Windows boot time was measured as
+`2026-08-27 00:15:38 -05:00` (about 60.23 hours uptime). PRAETOR's current scope has no remote machine
+or service dependency, so no remote boot probe is applicable. `C:\Users\Admin\.Codex-b` was absent;
+profile-store sharing is CANNOT_DERIVE rather than assumed. The durable worktree handoff remains the
+resume artifact; it is not committed and should be treated as local-machine persistence only until an
+authorized owner decides otherwise.
+
+**REPO / DIRTY OWNERSHIP:** Worktree
+`C:\projects\PRAETOR\.codex\PRAETOR-codex`, branch `codex-f/build`, is at
+`a62a97715a42a595c022351e7ded5e5017bf0805`; local `main` is
+`681f844d95374771c8d0756193029a7381ed6626`; `origin/main` is
+`b80f7f8e75c87758e1630eabfa424f19ee74e2e9`; remote is
+the configured SSH-alias remote (derive with `git remote get-url origin`). `git status --porcelain=v1` reports
+only this handoff modified and unstaged; cached paths are empty. `git diff --check` passes. No fresh test
+or precommit result exists this session, so current gate status is CANNOT_DERIVE—not green.
+
+**DONE THIS SESSION:** Read the newest completed PRAETOR task turns, memory/handoff/lane status, live
+Git state, and official Zulip inbox; retained the A7-only contract-pending order; persisted its owner,
+scope, exclusions, evidence gap, and no-go rules. Declined the external fan-candidate audit because the
+standing PRAETOR order and Claude-F-only routing do not admit cross-lane work. No message, runner,
+watcher, service, or detached audit remains owned by this session.
+
+**OPEN / DELIBERATE HOLDS:** A7 is first but cannot start until Claude-F supplies the exact red-first
+acceptance command, expected failure, allowed files, and persistence revision. A2/A3/A4/A5 remain held;
+A3's read-only merge probe still contains markers for `references/kb/records.jsonl`; F34 remains BLOCK
+on the real separator-class pattern; F30/F31/F32 remain later and distinct. Zulip returned a 200-message
+cap with 199 unread in 57 conversations, so its count is a floor and no inbox-clearance/new contract is
+claimed.
+
+**FIRST MOVES AFTER RESTART:** (1) read `AGENTS.md`, `CLAUDE.md`, standing goal, this handoff, and the
+live ignored Claude-F pair record; (2) re-derive status/HEAD/dirty state, including the A3 merge probe;
+(3) obtain and validate a complete Claude-F A7 contract before any mutation; (4) do not stage, commit,
+push, merge, deploy, create a watcher, or take live/cross-lane action. The temporary Zulip post used for
+the earlier confirmed status receipt is disposable only after this block is written; all durable facts it
+contained are already preserved above.
+
+### 2026-08-30 — F35 builder candidate: single-file suppression parity, pending detached audit
+
+**ASSIGNMENT / SCOPE:** Claude-F's pair-channel ruling at line 7887 made F35 the first permitted
+builder slice: correct the shared source-path resolution used by inline-ignore, lexical-context,
+injection-exemplar, and reachability suppression when the scan target itself is one file. Allowed
+paths are `scripts/praetor.py` (only those four resolution sites via their shared resolver) and `tests/`.
+Excluded: engine modules, `lexctx.py`, `taint.py`, `interpret.py`, KB, Rust, `references/`, history/ref
+operations, staging outside the named deliverable, merge, push, wiki, live action, and self-acceptance.
+
+**IMPLEMENTATION CANDIDATE:** `_finding_source_path(target, finding_file)` now returns `target` when it
+is an existing file, otherwise the existing target-plus-relative-finding resolution. All four suppression
+passes call it. This preserves directory behavior and prevents a single-file target from becoming a
+nonexistent `file/file` read. The matching focused evidence is
+`tests/test_f35_single_file_suppression.py`: a real-pipeline inline-ignore fixture checks both suppressed
+and active outcomes for file versus parent-directory target; focused filesystem-backed tests cover all
+four passes and both keep/suppress directions.
+
+**RED-FIRST / MUTATION EVIDENCE:** Before the resolver change,
+`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 py -3.14 -B -m pytest tests/test_f35_single_file_suppression.py -q`
+exited 1 with four positive-control file-target failures and four passing negative controls. With the
+resolver restored, the same command exited 0 (`10 passed`). Then the `os.path.isfile(target)` branch was
+temporarily removed, restoring the prior bare join; the focused command again failed (`5 failed, 5
+passed`; the real pipeline positive control and each of the four suppression passes went red). The branch
+was restored with `apply_patch`, never with a destructive Git command. This is builder evidence only.
+
+**REGRESSION EVIDENCE:**
+`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 py -3.14 -B -m pytest tests -q` exited 0 after restoration:
+`340 passed in 21.45s`. The pre-F35 census command
+`git grep -nE 'praetor\._apply_(inline_ignores|lexical_context|injection_exemplar|reachability)\(' HEAD -- tests`
+listed 11 direct calls, all with synthetic directory-like `"/t"` or `"/target"` values; the companion
+pipeline-target command
+`git grep -nE 'praetor\.main\(\[|\[sys\.executable, _PRAETOR' HEAD -- tests`
+listed directory-target invocations only. Therefore the observed pre-F35 regular-file-target suppression
+test census is **0**. This static census is not a claim about dynamically generated external consumers;
+Claude-F must independently reproduce it from the committed candidate.
+
+**PERSISTENCE / AUDIT:** Commit exactly `scripts/praetor.py`,
+`tests/test_f35_single_file_suppression.py`, and this builder handoff on `codex-f/build`; record the
+resulting hash in the pair channel and request Claude-F's detached BLOCK-first audit bound to that hash.
+No builder green result is an ACCEPT or integration clearance.
+
+**POST-HYGIENE GATE / CENSUS:** The final portable commit gate,
+`bash /c/Users/Admin/.claude/plugins/cache/odo/odo/0.6.1/precommit/gate.sh --fast`, exited 0; its
+unconfigured-suite limitation is stated by that tool and is not treated as test evidence. The repository
+gate `bash tests/precommit.sh` then exited 0: Python `340 passed`, Rust `11 passed`, self-scan unchanged
+at `31 active / 47 filtered`, and the public-hygiene sweep covered `109` shipping files. The pre-F35
+single-file suppression-test census is **0**. Command:
+`git grep -nE 'praetor\._apply_(inline_ignores|lexical_context|injection_exemplar|reachability)\(' HEAD -- tests`
+found 11 direct suppression calls, all synthetic `"/t"` or `"/target"` values;
+`git grep -nE 'praetor\.main\(\[\s*str\(tmp_path /|\[sys\.executable, _PRAETOR, str\(tmp_path /' HEAD -- tests`
+found 0 literal single-file pipeline targets. This is a source-level census of the pre-F35 test tree,
+not an assertion about external consumers; the detached audit must reproduce it.
+
+**CURRENT STATE / BLOCKERS:** At the start of this slice the builder was
+`a62a97715a42a595c022351e7ded5e5017bf0805`; canonical remained clean at
+`7f6e5ce33054f85d488653b9dad9b1ca86f854ca`. The working tree now has the pre-existing/owned handoff
+append plus the F35 source and test candidate; nothing is staged. Independent Claude-F audit is the only
+remaining F35 blocker. All other held findings and all Gate 1 backup-ref/history work remain separate.

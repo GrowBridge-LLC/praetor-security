@@ -235,6 +235,19 @@ _IGNORE_WORD_RE = re.compile(
 )
 
 
+def _finding_source_path(target: str, finding_file: str) -> str:
+    """Return the source path a suppression pass must reopen.
+
+    The walker reports a finding path relative to the scan target for directory
+    scans, but a single-file target is already the source file.  Joining its
+    reported path again produces ``file/file`` and makes every suppression pass
+    silently inert, so all four passes use this shared resolver.
+    """
+    if os.path.isfile(target):
+        return target
+    return os.path.join(target, finding_file.replace("/", os.sep))
+
+
 def _apply_inline_ignores(findings, target, read_text):
     """
     Mark findings filtered when their flagged source line carries an inline ignore
@@ -247,7 +260,7 @@ def _apply_inline_ignores(findings, target, read_text):
             continue
         if not f.file or f.line <= 0:
             continue
-        ap = os.path.join(target, f.file.replace("/", os.sep))
+        ap = _finding_source_path(target, f.file)
         if ap not in cache:
             txt = read_text(ap)
             # core.split_lines, NEVER str.splitlines: `f.line` is \n-based, and
@@ -306,7 +319,7 @@ def _apply_reachability(findings, target, read_text):
             continue
         if not f.file or f.line <= 0 or not f.file.endswith(".py"):
             continue
-        ap = os.path.join(target, f.file.replace("/", os.sep))
+        ap = _finding_source_path(target, f.file)
         if ap not in cache:
             cache[ap] = read_text(ap) or ""
         if taint.is_provably_inert(cache[ap], f.line):
@@ -385,7 +398,7 @@ def _apply_injection_exemplar(findings, target, read_text):
         rx = by_id.get(f.rule_id)
         if rx is None:
             continue
-        ap = os.path.join(target, f.file.replace("/", os.sep))
+        ap = _finding_source_path(target, f.file)
         if ap not in cache:
             cache[ap] = read_text(ap) or ""
         lines = core.split_lines(cache[ap])
@@ -422,7 +435,7 @@ def _apply_lexical_context(findings, target, read_text):
             continue
         if not f.file or f.line <= 0:
             continue
-        ap = os.path.join(target, f.file.replace("/", os.sep))
+        ap = _finding_source_path(target, f.file)
         if ap not in cache:
             cache[ap] = read_text(ap) or ""
         ctx = lexctx.context_of(cache[ap], f.line, f.file)
