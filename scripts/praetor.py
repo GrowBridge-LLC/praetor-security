@@ -56,6 +56,7 @@ import re
 import sys
 import tempfile
 import time
+import traceback
 
 # make sibling engine modules importable no matter the CWD
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -961,4 +962,9 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
+        sys.exit(2)
+    except Exception:
+        # Exit 1 means a completed scan found active findings.  Preserve the
+        # traceback and reserve 2 for an entry-point failure that wrote no report.
+        traceback.print_exc()
         sys.exit(2)
