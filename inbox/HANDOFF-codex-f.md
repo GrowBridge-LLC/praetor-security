@@ -711,3 +711,8 @@ Wiki therefore has no current page content, while every future page remains an
 irreversible public publication requiring direct, per-page approval. This
 correction does not authorize initialization, drafting in the Wiki, publication,
 or any remote write.
+
+**COUNT SNAPSHOT LIMIT:** The divergence counts above were measured before the
+subsequent handoff commits. A restart reader must rerun the named `git rev-list`
+commands and classify later documentation commits from `git log`; exact equality
+with this record's historic right-side count is neither expected nor an error.
