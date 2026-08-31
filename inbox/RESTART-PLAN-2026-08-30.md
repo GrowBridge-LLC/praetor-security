@@ -158,6 +158,63 @@ not let a green PRAETOR job be cited as making the free one unnecessary.
 
 ---
 
+## 1b. 🔴 F40 — A FALSE CLEAN. The degraded-scan refusal is unreachable when findings exist.
+
+**Measured, reproduced, not yet fixed. This is the most serious open defect in
+the tool.**
+
+`scripts/praetor.py:785-790`:
+
+```python
+if args.fail_on:
+    threshold = core.Severity.parse(args.fail_on)
+    if any(f.severity >= threshold for f in gate_findings):
+        return 1                                  # <-- RETURNS HERE
+    blind = core.engine_blind_spots(engine_meta)  # <-- NEVER REACHED
+    if blind and not args.allow_degraded:
+        ... return 3
+```
+
+**The blind-spot test is ordered AFTER the findings gate.** When findings exist
+at or above the threshold, PRAETOR returns **1** and never evaluates whether an
+engine was blind.
+
+**Reproduced** by forcing a real timeout with `PRAETOR_SEMGREP_TIMEOUT=1`:
+
+| scenario | exit |
+|---|---|
+| engine errored, **no** findings at threshold | **3** — correct, with the SCAN DEGRADED message |
+| engine errored, findings **at** threshold | **1** — degradation never reported |
+
+**Observed downstream, in a real consumer:** an engine timed out and contributed
+zero findings; the wrapper saw exit 1, applied its own rulings, found nothing
+unruled, and printed a PASS. **"Found nothing" and "could not look" produced the
+same verdict.** It needed both halves — this ordering to hide the degradation,
+and a ruling layer to clear the findings that were hiding it.
+
+⚠️ **A claim made earlier that day was too broad and is corrected here:**
+*"PRAETOR returned exit 3 rather than a clean result, so it was never a false
+clean."* True on the no-findings path. **False on the other one.**
+
+### The fix, and how not to rush it
+
+Evaluate blind spots **before** the findings gate: a scan that could not look
+must not be reportable as a scan that looked and found things.
+
+🔴 **Enforcement-path code in a security scanner.** It needs a red-first test
+that **fails on today's ordering**, both directions asserted, and an independent
+audit. Do not land it on the strength of the reproduction alone.
+
+📌 **What consumers should do meanwhile, and it needs no change here:** the
+signal is already in the artifact. Any `meta.engines[*].status` outside
+`ok | not-applicable | disabled` must refuse, **whatever the exit code says**.
+That is the same shape as `meta.timestamp` — the information was in the report,
+unread.
+
+⚠️ **Sequencing matters more than the fix.** A consumer that repaired the engine
+timeout first would have destroyed the only evidence the false clean existed,
+and left this ordering defect live under every future degraded run.
+
 ## 2b. 🔴 A MEASURED FALSE-POSITIVE CLASS — the detector fires on the prohibition
 
 **Nine findings were ruled false positives on 2026-08-30, on one consumer's
