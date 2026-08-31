@@ -86,8 +86,10 @@ not the reassurance.
 bash tests/precommit.sh
 ```
 
-That is the gate, not a convenience wrapper: 9 checks, it exits non-zero on any
-failure and names the one that failed.
+That is the gate, not a convenience wrapper: it exits non-zero on any failure and
+names the one that failed. ⚠️ **This line used to say "9 checks" while the gate
+had grown to 13 — nothing asserts that count, so read it off the gate itself
+(`grep -c 'pass "' tests/precommit.sh`) rather than trusting prose.**
 
 🔴 **Read its EXIT CODE, never its output.** A session chained
 `precommit.sh | grep -E '...|FAIL' && git commit` and committed over a **red**

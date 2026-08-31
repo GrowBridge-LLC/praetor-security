@@ -12,13 +12,76 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Fixed — a single-file scan silently skipped every suppression pass
+
+All four suppression passes resolved a finding's source by joining its path onto
+the scan target. When the target was already a FILE that built `file.py/file.py`,
+the read failed, the bounds check failed, and the pass returned having done
+nothing — **no error, no warning, no `filter_reason`.** The same file scanned as
+a directory suppressed correctly; scanned directly, it did not.
+
+It fails safe, so nothing was hidden: findings were kept, never dropped. What it
+produced was a **FILTERED count that could not be trusted on any single-file
+scan** — including an authored `# nosec` being silently ignored. Fixed with one
+shared path resolver used by all four passes.
+
+### Fixed — an uncaught exception exited 1, the same code as "found findings"
+
+The entry point handled `KeyboardInterrupt` and nothing else, so any other
+exception exited **1** — which this tool documents as *"active findings at or
+above `--fail-on`"*. A crash was externally indistinguishable from a healthy
+gate failure, and it wrote no report. Proved by injection: `rc=1`, zero report
+files. Handled at the entry point now, traceback preserved, exit 2 reserved for
+an entry-point failure.
+
+### Fixed — the AI-security engine hung on files with many findings
+
+`lexctx.context_of` called `classify_lines` on **every** invocation and `lexctx`
+cached nothing, so the lexical-context pass re-classified the whole file once per
+finding — about **0.28 s per finding**. One 1.2 MB file with 787 findings took
+roughly **244 seconds** and presented as a hang: no artifact, and **no exit code
+at all**, which is why every return-code check downstream was blind to it.
+
+Now ~1 second on the same file. The fix is caching, not reclassification:
+`classify_lines` is untouched, so no label changed and the secrets carve-out is
+exactly as it was. The cache is keyed on `(absolute path, file identity)` —
+identity selects comment syntax, and keying on text alone would classify a
+Markdown file as Python — and it is pass-local, so a whole-tree scan cannot
+retain labels.
+
+⚠️ **Output was verified identical before and after: 1 active, 25 filtered, every
+`filter_reason` byte-identical.** The filtered count is what proves this a fix
+rather than a bypass — a cache that made the pass do nothing would also have been
+fast, and would have shown zero.
+
+### Known — F40: the degraded-scan refusal is unreachable when findings exist
+
+**Not fixed. Recorded because a consumer hit it.** `scripts/praetor.py` evaluates
+the findings threshold **before** the blind-spot test, so a scan with findings at
+or above the threshold returns **1** and never reports that an engine was blind.
+Reproduced by forcing a real Semgrep timeout: an errored engine with no findings
+returns 3 with the correct SCAN DEGRADED message; the same errored engine with
+findings returns 1 and says nothing about the degradation.
+
+Observed downstream, an engine timed out contributing zero findings, the caller
+saw exit 1, ruled its findings, and reported a pass. **"Found nothing" and "could
+not look" produced the same verdict.**
+
+⚠️ **Until this is fixed, a consumer must not judge a scan by the exit code
+alone.** Every report carries `meta.engines[*].status`; anything outside
+`ok | not-applicable | disabled` means the scan was not fully measured, whatever
+the exit code says.
+
+
 ### Fixed — the Semgrep timeout is now operator-controlled, not a hard-coded ceiling
 
 Measured 2026-08-23, pointed at a real 7,369-file target: Semgrep exceeded the
 hard-coded 900-second budget and the SAST engine returned `error` — twice, once
 in a four-engine run and once running alone. PRAETOR behaved correctly both
-times, returning exit 3 rather than a clean result; this was never a false
-clean. But **the only way to get any static analysis on that tree was to
+times, returning exit 3 rather than a clean result; **on that path** this was
+never a false clean. ⚠️ **Narrowed 2026-08-30 — see F40 below: the exit-3
+refusal is unreachable when findings exist, so the claim was true of the case
+measured and too broad as written.** But **the only way to get any static analysis on that tree was to
 partition it by hand into twenty directories and scan each separately** — not
 something a CI caller can do. The failure mode of an unraisable ceiling is that
 SAST silently stops running on exactly the largest, most interesting

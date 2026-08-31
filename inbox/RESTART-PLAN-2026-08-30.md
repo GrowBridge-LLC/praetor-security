@@ -69,6 +69,13 @@ push. It is fixed, verified and on the remote.** The file that hung for
 60+ seconds now scans in **0.988 s**. Recorded here rather than deleted,
 because the mechanism is the reusable part.
 
+⚠️ **A withdrawn figure, disclosed rather than buried.** The first version of
+this line said the hang blocked **"409 commits"**. That number was never
+derived from anything, and it was deleted in `0670d41` without a word — so it
+still reads as measured to anyone who looks at commit `03101ae`. **The count of
+blocked commits is unknown and was never measured.** The blockage itself is
+real and was reported by the affected lane.
+
 **Mechanism, measured end to end:**
 
 ```

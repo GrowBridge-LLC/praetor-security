@@ -7,9 +7,22 @@ where a document disagreed with the tree, the document is named.**
 Read with [NEXT-SESSION-2026-08-30.md](NEXT-SESSION-2026-08-30.md), which covers
 operational state. This file covers direction.
 
-## 1. The one thing that is red right now
+## 1. RESOLVED — this section is history, not current state
 
-**CI fails on `9cbbe4c`, the current `origin/main`.** Local gate is 13/13 green.
+✅ **Fixed and green.** The test bug was fixed at `26bd233` and merged at
+`2ffa0d9`. `origin/main` is now **`7374ccd`**, and CI run **33349135519** on it
+is **success**, 16 steps. Nothing in this section is outstanding.
+
+⚠️ **This heading read "The one thing that is red right now" until close.** The
+text below was accurate when written and was never revisited after the fix
+landed, while the handoff went on pointing a fresh session here as the map of
+where things stand. **A status heading in the present tense is a claim with an
+expiry date, and nothing enforces it.** The original text is kept unchanged
+below because the diagnosis is the lesson.
+
+### What was red (as of `9cbbe4c`, superseded)
+
+**CI failed on `9cbbe4c`, then `origin/main`.** Local gate was 13/13 green.
 
 ```
 run 33323828930   9cbbe4c   FAILURE   16 steps      <- 16, so NOT a ghost run
