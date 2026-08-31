@@ -1,5 +1,11 @@
 # PRAETOR — open backlog recorded before the Codex worktree/comms rollout
 
+> **OWNER OVERRIDE — 2026-08-31:** This entire rollout-era backlog is preserved
+> historical evidence. Every current-state label, assignment, owner, next action,
+> transport instruction, worktree instruction, and blocker below is superseded
+> and non-operational. Do not execute or depend on it. Current coordination uses
+> the owner-designated private local mechanism and durable untracked receipts.
+
 ## ↩️ REFRESHED 2026-08-24 (evening) — re-derived by execution, not carried forward
 
 **Everything the "Build queue" section below lists as open or in-progress is DONE and on `main`,

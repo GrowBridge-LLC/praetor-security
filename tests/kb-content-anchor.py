@@ -8,7 +8,11 @@ import sys
 import unicodedata
 from pathlib import Path
 
-EXPECTED_UNRESOLVED = 30
+EXPECTED_UNRESOLVED = 29
+# Consolidation 2026-08-31: STATE-PAIR-CHANNEL-0008 moved from an obsolete
+# multi-purpose queue description to one direct historical-record anchor. A
+# HEAD-vs-working-tree unresolved-set comparison proved it is the only record
+# that moved (30 -> 29); the other 29 identities are unchanged.
 # The sweep in the F13-B audit reaches the existing 57-record pin at 20
 # lines (65, 60, 59, 57, 57... at windows 5, 10, 15, 20, 25...). Keeping
 # the knee makes future line insertions stricter without changing today's

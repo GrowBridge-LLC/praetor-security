@@ -1,14 +1,15 @@
-# Pair channel — moved
+# Pair channel — historical and retired
 
-The coordination record between this repository's two working sessions is **not** kept here.
-It lives outside the tracked tree, at:
+This file is a historical pointer, not an operational coordination record.
+The former channel and its transport are permanently retired.
 
-```
-C:\projects\PRAETOR\.local\PAIR-CHANNEL.md
-```
+No operational path is published here.
+Current coordination uses an owner-designated private local mechanism
+and durable receipts outside the tracked tree.
 
-The path is absolute wherever it appears, on purpose: that directory is ignored by git and is
-absent from linked worktrees, so a relative path silently writes to the wrong copy.
+The former absolute-path rule is preserved in Git history and verified
+recovery archives; it must not be followed or reconstructed from this file.
+
 
 ## Why it is not tracked
 
@@ -27,10 +28,10 @@ Excluding this directory from the scan was considered and rejected: a credential
 coordination note would then go unreported, and that is one of the commonest real leaks. Excluding
 a path rather than proving a property is this repository's most repeated defect.
 
-## What still lives here
+## Historical records
 
-- `PRE-ROLLOUT-BACKLOG-2026-08-22.md` — the work queue, with an owner and a next action per item.
-- `GOAL-codex-f-2026-08-22.md` — the builder's standing goal.
-- `HANDOFF-codex-f.md` — the builder's own handoff, maintained on its branch.
+- `PRE-ROLLOUT-BACKLOG-2026-08-22.md` — the retired rollout-era queue.
+- `GOAL-codex-f-2026-08-22.md` — the historical vendor-specific goal.
+- `HANDOFF-codex-f.md` — the historical builder handoff.
 
-These are records rather than conversation, and they are written to stay inside both gates.
+These are preserved records, not active assignments or conversation.

@@ -1,7 +1,7 @@
 # ADR-001 — PRAETOR's engine is ported to Rust
 
-**Status:** ACCEPTED, 2026-08-10. Port authorised; not yet started.
-**Supersedes:** nothing. **Superseded by:** nothing.
+**Status:** ACCEPTED, 2026-08-10; amended 2026-08-22; incremental port in progress. The `secrets` detector is ported in `praetor-core`; no Rust engine is wired into the CLI.
+**Supersedes:** nothing. **Superseded by:** nothing. Amendments 1 and 2 are binding; Amendment 3 remains an unratified proposal.
 
 ## Decision
 
@@ -53,7 +53,7 @@ evidence can reopen the question honestly rather than rediscover it.
 
 | # | Condition | Why |
 |---|---|---|
-| 1 | **`aisec` ports first** | Pure pattern matching, zero external tool dependencies, and it is the engine with no equivalent elsewhere. `sast`/`sca` stay orchestration wrappers and move last. |
+| 1 | **SUPERSEDED by Amendment 2 Part B: `secrets` ports first; `aisec` is deferred pending a separate JSON-parser decision.** | Original accepted order was `aisec` first because it was believed to be pure pattern matching with zero external dependencies. Amendment 2 records why that premise was false and preserves the original rationale as history. |
 | 2 | 🔴 **The never-execute invariant test ports FIRST — before the backend it guards** | `tests/test_invariant_never_executes_target.py` asserts PRAETOR's foundational property behaviourally. **No Rust backend merges before its invariant test does.** A Rust `sca` backend whose argv omits `--disable-pip` reintroduces arbitrary code execution from an attacker-controlled tree; *every new backend widens that surface*, and a Rust backend is a new backend. |
 | 3 | **Acceptance is DIFFERENTIAL, not "the tests pass"** | Both implementations run the same corpus and must emit **identical `(engine, rule_id, file, line)` sets.** ⚠️ **This is what dissolves objection 3:** a differential harness *is* a propagation path, so two implementations under continuous reconciliation are a pair, not a fork. ⇒ **The two-implementation window is acceptable ONLY while that harness is green and blocking. If it is ever skipped, the fork becomes real that day.** |
 | 4 | **`references/SELF-SCAN-BASELINE.json` is the regression floor for both** | 🔴 Never regenerate it to reflect an improvement; it is the committed "before". |

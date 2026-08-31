@@ -144,16 +144,17 @@ EXPECT_FILTERED=47
 # most-recorded defect. If a THIRD session-local directory appears, it belongs
 # here, deliberately, with the same reasoning.
 #
-# The third one appeared on 2026-08-22, exactly as the paragraph above predicted:
-# `.codex/PRAETOR-codex` is a linked build worktree, which is a COMPLETE SECOND COPY
+# A third one appeared on 2026-08-22, exactly as the paragraph above predicted:
+# `.codex/PRAETOR-codex` was a linked build worktree, which was a COMPLETE SECOND COPY
 # of this repository inside the tree this scan walks. It did not add a few findings;
 # it DOUBLED the corpus, 13/52 -> 26/104, because the scanner read every shipping
-# file twice. Excluding it restores 13/52 exactly, which is the evidence that the
-# duplicate copy was the whole cause and that no real finding is being hidden.
+# file twice. At the time, excluding it restored 13/52 exactly; that historical
+# measurement proved the duplicate copy was the whole cause and no real finding
+# was hidden by the narrowly scoped exclusion.
 #
-# 🔴 THE EXCLUSION IS THE WORKTREE PATH, NOT `.codex/`. Getting this wrong was
-# this repo's own most-recorded defect -- suppressing on PATH alone -- and the first
-# version of this line did exactly that. `.gitignore` deliberately keeps
+# 🔴 HISTORICAL SCOPE LESSON: THE EXCLUSION WAS THE WORKTREE PATH, NOT `.codex/`.
+# Getting this wrong was this repo's own most-recorded defect -- suppressing on
+# PATH alone -- and the first version of this line did exactly that. `.gitignore` deliberately keeps
 # `.codex/hooks/` and `.codex/agents/` VISIBLE and stageable, so those files SHIP and
 # must be scanned. Measured both ways with a hardcoded credential planted in
 # `.codex/hooks/`: under `^\.codex/PRAETOR-codex/` the scan reports 14 active /
@@ -165,7 +166,12 @@ EXPECT_FILTERED=47
 # rather than asking git sees a nested worktree as a second repository. A pin
 # catches that loudly. A coverage percentage, a lint sweep or a duplicate-code
 # check absorbs it silently and still reports a number.
-SS="$(py -3.14 scripts/praetor.py . --no-registry --exclude '^\.local/' --exclude '^\.claude/' --exclude '^\.codex/PRAETOR-codex/' 2>&1)"
+#
+# The linked worktree was retired after verified consolidation on 2026-08-31,
+# so its path exclusion was removed rather than retained as a silent scope hole.
+# If another nested checkout appears, the pin must fail loudly until that exact
+# population is classified; do not pre-authorise a path that does not exist.
+SS="$(py -3.14 scripts/praetor.py . --no-registry --exclude '^\.local/' --exclude '^\.claude/' 2>&1)"
 SS_RC=$?
 GOT_ACTIVE="$(printf '%s' "$SS" | grep -oE 'Findings \(active\): [0-9]+' | grep -oE '[0-9]+$')"
 GOT_FILTERED="$(printf '%s' "$SS" | grep -oE 'Filtered \(likely FP / low-signal, shown separately\): [0-9]+' | grep -oE '[0-9]+$')"

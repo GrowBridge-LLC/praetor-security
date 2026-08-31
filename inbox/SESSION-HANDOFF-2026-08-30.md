@@ -1,12 +1,12 @@
-# PRAETOR — session handoff, 2026-08-30
+# PRAETOR — historical session handoff, 2026-08-30 (fully superseded)
 
-For a session with zero memory of this one. **Every number below was re-derived
-live at close, not recalled.** Where something was not checked, it says so.
+> **OWNER OVERRIDE — 2026-08-31:** This entire dated handoff is historical
+> evidence. Every current-state label, path, count, assignment, next action,
+> wait, merge, push, and coordination instruction below is non-operational.
 
-Companions: `RESTART-PLAN-2026-08-30.md` is the forward plan and outranks this
-file on what to DO next. `MASTERPLAN-ASSESSMENT-2026-08-30.md` says where the
-project stands against everything ever planned. `.local/AUDIT-STATE.md` is the
-live verdict ledger (machine-local, not in git).
+The companion restart/masterplan documents and former local verdict ledger are
+also dated historical evidence. Current authority comes only from canonical
+operating guidance, live local measurements, and owner-designated private receipts.
 
 ## 1. Identity and environment
 

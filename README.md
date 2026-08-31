@@ -270,10 +270,12 @@ decisions behind them.
 ### There is a second implementation, in progress
 
 Python is the reference implementation and is what you get from a clone or
-`pip install .`. A Rust workspace also lives under [`rust/`](rust/), and **no detector
-has been ported yet** — it currently holds the shared line definition, SCA argv
-construction with its never-execute invariant guard, and generated Unicode tables.
-The binary refuses to scan rather than pretend to.
+`pip install .`. A Rust workspace also lives under [`rust/`](rust/). The
+`secrets` detector has a `scan()` entry point in `praetor-core` and is held to
+the Python implementation by the differential runner; shared text handling,
+SCA argv construction, and generated Unicode tables also exist there. No Rust
+engine is wired into the CLI yet, so the binary refuses to scan rather than
+pretend to.
 
 If you are contributing, two things bind you before you touch either tree:
 

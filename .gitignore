@@ -50,9 +50,6 @@ dist/
 # gate -- an ignore rule alone is one git add -f away from being wrong.
 /.local/
 
-# Codex build worktree. Local only, never committed.
-/.codex/PRAETOR-codex/
-
 # Codex machine-local state -- credential SHAPES, not filenames.
 /.codex/**/*.dpapi
 /.codex/**/*credential*

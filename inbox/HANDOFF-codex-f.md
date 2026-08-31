@@ -1,14 +1,21 @@
-# Builder handoff — `codex-f`
+# Historical builder handoff — `codex-f` (retired topology)
 
-🔴 **This file is yours. Maintain it in place as you work, not at session close.**
+> **OWNER OVERRIDE — 2026-08-31:** This entire file is preserved historical
+> evidence from the retired vendor-specific builder topology. Every assignment,
+> imperative, worktree path, transport reference, and current-state label below
+> is superseded and non-operational. Do not act on, append to, or infer current
+> authority from it. Current coordination uses the owner-designated private
+> local mechanism, live Git evidence, and durable untracked receipts.
 
-A session can end on a quota wall mid-task, and everything held only in context dies with it.
-Anything you would need to resume goes here as it happens. `claude-f` reads this straight out of
-your worktree, so nothing has to merge for it to be visible.
+**Historical instruction only — do not maintain or resume this handoff.**
 
-Do not write to the auditor's handoff, and do not expect the auditor to write here.
+This file existed because a session could end mid-task and lose context.
+The former auditor read it directly from the retired builder worktree, so its
+contents were visible without merging.
 
-## Current state
+The former roles maintained separate handoffs.
+
+## Historical state at the time recorded
 
 | | |
 |---|---|

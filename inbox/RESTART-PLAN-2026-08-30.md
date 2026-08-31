@@ -1,9 +1,9 @@
-# PRAETOR — the restart plan, ordered
+# PRAETOR — historical restart plan (fully superseded)
 
-Written for the next session. `.local/AUDIT-STATE.md` is the live ledger and
-outranks this file on any question of current state.
-`inbox/MASTERPLAN-ASSESSMENT-2026-08-30.md` says where we ARE; this says what to
-DO, in order.
+> **OWNER OVERRIDE — 2026-08-31:** This entire dated plan is historical evidence.
+> Do not execute its commands, ordering, assignments, merges, waits, or gates.
+> Current operating instructions are the canonical guidance and owner-designated
+> private receipts; no section below has operational authority.
 
 ---
 

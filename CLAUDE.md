@@ -193,10 +193,10 @@ This repo is public. Routine build traffic, drafts, assignments, and working
 state stay under .local/. That directory is intentionally ignored and pre-commit
 gate 9 asserts that no .local artifact is tracked.
 
-Pair traffic goes to C:\projects\PRAETOR\.local\PAIR-CHANNEL.md, which is
-ignored and absent from worktrees -- hence the absolute path. Append to it with
-the shared channel-append.sh and an absolute CHANNEL_FILE, never with Write or
-Edit. Read its tail at the start of every session.
+Operational coordination uses the owner-designated private local mechanism and
+durable receipts outside the tracked tree. Retired transports and former pair
+channels are historical/superseded: do not read, append to, await, or treat them
+as current authority or blockers.
 
 It is not tracked, and inbox/PAIR-CHANNEL.md records why: two gates here rejected
 a tracked channel on 2026-08-22. The hygiene sweep rejects a shipping file naming
@@ -205,16 +205,9 @@ was read by aisec as an instruction to weaken a control. That finding was
 correct; the file was in the wrong place. Excluding the directory from the scan
 was rejected -- a credential pasted into a note would then go unreported.
 
-The earlier rule sent pair traffic to the lane-pair.md file under .local and
-forbade a channel wrapper, because a helper aimed at an ignored path can append
-while its attribution check is inoperative. That reason was sound and it no
-longer applies: the new channel is tracked, so the check works. lane-pair.md is
-frozen as the record from before 2026-08-22. Read it for history; post nothing
-new to it. Its path is written absolute wherever it appears because .local is
-absent from worktrees, and that is still true.
-
-Findings for another project, blockers owned elsewhere, and contract corrections
-belong in the shared coordination channel; otherwise keep routine traffic local.
-The pair channel is public, so nothing describing the wider estate goes in it.
+The earlier `lane-pair.md`, `.local/PAIR-CHANNEL.md`, and tracked-channel rules
+remain documented in the preserved historical files. They are not active
+delivery paths. Current state comes from live local evidence and the
+owner-designated private receipts.
 
 The .local directory is machine-local and must never enter this public repository.

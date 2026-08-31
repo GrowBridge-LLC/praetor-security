@@ -1,44 +1,34 @@
 # PRAETOR — next-session plan, written 2026-08-30
 
-> 🔴 **SUPERSEDED IN PART — READ THIS BEFORE ANY SECTION BELOW.**
+> 🔴 **FULLY SUPERSEDED — HISTORICAL ONLY; DO NOT EXECUTE ANY SECTION BELOW.**
 >
 > Sections 0 and 1 were written BEFORE the merge and describe a world that no
 > longer exists. They say F35/F36/F37 are accepted but unmerged, name `a62a977`
 > as the builder tip and `681f844`/`b80f7f8` as main, and present a 45-commit
 > merge with a KB conflict as the next action. **All of that has happened.**
 >
-> Current: `main` = `origin/main` = `9cbbe4c`, the branch is landed, the builder
-> has zero unlanded commits, and F38 is accepted and held for push.
+> Historical snapshot: `main` and the then-local remote-tracking ref were
+> `9cbbe4c`; the builder then had zero unlanded commits and F38 was held.
 >
-> **This file is HISTORY. For live state read
-> `C:\projects\PRAETOR\.local\AUDIT-STATE.md`**, and for direction read
-> `inbox/MASTERPLAN-ASSESSMENT-2026-08-30.md`. The technical content below —
-> the file-count defects, the regeneration mechanism, the exit-code collision —
-> is still accurate and still worth reading.
+> **This file is HISTORY.** Do not use any file, ref, path, count, assignment, or
+> routing instruction named below as live state. The technical discussions of
+> file-count defects, regeneration, and exit-code collisions remain provenance,
+> not current instructions.
 
 Written for a session with zero memory of this one. Every number below has the
 command that produced it. Re-run them; do not cite them as current.
 
-⚠️ **This repository is public.** Coordination detail — branch topology, review
-ownership, proposed ref names, and anything naming another repository on this
-machine — is deliberately NOT in this file. It is at
-`C:\projects\PRAETOR\.local\NEXT-SESSION-COORDINATION-2026-08-30.md`, which is
-gitignored and absent from worktrees, hence the absolute path. **Read that file
-too; this one alone is not the whole plan.**
+⚠️ **This repository is public.** At the time, private coordination detail was
+kept outside the tracked tree. That historical location and its instructions are
+retired; do not read, append to, or reconstruct them from this record.
 
-🔴 **Two working files, and they answer different questions.** The pair
-channel is **append-only**, so every verdict in it is a LOG ENTRY: reading the
-tail tells you what was true when that line was written, never what is true now,
-and nothing in the format distinguishes the two. A superseded verdict still
-reads as authoritative at its own line. That produced three stale-state
-collisions in one day, in three different directions, between careful readers.
+🔴 **Historical coordination model.** Two local working files once answered
+different questions: an append-only reasoning log and an overwritten state
+ledger. Both are retired and non-authoritative. The append-only format made
+superseded verdicts look current and produced three stale-state collisions.
 
-- `.local\PAIR-CHANNEL.md` — append-only LOG. Reasoning and history.
-- `.local\AUDIT-STATE.md` — **overwritten, never appended.** One writer.
-  Current verdicts, open items, standing constraints.
-
-**Read AUDIT-STATE.md for STATE. Read the channel for REASONING.** No collision
-has occurred since the split.
+The old files remain only as preserved historical evidence. Do not read their
+tails for state, append to them, or use them for assignments or coordination.
 
 The split is not tidiness. Pre-commit gate 8 (`public-hygiene`) rejected the
 combined file, correctly, for naming a sibling repository and using lane

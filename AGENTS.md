@@ -65,7 +65,9 @@ Full reasoning lives in `CLAUDE.md` and `CONTRIBUTING.md`. Compressed:
 bash tests/precommit.sh
 ```
 
-Nine gates. It exits non-zero on the first failure. **Read the exit code, not
+The current pass-condition count must be derived from
+`tests/precommit.sh` rather than carried forward in prose. The gate exits
+non-zero on failure. **Read the exit code, not
 the output** — this repo has been committed over a red gate at least three
 times because a piped `grep` matched the word `FAIL` and returned 0 anyway.
 Capture `$?` and branch on it; never `precommit.sh | grep ... && git commit`.
@@ -190,19 +192,22 @@ That's what "symbiotic" means here, in concrete terms:
   out wrong, incomplete, or stale, that's exactly the kind of thing the other
   agent should catch — fix it in place instead of quietly working around it.
 
-## If you are `codex-f`, your standing goal is a separate file
+## Historical `codex-f` goal (retired topology)
 
-Read `inbox/GOAL-codex-f-2026-08-22.md` before you accept any task. It carries the operator's
-own words and the two resolutions that settle where those words pull against themselves.
+`inbox/GOAL-codex-f-2026-08-22.md` is preserved as historical evidence of the
+former vendor-specific builder model; it is not an active goal or instruction.
 
-It is a pointer on purpose. A goal changes and a pasted copy rots, so this file names the goal
-rather than repeating it.
+The file remains a pointer to the operator's original words and recorded conflict
+resolutions, but it does not authorize a role, worktree, assignment, or wait.
 
-Your build worktree is `.codex/PRAETOR-codex` on branch `codex-f/build`. Your pair channel is
-`C:\projects\PRAETOR\.local\PAIR-CHANNEL.md`, append-only and NOT tracked -- the
-absolute path is deliberate, since that directory is absent from your worktree. Your own handoff
-file is `inbox/HANDOFF-codex-f.md`
-on your own branch. Do not write to the auditor's handoff.
+The active topology is one canonical checkout at `C:\projects\PRAETOR`.
+The former `.codex/PRAETOR-codex` worktree and vendor-specific builder split are
+historical consolidation evidence, not an instruction to recreate them. Route
+work by task shape and keep independent verification role-based. Operational
+coordination uses the owner-designated private local mechanism and durable
+receipts outside the tracked tree; retired transports and old pair channels are
+historical/superseded and must not be read, appended to, awaited, or treated as
+authority.
 
 ## Designed but not built — reasonable places to pick up work
 
@@ -258,19 +263,12 @@ This repo is public. Routine build traffic, drafts, assignments, and working
 state stay under .local/. That directory is intentionally ignored and pre-commit
 gate 9 asserts that no .local artifact is tracked.
 
-Pair traffic goes to C:\\projects\\PRAETOR\\.local\\PAIR-CHANNEL.md, which is
-ignored and absent from worktrees -- hence the absolute path. It is NOT
-tracked -- `git check-ignore -v .local/PAIR-CHANNEL.md` confirms it, and
-`git ls-files .local/` returns nothing; gate 9 would refuse a commit that
-tried to add it anyway. Append to it with the shared channel-append.sh and an
-absolute CHANNEL_FILE, never with Write or Edit. Read its tail at the start
-of every session.
-
-lane-pair.md (the same directory) is frozen as the record from before
-2026-08-22 -- read it for history, post nothing new to it.
-
-Findings for another project, blockers owned elsewhere, and contract corrections
-belong in the shared coordination channel; otherwise keep routine traffic local.
+`C:\\projects\\PRAETOR\\.local\\PAIR-CHANNEL.md`, `lane-pair.md`, and the
+tracked pair-channel pointer are preserved historical evidence. Do not append
+to them or use them as current state, assignment delivery, or authority.
+Current coordination uses the owner-designated private local mechanism and
+durable receipts in established untracked locations; implementation details do
+not belong in this public repository.
 
 The .local directory is machine-local and must never enter this public repository.
 

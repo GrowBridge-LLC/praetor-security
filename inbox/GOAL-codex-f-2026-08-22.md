@@ -1,7 +1,7 @@
-# Standing goal — `codex-f`
+# Historical standing goal — `codex-f` (retired topology)
 
-This is the builder's permanent goal for this repository. It does not expire with a session, and it
-outranks any single task handed over on the pair channel.
+This document is preserved evidence of the former vendor-specific builder model. It is superseded,
+non-operational, and does not authorize a role, worktree, assignment, wait, or coordination action.
 
 ## The operator's own words, verbatim
 
