@@ -165,6 +165,61 @@ not let a green PRAETOR job be cited as making the free one unnecessary.
 
 ---
 
+## 1a-bis. 🔴 F41 — WORSE THAN F40, AND IT IS LIVE IN OUR OWN GATE
+
+**Found 2026-08-31 at close, with a real trigger, not a contrived one.**
+
+**WSL was removed from this machine.** Verified directly: `wsl --list --verbose`
+returns *"The Windows Subsystem for Linux is not installed"* and the
+`LxssManager` service does not exist. `sast` shells out to semgrep, so it cannot
+run. Native semgrep is present but not runnable; the Docker fallback's daemon is
+unreachable. **The engine is BLIND, and it says so.**
+
+**The defect: without `--fail-on`, PRAETOR returns 0 on a degraded scan.** The
+entire engine-status gate at `scripts/praetor.py:785` sits inside
+`if args.fail_on:`. No threshold ⇒ the blind-spot test never runs at all.
+
+Measured just now, one command, both facts in one run:
+
+```
+[BLIND]  sast  ... (0 finding(s)) via none
+🔴 SCAN DEGRADED -- sast did not measure. Their zero is not evidence of anything.
+SELF-SCAN RC=0
+```
+
+🔴 **The report tells the truth and the exit code contradicts it.**
+
+**It is worse than F40 in the way that matters.** F40 returns **1**, which at
+least means "findings". F41 returns **0**, which means *clean*.
+
+### It reached our own gate, and our own gate is the proof
+
+`tests/precommit.sh` runs the self-scan **without `--fail-on`**, captures the
+report into `$SS`, and passes on `SS_RC -eq 0` plus two counts. **It never reads
+engine status, and it discards `$SS` on the success path** — so the
+`SCAN DEGRADED` banner was produced, captured, and thrown away.
+
+⇒ **Every "13/13 green" this session, including the runs that authorised the
+pushes, passed a self-scan whose `sast` engine was blind.** The counts did not
+drift, so nothing looked wrong. **A pin cannot catch an engine that contributes
+zero findings when it is working.**
+
+### NOT FIXED, deliberately, and here is the trade
+
+Moving the status gate outside `if args.fail_on:` is the obvious repair and it is
+**not a one-line decision**: it would make every no-threshold scan return 3 while
+WSL is absent, **reddening this gate for everyone until WSL returns.** That may
+well be correct — it is what "a zero from an engine that did not run is not a
+clean result" actually implies — but it blocks the estate, so it is Mike's call
+and not one to take at close.
+
+⚠️ **And a fix written now, by the person who just found it, is unaudited code.**
+This repo has a recorded case of exactly that going wrong. ⇒ **The consumer-side
+remedy needs no change here and works today: read
+`meta.engines[*].status` from the artifact and refuse anything outside
+`ok | not-applicable | disabled`, whatever the exit code says.** A consumer lane
+did precisely this and was correctly refused tonight while our own gate passed.
+
 ## 1b. 🔴 F40 — A FALSE CLEAN. The degraded-scan refusal is unreachable when findings exist.
 
 **Measured, reproduced, not yet fixed. This is the most serious open defect in

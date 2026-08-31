@@ -73,6 +73,20 @@ ran on, and it is the last one whose CI result was read. **The commits after it
 carry documentation only** — no scanner code changed — but their CI has not been
 checked, so do not report them as green without looking.
 
+### 🔴 READ THIS BEFORE QUOTING THE "13/13" ABOVE
+
+**WSL was removed from this machine during the session**, so `sast` cannot run.
+Verified directly: `wsl --list --verbose` reports it is not installed and the
+`LxssManager` service does not exist.
+
+**Every gate run this session was green with `sast` BLIND**, including the runs
+that authorised the pushes. The gate's self-scan check reads only the exit code
+and two counts; PRAETOR returns 0 on a degraded scan when no `--fail-on` is
+given, and the `SCAN DEGRADED` banner it prints is captured and discarded on the
+success path. Filed as **F41** in the restart plan, with the trade-off written
+out. **The gate is not lying — it is answering a narrower question than it
+appears to.**
+
 ⚠️ **The builder worktree has 14 dirty rows** — 3 modified plus 11 untracked.
 They are codex-f's own evidence and manifest files plus three source rows that
 now duplicate `main`. **That is deliberate and it is codex-f's tree, not a loose
@@ -133,7 +147,14 @@ four findings ruled for a consumer lane.
 
 ### Not started, specified
 
-- 🔴 **F40 — a FALSE CLEAN, and it is the most serious open defect.**
+- 🔴 **F41 — the most serious open defect, and it has a LIVE trigger.** Without
+  `--fail-on`, the whole engine-status gate is skipped and a degraded scan
+  returns **0**, which means clean. WSL is gone from this box, so `sast` is blind
+  right now, and our own `tests/precommit.sh` passed on that exit code all
+  evening. Worse than F40, which at least returns 1. **Not fixed on purpose** —
+  the repair reddens the gate estate-wide until WSL returns, which is Mike's
+  call. Full detail and the trade in the restart plan, §1a-bis.
+- 🔴 **F40 — a FALSE CLEAN, and the second most serious open defect.**
   `scripts/praetor.py:785-790` orders the blind-spot test AFTER the findings
   gate, so a scan with findings returns 1 and never reports that an engine was
   blind. Reproduced with `PRAETOR_SEMGREP_TIMEOUT=1`. Full detail and the
