@@ -49,15 +49,29 @@ command, and neither needs to be written down.
 ## 2. Repo state — verified live at close
 
 ```
-HEAD / origin/main   7374ccd        in sync, 0 unpushed
-working tree         0 dirty (git status --porcelain -uall)
+HEAD / origin/main   ea9b82b + THIS commit   see the caveat below
+working tree         0 dirty, excluding this file as it was written
 suite                345 passed
-gate                 13/13 green, rc read from $?
+gate                 13/13, rc read from $?, not from output
 CI  run 33349135519  7374ccd  success  16 steps  semgrep-live + invariants
 wiki                 LIVE at e326efa (separate repo, PUBLIC)
 backup ref           1 on remote, under backup/praetor/
-builder branch       0 unlanded (main is 17 ahead, builder has nothing outstanding)
+builder branch       0 unlanded (main 18 ahead, builder has nothing outstanding)
 ```
+
+⚠️ **A handoff cannot state the hash of the commit that contains it.** `ea9b82b`
+was HEAD when this block was measured; committing this correction moved it. The
+same applies to "0 dirty" — it was 0 apart from this file. **Do not treat either
+as current. Re-derive both, which is one command each:**
+
+```bash
+git rev-parse --short HEAD; git status --porcelain -uall | wc -l
+```
+
+The CI run is pinned to `7374ccd` on purpose: that is the commit it actually
+ran on, and it is the last one whose CI result was read. **The commits after it
+carry documentation only** — no scanner code changed — but their CI has not been
+checked, so do not report them as green without looking.
 
 ⚠️ **The builder worktree has 14 dirty rows** — 3 modified plus 11 untracked.
 They are codex-f's own evidence and manifest files plus three source rows that
@@ -174,6 +188,26 @@ for old lines 15–21.
 ⇒ **The transferable rule: do not run an audit over a tree you are still
 editing.** An auditor's "unchanged tree" premise is not something the auditor
 can check, and both false alarms above cost real time to disprove.
+
+## 4.6 Two things about the machine, not about PRAETOR
+
+*Named in project `memory/`, not here: this repo is public and the hygiene gate
+refuses a shipping file that names a sibling project. It rejected an earlier
+draft of this very section, which is the gate working.*
+
+- ⚠️ **The machine-level identity guard is INERT on this box.** Every `git`
+  command this session ran printed that it found no identity config, so no
+  project map was loaded. The plugin is installed and its hooks fire; the guard
+  has nothing to check against. **The account and remote check before each push
+  was therefore manual, not enforced.** Do it by hand — `gh auth status` and
+  `git remote -v` — and do not assume a guard covered you.
+- **This session's one rule candidate was KILLED on the coverage check, and that
+  is the useful result.** A machine-level skill already carries it, better
+  stated, bought 2026-08-11: *a mutating pass and a reading pass must not run
+  concurrently on the same tree, and dispatching a mutator counts as editing.*
+  🔴 **The rule did not fail — the trigger did.** I dispatched four
+  content-valued audit agents, which is that skill's exact stated trigger, and
+  never loaded it. Filed upstream as a delivery finding, not a new rule.
 
 ## 5. MUST NOT LOSE
 
