@@ -12,6 +12,26 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Fixed — the pre-commit gate could not see a fully blind SAST engine
+
+The self-scan gate pinned finding counts against a baseline, but never checked
+whether every engine actually ran. On a box where SAST was genuinely
+unavailable (a broken native install, no WSL, no reachable Docker daemon), its
+zero contribution didn't move the pinned counts — so the gate passed green
+while SAST measured nothing. A degraded engine and a clean scan were
+indistinguishable to the one check meant to catch exactly this. Fixed by
+reading the same self-scan output the gate already captures and failing if
+any engine reports itself blind.
+
+### Fixed — SAST's own runtime was silently broken on the reference dev box
+
+Separately: native Semgrep on this Windows dev box had an incomplete pip
+install (several declared dependencies present in name only, not actually
+installed) and answered every invocation with exit 1 and no output —
+indistinguishable from "not installed." SAST now runs correctly on Windows
+with no special runtime beyond a proper local install; no WSL or Docker
+detour is required for it to work.
+
 ### Fixed — a single-file scan silently skipped every suppression pass
 
 All four suppression passes resolved a finding's source by joining its path onto
