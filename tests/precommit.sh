@@ -182,6 +182,40 @@ else
   note "if intentional, update EXPECT_* here deliberately -- never regenerate SELF-SCAN-BASELINE.json to hide a change"
 fi
 
+# ---- 4b. No engine may be BLIND on the self-scan ---------------------------
+# Gate 4 above pins finding COUNTS only. A [BLIND] engine (native semgrep
+# broken, no WSL, no Docker daemon -- measured on this box 2026-08-31) can
+# still leave active/filtered matching the pin, because SAST contributed zero
+# to this corpus under --no-registry. That let a fully degraded SAST engine
+# pass gate 4 with exit 0 -- a zero from an engine that did not run is not a
+# clean result. Reads the SAME $SS this gate already captured, so it cannot
+# desynchronize from what gate 4 saw and costs no extra invocation.
+#
+# ⚠️ NOT a piped `grep -q`. Under `set -o pipefail` (line 26), `grep -q` exits
+# the instant it finds a match, closing the pipe -- if `printf` is still
+# writing the rest of a large `$SS` it dies of SIGPIPE (rc 141), pipefail
+# reports that 141, and this `if` takes the WRONG branch. Independently
+# reproduced on this box: the real ~32KB report matched correctly; the same
+# content x3 (~97KB) silently did not. Found by an independent second-pass
+# audit of the first version of this gate -- see the class this repo already
+# names for it: a pipe makes `$?` (here, the pipeline status) belong to the
+# read side, not the write side. Bash's own substring test spawns no reader
+# that can exit early, so it cannot lose this race.
+#
+# ⚠️ THE QUOTES AROUND "[BLIND]" ARE LOAD-BEARING. Unquoted inside [[ ]], the
+# pattern *[BLIND]* is a bracket expression matching any single B, L, I, N, or
+# D -- it would match nearly every report ever produced, not just a genuinely
+# blind engine. Do not "simplify" this by dropping the quotes.
+if [[ "$SS" == *"[BLIND]"* ]]; then
+  fail "engine BLIND on self-scan -- a zero from a blind engine is not evidence of anything"
+  printf '%s' "$SS" | grep '\[BLIND\]' | while IFS= read -r line; do note "$line"; done
+elif [[ "$SS" == *"Engine status:"* ]]; then
+  pass "no engine BLIND on self-scan"
+else
+  fail "self-scan produced no 'Engine status:' block -- cannot confirm no engine is BLIND"
+  note "gate 4's count check above should already have failed in this case too"
+fi
+
 # ---- 5. Public-hygiene sweep ----------------------------------------------
 # PRAETOR is PUBLIC. Enumerate the shipping set with BOTH tracked and untracked
 # lists: `git status --porcelain` lists untracked DIRECTORIES, not their files,
