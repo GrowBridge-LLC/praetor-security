@@ -155,6 +155,21 @@ section with a stated reason (never dropped silently). Detected secrets are
 The JSON report is a stable schema (`schema_version`) suitable for a CI job, an
 apply-gate, or another agent to consume.
 
+### The engine-status contract — read this before trusting exit 0
+
+`report["meta"]["engines"]` is an object keyed by engine name (`sast`, `secrets`, `sca`, `aisec`).
+Each value has a `status` field, one of: `ok`, `not-applicable`, `disabled`, `unavailable`, `error`.
+Only `ok` means the engine actually ran and looked. `unavailable` and `error` are both blind spots —
+the engine did not produce a real answer for that scan.
+
+🔴 **Without `--fail-on`, a blind engine still exits `0`.** This is the deliberate report-only
+carve-out described above, and it means **a consumer that checks only the process exit code cannot
+tell "clean" from "half the engines never ran."** Both look identical from the outside: exit `0`,
+some findings or none. If your integration reads the report and decides anything based on it, check
+`meta["engines"][name]["status"]` for every engine you care about — do not infer engine health from
+the exit code or the finding count alone. (`--fail-on` closes this specific gap for you automatically,
+by turning any blind spot into exit `3` — but only if you pass it.)
+
 ### schema_version 3.0 — engine statuses split, and a second file count
 
 Two breaking changes had shipped under an unchanged `2.0`. If you consume the
