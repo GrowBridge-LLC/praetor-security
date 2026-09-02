@@ -12,6 +12,17 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Fixed — a real finding next to a blind engine gave no stderr trace of the blind engine
+
+`--fail-on` returns exit 1 the instant a real finding is at or above the threshold,
+before the blind-spot check that prints `SCAN DEGRADED` ever ran. The exit code was
+always correct — 1 outranks 3 deliberately, a real finding is the more actionable
+signal — but a human reading stderr (or a CI log) saw nothing indicating another
+engine was also blind and might be hiding more. `meta.engines` in the JSON report
+carried the truth the whole time; only the human-facing diagnostic was silent. Fixed
+by computing and printing the blind-spot diagnostic before either return, so it
+always names which engine was blind when one is, regardless of which exit code wins.
+
 ### Fixed — the pre-commit gate could not see a fully blind SAST engine
 
 The self-scan gate pinned finding counts against a baseline, but never checked

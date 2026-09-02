@@ -784,8 +784,16 @@ def main(argv=None):
     # decision. Found by an independent reader of this file, not by its author.
     if args.fail_on:
         threshold = core.Severity.parse(args.fail_on)
-        if any(f.severity >= threshold for f in gate_findings):
-            return 1
+        has_findings = any(f.severity >= threshold for f in gate_findings)
+        # F40: blind-spot detection used to run only AFTER the findings check
+        # returned, so a real finding sitting next to a blind engine printed
+        # exit 1 with no stderr trace that anything else was also unmeasured --
+        # even though meta.engines in the JSON report carried the truth the
+        # whole time. Computed and printed here, BEFORE either return, so the
+        # diagnostic always appears when something is blind. The exit code is
+        # unchanged either way: 1 still outranks 3 (test_real_findings_outrank_
+        # degradation asserts this is deliberate), this only fixes what a human
+        # reading stderr can see.
         blind = core.engine_blind_spots(engine_meta)
         if blind and not args.allow_degraded:
             sys.stderr.write(
@@ -794,11 +802,20 @@ def main(argv=None):
             )
             for name, status, detail in blind:
                 sys.stderr.write(f"  [{status}] {name}: {detail}\n")
-            sys.stderr.write(
-                "  A zero from an engine that did not run is not a clean result. "
-                "Re-run once the engine is available, or pass --allow-degraded to "
-                "gate on findings alone.\n"
-            )
+            if has_findings:
+                sys.stderr.write(
+                    "  A real finding was also reported above -- that verdict stands "
+                    "(exit 1), but other engines were blind and may be hiding more.\n"
+                )
+            else:
+                sys.stderr.write(
+                    "  A zero from an engine that did not run is not a clean result. "
+                    "Re-run once the engine is available, or pass --allow-degraded to "
+                    "gate on findings alone.\n"
+                )
+        if has_findings:
+            return 1
+        if blind and not args.allow_degraded:
             return 3
         # 🔴 THE ONLY TERM IN THIS BLOCK THAT IS A MEASUREMENT RATHER THAN A
         # STATUS WORD. An engine handed an empty file list returns without

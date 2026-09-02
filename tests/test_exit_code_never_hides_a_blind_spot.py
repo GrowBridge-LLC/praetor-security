@@ -243,6 +243,38 @@ def test_real_findings_outrank_degradation(tmp_path, monkeypatch, capsys):
     )
 
 
+def test_combined_case_still_names_the_blind_engine(tmp_path, monkeypatch, capsys):
+    """F40: exit 1 outranking exit 3 must not erase the degradation diagnosis.
+
+    Before this fix, blind-spot detection ran only after the findings check had
+    already returned, so this exact scenario -- a real finding sitting next to a
+    blind engine -- printed exit 1 with no stderr trace that sast never ran.
+    meta.engines in the JSON report carried the truth the whole time; only the
+    human-facing diagnostic was silent. The exit code is unchanged (see
+    test_real_findings_outrank_degradation above) -- this asserts what stderr
+    says, not what the gate decides.
+    """
+    (tmp_path / "leak.py").write_text(
+        'KEY = "' + "sk-" + "ant-" + "api03-" + "A" * 80 + '"\n',
+        encoding="utf-8",
+    )
+
+    def half_broken(*a, **kw):
+        raise RuntimeError("simulated sast failure")
+
+    monkeypatch.setattr(engine_sast, "run", half_broken)
+    rc = _run([str(tmp_path), "--engines", "secrets,sast", "--fail-on", "HIGH",
+               "--format", "json", "--quiet"])
+    err = capsys.readouterr().err
+
+    assert rc == 1, f"exit code must still be 1 (findings outrank degradation), got {rc}"
+    assert "SCAN DEGRADED" in err, (
+        "a blind engine next to a real finding must still be named in stderr, not "
+        "swallowed by the exit-1 return"
+    )
+    assert "sast" in err, "the diagnostic must name WHICH engine was blind"
+
+
 def test_allow_degraded_is_the_only_way_past(tmp_path, monkeypatch):
     """The opt-out is explicit, per-run, and cannot be reached by accident."""
     _break_secrets(monkeypatch)
