@@ -2,13 +2,29 @@
 
 **What this is.** An extension of `references/audits/2026-08-24-oss-scanner-technique-survey.md` into a narrower slice: tools built specifically for LLM/agent-security threats — prompt injection, jailbreaks, data exfiltration, serialized-model supply-chain risk — rather than general-purpose SAST/secrets/SCA scanners. Six independent surveys were commissioned, one per tool or tool pair. Method, stated explicitly and matching the 08-24 survey's own discipline: public documentation, READMEs, and source read via web search/fetch only, against each project's own docs site and raw GitHub source. **Nothing surveyed here was cloned, installed, or executed** — the same restriction the 08-24 survey held itself to, and the same one PRAETOR's own `CLAUDE.md` invariant holds PRAETOR to when reading a scanned target.
 
-**Survey completeness — stated plainly rather than papered over.** Two of the six commissioned survey slots returned no content: `tool_name` and every other field came back as the literal string `"placeholder"`, with empty `adoptable`/`do_not_adopt` arrays. This is **not** a finding that those two tools (whichever they were meant to be) have nothing to offer — it is missing data, and is recorded as such below rather than invented. Four of six surveys returned real, sourced findings: **garak**, **llm-guard & modelscan**, **Lakera's PINT benchmark**, and **Semgrep's AI/agentic registry rule packs**. Treat every claim below the way this repo treats any audit doc — worth verifying before building on it, not a ruling — and re-run the two empty slots before treating this document as a complete six-tool pass.
+**Survey completeness — stated plainly rather than papered over.** Two of the six original commissioned survey slots returned no content on the first pass: `tool_name` and every other field came back as the literal string `"placeholder"`. One has since been re-run and filled (§1, **invariant-labs/mcp-scan**, 2026-09-03). One remains genuinely unsurveyed (§6, Trojan-Source/invisible-Unicode state of the art) — do not read that slot as "surveyed, nothing found"; it is missing data. Five of six surveys now carry real, sourced findings: **mcp-scan**, **garak**, **llm-guard & modelscan**, **Lakera's PINT benchmark**, and **Semgrep's AI/agentic registry rule packs**. Treat every claim below the way this repo treats any audit doc — worth verifying before building on it, not a ruling.
 
 ---
 
-## 1. [Survey slot — no content returned]
+## 1. invariant-labs/mcp-scan (rebranded "Snyk Agent Scan")
 
-The input for this slot was the placeholder value on every field (`tool_name`, `summary`, empty `adoptable`/`do_not_adopt`). No tool was actually surveyed here. Do not read this as "surveyed, nothing found" — it is "not surveyed." Needs a re-run with an actual target before this slot can inform anything.
+**Source:** `raw.githubusercontent.com/invariantlabs-ai/mcp-scan/main/README.md` and Invariant Labs' own blog posts. Web-only, no install, no execution. Re-run 2026-09-03 after the first pass on this slot returned nothing.
+
+**Note first:** the repo has rebranded — its README title is now "Snyk Agent Scan," Invariant Labs appears to have been absorbed into Snyk. Verified by fetching the raw README directly, not trusted from search-result titles alone.
+
+**Core finding, confirmed verbatim from the tool's own README:** "When Agent Scan scans an MCP configuration file, it **starts the stdio MCP servers by executing the commands and arguments specified in the config**." Every hazard class this slot was commissioned to check — tool poisoning, rug-pull/mutable-tool-description attacks, cross-server tool shadowing, and prompt injection carried in a tool's *description* rather than its launch command — depends on the tool-description text returned by a live `tools/list` call. **That text does not exist in the static config file at all.** The config only ever holds server launch parameters (command/args/env) — exactly what PRAETOR's `_scan_mcp` (`scripts/engine_aisec.py`) already reads. This is the mechanical reason none of the four hazard classes are reachable statically, not a gap in either tool's regex coverage.
+
+**Adoptable:** none found with a static-only form. The one candidate considered — broader MCP client config-filename discovery (mcp-scan enumerates known paths for Claude Desktop, Cursor, VS Code, Windsurf, Gemini CLI, Amazon Q) — **turned out to already be covered**, checked directly against PRAETOR's own code: `_scan_mcp` at `engine_aisec.py:621` scans any file containing the literal `"mcpServers"` structure regardless of filename (`base not in MCP_MANIFEST_NAMES and '"mcpServers"' not in text`), which is *more* robust than mcp-scan's path-enumeration approach — it works for any client's config regardless of naming convention, not just the ones on a maintained list.
+
+**Do not adopt:**
+- **Starting the MCP server to retrieve tool descriptions** — confirmed verbatim above; a direct violation of PRAETOR's never-execute invariant, and there is no static-only mode for any of the four hazard classes.
+- **Sending retrieved tool descriptions to a remote "Agent Scan API"** for the actual analysis — a third-party network dependency on attacker-influenced content, the same class of risk this repo's 08-24 survey already declined for TruffleHog's live verification.
+- **Tool pinning/hashing for rug-pull detection** — requires a live-retrieved description at scan time to hash against a prior baseline; Invariant's own tool-poisoning notification states rug-pulls specifically defeat static snapshots.
+- **Cross-server shadowing detection** — requires comparing live-retrieved tool lists across servers; no mechanism operates on config-file content alone.
+
+No curated static allowlist or signature-verification mechanism was found in mcp-scan to salvage as a static-only technique — its entire detection surface for these four classes is live-connection-gated.
+
+Sources: [mcp-scan README](https://raw.githubusercontent.com/invariantlabs-ai/mcp-scan/main/README.md), [Introducing MCP-Scan](https://invariantlabs.ai/blog/introducing-mcp-scan), [MCP security notification: tool poisoning attacks](https://invariantlabs.ai/blog/mcp-security-notification-tool-poisoning-attacks)
 
 ---
 
