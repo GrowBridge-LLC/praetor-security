@@ -1,7 +1,7 @@
 # ADR-001 — PRAETOR's engine is ported to Rust
 
-**Status:** ACCEPTED, 2026-08-10; amended 2026-08-22; incremental port in progress. The `secrets` detector is ported in `praetor-core`; no Rust engine is wired into the CLI.
-**Supersedes:** nothing. **Superseded by:** nothing. Amendments 1 and 2 are binding; Amendment 3 remains an unratified proposal.
+**Status:** ACCEPTED, 2026-08-10; amended 2026-08-22 and 2026-09-02; incremental port in progress. The `secrets` detector is ported in `praetor-core`; no Rust engine is wired into the CLI.
+**Supersedes:** nothing. **Superseded by:** nothing. Amendments 1, 2, and 3 are all binding as of 2026-09-02.
 
 ## Decision
 
@@ -198,12 +198,12 @@ code. Neither was caught by review of the ADR — both were caught by someone tr
 ⇒ **An ADR's premises rot exactly like any other measured claim, and the ordering it derives from
 them rots with them. Re-derive a condition's REASON, not just its instruction.**
 
-## Amendment 3 proposal (2026-08-24, RESEARCHED, NOT RULED ON) — a JSON crate for `aisec`
+## Amendment 3 (2026-08-24 researched, 🔴 RATIFIED 2026-09-02) — a JSON crate for `aisec`
 
-**This is a proposal, not a decision.** Amendment 2's `base64` call was already "genuinely borderline...
-escalated rather than absorbed" for a smaller decision than this one. Filed here, unauthorised, so the
-research survives even though the ruling has not been made — the same reason Amendment 1's counter-
-argument section exists.
+**Ratified by the operator, 2026-09-02, against the measured numbers below** — not against the crate's
+name, per this amendment's own stated purpose. `serde_json` is authorised: `aisec` is un-deferred, and
+the JSON-parsing dependency for its MCP-manifest scan may be built. The build.rs disclosure below stays
+in the record as the honest cost of this ratification, not as an unresolved objection.
 
 ### The blocker this would clear
 
@@ -285,9 +285,14 @@ is bounded against attacker-controlled deeply-nested JSON out of the box — rel
 scanner parsing untrusted MCP manifests, and not something a hand-rolled parser would get for free
 without deliberately adding the check.
 
-### What this proposal does NOT do
+### Ratification record
 
-It does not add `serde_json` to `Cargo.toml`. It does not un-defer `aisec`. It states the measured
-case for the crate and discloses the one place it falls short of Amendment 1's own bar, so the ruling
-— when made — is made against real numbers instead of a name. `aisec` stays deferred until this is
-actually decided, per Amendment 2.
+Ratified 2026-09-02. `serde_json = "=1.0.151"` pinned in `praetor-core/Cargo.toml`, default features
+only (matching the measured `cargo tree` above: 4 new crates, no `serde_derive`/`syn`/`quote` pulled
+into the compile graph for a generic `Value` parse). `aisec` un-deferred as of this ratification.
+
+**Condition on the ratification, not a caveat to revisit later:** if `_scan_mcp`'s port ever needs to
+deserialize into a typed struct instead of a generic `serde_json::Value`, the derive-macro chain
+(`serde_derive`, `syn`, `quote`, `proc-macro2`) enters the real compile graph for the first time, and
+that is a new measurement, not an extension of this one — re-run `cargo tree` before assuming the "4
+new crates" figure still holds.

@@ -97,8 +97,8 @@ Runtime detection in order: **native** `semgrep` on PATH, then **WSL**
 (`wsl -d <distro>`), then **Docker** (`semgrep/semgrep` with a read-only mount).
 Rulesets: a bundled offline baseline (`rules/semgrep-praetor.yaml`, which always
 runs and adds a few agent/AI-specific code rules the public packs lack) plus, by
-default, Semgrep's curated registry packs (`p/owasp-top-ten`, `p/security-audit`)
-when the network is reachable (`--no-registry` to disable). Semgrep's JSON is
+default, Semgrep's curated registry packs (`p/owasp-top-ten`, `p/security-audit`,
+`p/ai-best-practices`) when the network is reachable (`--no-registry` to disable). Semgrep's JSON is
 normalized into `Finding`s, mapping its severity, CWE, OWASP, and references. The
 real source line is read locally for the snippet, because Semgrep redacts the
 matched line to "requires login" for unauthenticated registry rules.

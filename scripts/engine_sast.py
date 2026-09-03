@@ -38,7 +38,15 @@ import core
 from core import (Finding, Severity, Confidence, split_lines,
                    ENGINE_OK, ENGINE_PARTIAL_PARSE, ENGINE_ERROR)
 
-DEFAULT_REGISTRY_CONFIGS = ["p/owasp-top-ten", "p/security-audit"]
+#: Added 2026-09-02, per references/audits/2026-09-02-aisec-competitor-survey.md:
+#: `p/ai-best-practices` is free, community-origin, unauthenticated (no
+#: `semgrep login`, confirmed live), and covers MCP SSRF, MCP command
+#: injection, unsanitized MCP tool-call returns, and unsafe LangChain
+#: `exec` -- a real gap, since PRAETOR's aisec engine covers agentic threats
+#: via pattern matching but SAST pulled nothing agent-code-specific before
+#: this. Verified live before adding: `semgrep --config p/ai-best-practices`
+#: loads 27 rules, zero rule-ID overlap with the two packs already below.
+DEFAULT_REGISTRY_CONFIGS = ["p/owasp-top-ten", "p/security-audit", "p/ai-best-practices"]
 #: Overall semgrep budget, in seconds.
 #:
 #: 🔴 THIS WAS A HARD-CODED CONSTANT WITH NO OPERATOR OVERRIDE, AND THAT IS A

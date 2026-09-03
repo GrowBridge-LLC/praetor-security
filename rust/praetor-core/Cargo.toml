@@ -7,18 +7,31 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
-# 🔴 TWO DIRECT DEPENDENCIES, EACH DELIBERATELY AUTHORISED AND EXACTLY PINNED.
+# 🔴 THREE DIRECT DEPENDENCIES, EACH DELIBERATELY AUTHORISED AND EXACTLY PINNED.
 #
 # ADR-001 Amendment 1 authorizes `regex` for the detector ports: Rust has no
 # standard-library regex engine, and a bespoke matcher over attacker-controlled
 # text would be a larger security risk than this audited finite-automata engine.
 # Amendment 2 separately authorizes `base64` because the Python reference uses
-# strict base64 decoding and Rust has no standard-library decoder. That ruling is
-# explicitly marginal and creates no precedent for a third crate. Defaults are
+# strict base64 decoding and Rust has no standard-library decoder. Defaults are
 # disabled because 0.23.1 enables `simd-unsafe` by default; the scalar STANDARD
 # engine needs only `std`, and the crate forbids unsafe code without that feature.
+#
+# Amendment 3 (ratified 2026-09-02) authorizes `serde_json` for `aisec`'s
+# MCP-manifest JSON parsing: a hand-written parser over a recursive,
+# attacker-controlled grammar is a materially larger attack surface than
+# either prior crate, per that amendment's own table. Default features are
+# LEFT ON deliberately here, unlike base64/regex above -- serde_json's
+# defaults are exactly `std` plus a bounded recursion depth
+# (`unbounded_depth` stays off), which is the wanted posture against
+# untrusted deeply-nested JSON, not something to opt into via a feature flag.
+# ⚠️ Parsing into a generic `serde_json::Value` (what `_scan_mcp` needs) pulls
+# in only 4 new crates, not `serde`'s derive machinery -- re-measure with
+# `cargo tree` before this pin is trusted if the port ever needs a typed
+# struct instead, per Amendment 3's own ratification condition.
 #
 # Adding a dependency is a decision, not a convenience. Record it here when made.
 [dependencies]
 base64 = { version = "=0.23.1", default-features = false, features = ["std"] }
 regex = "=1.13.1"
+serde_json = "=1.0.151"

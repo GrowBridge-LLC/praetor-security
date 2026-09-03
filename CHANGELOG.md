@@ -12,6 +12,37 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Added — three new aisec/sast detections, from a competitor-tool survey
+
+`references/audits/2026-09-02-aisec-competitor-survey.md` researched AI-security
+and agentic-threat scanners (garak, llm-guard, modelscan, Lakera's PINT
+benchmark, Semgrep's AI-focused registry packs) for techniques PRAETOR's
+aisec/sast engines had no equivalent for. Three landed here, each verified
+against PRAETOR's actual current rule tables before building — not assumed
+from the research alone:
+
+- **`ansi-escape-sequence`** (aisec, `HIDDEN_CONTENT`). A raw ESC (0x1B) + `[`
+  CSI introducer in scanned text — a log line, a tool's own output template,
+  an agent's rendered response — can move a terminal cursor, overwrite what a
+  reviewer sees on screen, or forge a clickable hyperlink (OSC 8) to a
+  malicious URL while the visible label stays innocuous. Same per-character
+  scan `_scan_unicode` already runs, extended to one more control-byte family.
+  Deliberately scoped to the raw byte, not the textual `"\x1b["` spelling that
+  appears in any terminal-color library's own source.
+- **`markdown-image-exfil`** (aisec, `EXFIL`). A markdown image/link whose URL
+  carries a data-shaped query string (`?conversation=...`, `?secret=...`)
+  exfiltrates the instant the markdown renders — no shell command, no
+  `curl`/`wget`, nothing every existing `EXFIL` rule was shaped to catch.
+- **`p/ai-best-practices`** added to SAST's default registry packs
+  (`DEFAULT_REGISTRY_CONFIGS`) — free, community-origin, no login required
+  (verified live before adding: 27 rules, zero rule-ID overlap with the two
+  packs already pulled). Covers MCP SSRF, MCP command injection, unsanitized
+  MCP tool-call returns, and unsafe LangChain `exec` directly.
+
+Each new detector's own false-positive control is in the same test as its
+positive control — an ordinary markdown image or a source file merely
+mentioning `\x1b[` as text must not fire, and both are asserted, not assumed.
+
 ### Fixed — SAST now names PartialParsing specifically, without weakening anything
 
 Semgrep's own `errors` array can contain several distinct failure types — a
