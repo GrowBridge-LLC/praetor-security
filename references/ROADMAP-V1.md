@@ -25,14 +25,55 @@ independent of how good the engines are.
 
 - [ ] **Publish to PyPI** as `praetor-security`, so `pip install praetor-security`
   works — the package metadata in `pyproject.toml` is already correct, this is a
-  packaging/CI task, not a design one.
+  packaging/CI task, not a design one. The name isn't registered yet, so this is a
+  *pending-publisher* registration (name + `GrowBridge-LLC` + repo + exact workflow
+  filename, via PyPI's OIDC trusted-publishing flow — no stored token, `id-token:
+  write` scoped to the publish job only), and it should happen well before the
+  actual first release: someone else claiming the name first invalidates the
+  pending registration. Before wiring the workflow, verify the bundled ruleset
+  actually installs — it ships via `[tool.setuptools.data-files]`, not
+  `package-data`, since PRAETOR ships flat modules; build the real wheel and
+  `pip install` it into a fresh empty venv to confirm `praetor --no-registry`
+  still finds `rules/semgrep-praetor.yaml` from the installed copy, not the source
+  tree.
 - [ ] **Publish a GitHub Action** wrapping the CLI, so a repo can add PRAETOR to its
-  own CI in a few lines of YAML instead of scripting a Python invocation.
+  own CI in a few lines of YAML instead of scripting a Python invocation. Shape:
+  a *composite* action (not `docker`, not a Node action — this is a pure-Python
+  tool) doing checkout → `actions/setup-python` → `pip install
+  praetor-security[sast,sca]` → invoke `praetor` with inputs mapped 1:1 onto the
+  real CLI flags (`--engines`, `--format`, `--fail-on`, `--min-severity`,
+  `--allow-degraded`, `--exclude`). `pypa/gh-action-pip-audit` — an official PyPA
+  action for a sibling Python security CLI — is the concrete template to follow;
+  it even exposes a `disable-pip` input mirroring PRAETOR's own `--disable-pip`
+  invariant.
 - [ ] **A `.pre-commit-hooks.yaml` entry**, so PRAETOR can be added to any repo's
   existing `pre-commit` config the same way Gitleaks/detect-secrets already are —
   this is the single most common way developers actually adopt a scanner.
+  `Yelp/detect-secrets`'s entry is the closer template than gitleaks' (which needs
+  a prebuilt binary or Docker): `id: praetor`, `language: python`, `entry:
+  praetor`, `pass_filenames: false` — pre-commit installs the package into an
+  isolated venv via the declared console-script entry point, matching
+  `pyproject.toml`'s existing `[project.scripts] praetor = "praetor:main"`. A bare
+  install only pulls the stdlib-only engines (secrets/aisec); SAST/SCA need
+  `additional_dependencies: ['semgrep', 'pip-audit']` in the *user's* own config.
+  Given commit-time latency expectations for this class of tool, default the
+  shipped hook to a fast profile (e.g. `--engines secrets --fail-on HIGH`) and
+  document the heavier `--engines all` as an opt-in pre-push stage.
 - [ ] Tag an actual `v1.0.0` release once the above lands, so "PRAETOR 1.0" refers
   to something real.
+- [ ] **Known constraint on any future hosted/SaaS use of Semgrep's registry
+  packs** (`p/owasp-top-ten`, `p/security-audit`, `p/ai-best-practices`): as of
+  Dec 13, 2024, Semgrep's own rule registry is no longer open-source — the
+  "Semgrep Rules License v1.0" permits internal use (exactly what PRAETOR's CLI
+  does today, scanning a target and reporting locally) but explicitly forbids
+  distributing the rules or "making them available to others as a service."
+  Running the registry packs locally, as PRAETOR does, is unaffected. This only
+  becomes relevant if PRAETOR (or anything built on it) ever runs those registry
+  configs on a third party's behalf as a hosted service — that would need its own
+  legal review, or a switch to the Opengrep fork (LGPL-2.1, preserves the
+  pre-relicensing ruleset). Noted here so it isn't rediscovered under time
+  pressure later. PRAETOR's own bundled `rules/semgrep-praetor.yaml` is unaffected
+  either way — it's self-authored MIT, not copied from the registry.
 
 ## 2. Rust port — unblocked this session, not finished
 
