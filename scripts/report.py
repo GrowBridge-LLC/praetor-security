@@ -32,7 +32,12 @@ from core import (Severity, engine_blind_spots, ENGINE_OK, ENGINE_NOT_APPLICABLE
 #     `file_count == 0` as "nothing was scanned" is now wrong.
 # ⇒ A version that does not move across a breaking change is the same defect this
 # repo fixed in its generated Unicode table: one label for two incompatible facts.
-SCHEMA_VERSION = "3.0"
+#: 🔴 Bump on ANY change to the set of possible `status` words, same precedent
+#: as the 2.0 rule_id rename and the 3.0 unavailable/not-applicable split — a
+#: consumer doing exhaustive status matching breaks silently otherwise. 4.0
+#: adds `partial-parse` (core.ENGINE_PARTIAL_PARSE); see README.md's
+#: "schema_version 4.0" section.
+SCHEMA_VERSION = "4.0"
 
 _SEV_ORDER = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO]
 
@@ -61,6 +66,12 @@ PRAETOR is a high-signal aid, not a guarantee of security. Known limits:
 #: spot reads as a clean engine -- the same failure the exit code carried.
 #: `unavailable` was rendered "[skipped]" until 2026-08-12, which reads as
 #: "nothing to do here" for a state that actually means "could not look".
+#: ⚠️ ENGINE_PARTIAL_PARSE (core.py) has NO entry here, deliberately. It is a
+#: full malfunction for text-report/gate-4b purposes, same as ENGINE_ERROR --
+#: only meta.engines[*].detail carries the more specific diagnosis. Giving it
+#: its own mark here was tried and reverted: it opted the status out of the
+#: "[BLIND]" fail-safe below, which is exactly the failure this dict's own
+#: warning describes.
 _STATUS_MARKS = {
     ENGINE_OK: "[ran]",
     ENGINE_NOT_APPLICABLE: "[n/a]",

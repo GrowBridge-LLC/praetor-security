@@ -35,7 +35,8 @@ import shutil
 import subprocess
 
 import core
-from core import Finding, Severity, Confidence, split_lines
+from core import (Finding, Severity, Confidence, split_lines,
+                   ENGINE_OK, ENGINE_PARTIAL_PARSE, ENGINE_ERROR)
 
 DEFAULT_REGISTRY_CONFIGS = ["p/owasp-top-ten", "p/security-audit"]
 #: Overall semgrep budget, in seconds.
@@ -444,13 +445,51 @@ def _source_line(path: str, line_no: int, cache: dict) -> str:
     return ""
 
 
+def _error_type_name(err: dict) -> str:
+    """The error_type constructor name, whether semgrep serialized it as a
+    bare string (a unit variant, e.g. "Timeout") or as a [name, payload] pair
+    (a variant carrying data, e.g. PartialParsing's list of locations)."""
+    t = err.get("type") if isinstance(err, dict) else None
+    if isinstance(t, list) and t and isinstance(t[0], str):
+        return t[0]
+    if isinstance(t, str):
+        return t
+    return ""
+
+
+def _classify_scan_errors(errors: list) -> str:
+    """core.ENGINE_OK / core.ENGINE_PARTIAL_PARSE / core.ENGINE_ERROR, by TYPE.
+
+    🔴 CLASSIFIED ON error_type, NEVER ON level. An earlier version of this
+    classifier filtered on `level` alone and was proven exploitable: Timeout,
+    OutOfMemory, StackOverflow and FixpointTimeout all report `level: warn`,
+    identically to PartialParsing, so a slow or obfuscated function could hide
+    behind the one status meant only for "some source didn't parse."
+
+    Fails toward ENGINE_ERROR: only an errors list containing ONE OR MORE
+    PartialParsing entries and NOTHING ELSE downgrades. A single non-
+    PartialParsing entry anywhere in the list -- a known hard-failure type, or
+    an unrecognised future one -- forces ENGINE_ERROR for the whole run. An
+    adversarial file cannot bury a real timeout behind a see-nothing partial
+    parse; the harsher classification wins.
+    """
+    if not errors:
+        return ENGINE_OK
+    names = {_error_type_name(e) for e in errors}
+    if names == {"PartialParsing"}:
+        return ENGINE_PARTIAL_PARSE
+    return ENGINE_ERROR
+
+
 def run(target: str, bundled_rules: str, use_registry: bool = True,
         extra_configs=None, prefer: str = "auto", wsl_distro: str = "Ubuntu",
         timeout: int = _SEMGREP_TIMEOUT, excludes=None,
         enumerated_code_files: int = -1, skip_dirs=None) -> dict:
     """
-    Returns {findings: [...], status: 'ok'|'unavailable'|'error', detail: str,
-             runtime: str}.
+    Returns {findings: [...],
+             status: 'ok'|'unavailable'|'error'|'partial-parse', detail: str,
+             runtime: str}. 'partial-parse' is SAST-specific -- see
+             core.ENGINE_PARTIAL_PARSE and _classify_scan_errors below.
     """
     rt = detect_runtime(prefer, wsl_distro)
     if not rt["available"]:
@@ -741,19 +780,25 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
             owasp=str(owasp),
             references=refs[:5] + [f"semgrep:{rid}"],
         ))
-    n_errors = len(data.get("errors", []))
+    scan_errors = data.get("errors", []) or []
+    n_errors = len(scan_errors)
+    error_status = _classify_scan_errors(scan_errors)
     detail = f"{rt['detail']}; ran configs={configs}; scan errors={n_errors}"
     if n_errors:
-        # 🔴 A COUNT, NOT A STATUS. `scan errors=N` used to sit in `detail` next
-        # to an unconditional `status: "ok"` -- printed, gate-trusted, and never
-        # read. Semgrep can return valid JSON and a positive file count while
-        # admitting it could not parse or analyse specific files (a NUL-bearing
-        # source, a syntax error in an unrelated dialect, a truncated read); a
-        # non-empty findings list proves SOME files were measured, not that every
-        # opened file was. `--fail-on` must fail closed on that gap rather than
-        # certify a scan with unmeasured files as a clean one.
-        detail += ("; Semgrep reported file/analysis errors -- "
-                   "SAST coverage cannot be certified")
+        # 🔴 A COUNT, NOT A STATUS ON ITS OWN. `scan errors=N` used to sit in
+        # `detail` next to an unconditional `status: "ok"` -- printed,
+        # gate-trusted, and never read. Semgrep can return valid JSON and a
+        # positive file count while admitting it could not parse or analyse
+        # specific files (a NUL-bearing source, a syntax error in an unrelated
+        # dialect, a truncated read, a timeout); a non-empty findings list
+        # proves SOME files were measured, not that every opened file was.
+        if error_status == ENGINE_PARTIAL_PARSE:
+            detail += ("; ALL reported errors are PartialParsing -- some source could not "
+                       "be parsed, the rest was scanned; --fail-on still refuses to certify "
+                       "this clean (see core.GATE_TRUSTED_STATUSES)")
+        else:
+            detail += ("; Semgrep reported file/analysis errors -- "
+                       "SAST coverage cannot be certified")
     if rejected_flag:
         # Visible, not silent: this semgrep did not accept the flag, so the
         # scanned tree's own `.semgrepignore` was honoured on this run. Status
@@ -772,5 +817,4 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
         else:
             detail += (f"; NOTE this semgrep rejected {rejected_flag}; retry omitted exactly "
                        "that flag -- upgrade semgrep for full protection")
-    status = "error" if n_errors else "ok"
-    return {"findings": findings, "status": status, "detail": detail, "runtime": mode}
+    return {"findings": findings, "status": error_status, "detail": detail, "runtime": mode}

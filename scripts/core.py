@@ -68,8 +68,8 @@ class Confidence(IntEnum):
 #
 # 🔴 An engine that could not measure must never be indistinguishable from an
 # engine that measured and found nothing. Every consumer that turns a scan into
-# a DECISION -- `--fail-on`, a CI gate, a human reading the report -- reads these
-# five words, so they are defined once, here, and nowhere else.
+# a DECISION -- `--fail-on`, a CI gate, a human reading the report -- reads
+# these six words, so they are defined once, here, and nowhere else.
 #
 #   ok               the engine ran to completion. Its zero means something.
 #   not-applicable   nothing of this kind exists in the TARGET (no dependency
@@ -80,6 +80,15 @@ class Confidence(IntEnum):
 #   unavailable      the ENVIRONMENT could not run this engine (no semgrep
 #                    runtime, no SCA backend). 🔴 A BLIND SPOT.
 #   error            the engine launched and failed. 🔴 A BLIND SPOT.
+#   partial-parse    SAST-specific: semgrep ran, and every error it reported
+#                    was PartialParsing -- some source could not be parsed.
+#                    🔴 STILL A BLIND SPOT, deliberately, even though most of
+#                    the file measured cleanly: the SCANNED TREE chooses this
+#                    status (a missing bracket is enough), unlike `unavailable`,
+#                    which the environment chooses. Only the `detail` string is
+#                    more specific than `error` -- the exit code and text mark
+#                    are identical to `error` everywhere. See
+#                    engine_sast._classify_scan_errors.
 #
 # ⚠️ `unavailable` and `not-applicable` were ONE word until 2026-08-12, and the
 # ambiguity is why this matters: "no dependency manifests in this repo" and
@@ -87,12 +96,38 @@ class Confidence(IntEnum):
 # forces a gate to choose between failing every manifest-free repo and going
 # blind whenever a runtime is missing. The engines already know which case they
 # are in; they now say so.
+#
+# ⚠️ A CONSUMER MATCHING ON THIS LIST BY NAME MUST TREAT AN UNRECOGNISED WORD
+# -- including `partial-parse` if it predates a consumer's own update -- AS A
+# BLIND SPOT, never as a pass. `partial-parse` shipped after SCHEMA_VERSION 3.0
+# (report.py); see README.md's schema-version table before keying on the exact
+# status set.
 
 ENGINE_OK = "ok"
 ENGINE_NOT_APPLICABLE = "not-applicable"
 ENGINE_DISABLED = "disabled"
 ENGINE_UNAVAILABLE = "unavailable"
 ENGINE_ERROR = "error"
+#: An engine ran and produced findings, but semgrep's own error list contained
+#: ONLY PartialParsing entries -- some source could not be parsed, the rest was.
+#: Distinct from ENGINE_ERROR deliberately: Timeout, OutOfMemory,
+#: StackOverflow and FixpointTimeout all report the SAME `level: warn` as
+#: PartialParsing -- an EMPIRICAL fact about real semgrep output, confirmed
+#: by two independent audits running actual semgrep 1.175.0, not something
+#: semgrep's semgrep_output_v1.py interface file states (its ErrorType class
+#: names the type constructors; which ones get which severity is
+#: semgrep-core's own runtime decision). So filtering on level alone cannot
+#: tell "some source didn't parse" from "the engine effectively saw nothing"
+#: -- and an earlier attempt that filtered on level was proven exploitable:
+#: deleting one bracket from a file can make PartialParsing's own span
+#: swallow a block containing a real vulnerability, so "most of the file
+#: parsed" is not a safety argument
+#: against an adversarial target. This status is classified on error_type ONLY
+#: (see engine_sast._classify_scan_errors), never on level, and ANY non-
+#: PartialParsing type in the same errors list forces ENGINE_ERROR instead --
+#: see NON_MALFUNCTION_STATUSES and GATE_TRUSTED_STATUSES below for why that
+#: distinction still cannot silently pass a gated scan.
+ENGINE_PARTIAL_PARSE = "partial-parse"
 
 #: Statuses under which an engine's silence is TRUSTWORTHY input to a gate.
 #: 🔴 Deliberately an allowlist. Any status word not named here -- including one
@@ -110,6 +145,26 @@ GATE_TRUSTED_STATUSES = frozenset({ENGINE_OK, ENGINE_NOT_APPLICABLE, ENGINE_DISA
 #: ENGINE_UNAVAILABLE is deliberately the exception. A missing Semgrep runtime is
 #: a normal environment fact; failing every report-only run would earn a `|| true`
 #: and erase the signal. Under --fail-on it remains a blind spot and blocks.
+#:
+#: 🔴 ENGINE_PARTIAL_PARSE DOES NOT JOIN IT, AND THIS WAS TRIED AND REVERTED.
+#: The two look analogous -- both non-`ok`, both "the engine mostly worked" --
+#: but they differ in exactly the dimension this file's own run_tool()
+#: docstring names as load-bearing: WHO CHOOSES THE STATUS. `unavailable` is
+#: an environment fact; the SCANNED TREE cannot make semgrep absent from the
+#: host. `partial-parse` is chosen BY the scanned tree -- a file crafted so
+#: one bracket is missing decides, on its own, whether SAST reports itself as
+#: having malfunctioned. Adding it here was proven exploitable by an
+#: independent audit that ran real semgrep end to end: a file built exactly
+#: like the one described in ENGINE_PARTIAL_PARSE's own comment above (a
+#: PartialParsing span swallowing an `eval(x)`) returned exit 0 in
+#: report-only mode with this membership, reviving the identical class the
+#: error_type classifier exists to close. `partial-parse` is therefore a
+#: full malfunction here, exactly like `error` -- the new status still earns
+#: a more honest word in meta.engines[*].status and a more specific `detail`,
+#: but never a softer EXIT CODE or a softer TEXT MARK than `error` gets. See
+#: report._STATUS_MARKS: it has no entry for ENGINE_PARTIAL_PARSE,
+#: deliberately, so it falls through to the same "[BLIND]" default an
+#: unrecognised status gets.
 NON_MALFUNCTION_STATUSES = frozenset({
     ENGINE_OK, ENGINE_NOT_APPLICABLE, ENGINE_DISABLED, ENGINE_UNAVAILABLE,
 })

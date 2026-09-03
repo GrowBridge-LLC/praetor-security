@@ -128,7 +128,7 @@ def test_no_engine_calls_subprocess_run_directly():
         "scripts/engine_aisec.py",
         "scripts/praetor.py",
     }
-    allowed_calls = {("scripts/core.py", 152)}
+    allowed_calls = {("scripts/core.py", 207)}
 
     def is_os_process_name(name):
         return name in {"system", "popen"} or name.startswith(

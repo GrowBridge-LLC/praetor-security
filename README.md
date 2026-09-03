@@ -158,9 +158,12 @@ apply-gate, or another agent to consume.
 ### The engine-status contract — read this before trusting exit 0
 
 `report["meta"]["engines"]` is an object keyed by engine name (`sast`, `secrets`, `sca`, `aisec`).
-Each value has a `status` field, one of: `ok`, `not-applicable`, `disabled`, `unavailable`, `error`.
-Only `ok` means the engine actually ran and looked. `unavailable` and `error` are both blind spots —
-the engine did not produce a real answer for that scan.
+Each value has a `status` field, one of: `ok`, `not-applicable`, `disabled`, `unavailable`, `error`,
+`partial-parse` (SAST only, `schema_version` 4.0+). Only `ok` means the engine actually ran and
+looked. `unavailable`, `error`, and `partial-parse` are all blind spots — the engine did not produce
+a trustworthy answer for that scan. **A consumer matching on this list by name must treat any
+unrecognised word — including `partial-parse` if your integration predates 4.0 — as a blind spot,
+never as a pass.**
 
 🔴 **Without `--fail-on`, a blind engine still exits `0`.** This is the deliberate report-only
 carve-out described above, and it means **a consumer that checks only the process exit code cannot
@@ -169,6 +172,26 @@ some findings or none. If your integration reads the report and decides anything
 `meta["engines"][name]["status"]` for every engine you care about — do not infer engine health from
 the exit code or the finding count alone. (`--fail-on` closes this specific gap for you automatically,
 by turning any blind spot into exit `3` — but only if you pass it.)
+
+### schema_version 4.0 — a new SAST status word
+
+`meta.engines.sast.status` can now be `partial-parse`: semgrep ran, and every
+error it reported was `PartialParsing` — some source in the target could not
+be parsed. If you match engine status by an exhaustive list rather than a
+"is it `ok`" check, add this value to whatever set you treat as blocking.
+
+- **Still a blind spot, deliberately, even though most of the file measured
+  cleanly.** The exit code, the `[BLIND]` report mark, and `--fail-on`'s
+  refusal to certify the scan clean are all identical to a plain `error` —
+  only `meta.engines.sast.detail` is more specific. An earlier version of
+  this addition treated it as a lesser carve-out (like `unavailable`) and
+  was reverted after an adversarial audit demonstrated a live exploit: unlike
+  `unavailable`, which the *environment* chooses, `partial-parse` is chosen
+  by the *scanned tree* — a file missing one bracket decides, on its own,
+  whether SAST reports itself degraded, and a report-only run must refuse it
+  exactly as it refuses `error`.
+- **Not a new exit code, not a new report mark.** Nothing else in this
+  section changes.
 
 ### schema_version 3.0 — engine statuses split, and a second file count
 

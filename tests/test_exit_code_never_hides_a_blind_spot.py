@@ -142,6 +142,58 @@ def test_unavailable_runtime_still_blocks_a_gated_run(tmp_path, monkeypatch, cap
     assert rc == 3, f"an unavailable runtime must block an explicit gate, got {rc}"
 
 
+def test_partial_parse_is_a_malfunction_in_a_report_only_run(tmp_path, monkeypatch, capsys):
+    """🔴 THE CORRECTED PROPERTY, per an independent adversarial audit that
+    reproduced a live exploit against an earlier version of this fix: unlike
+    ENGINE_UNAVAILABLE (an environment fact), ENGINE_PARTIAL_PARSE is CHOSEN
+    BY THE SCANNED TREE, so it must not be excused from the default
+    malfunction check -- a report-only `praetor . && deploy` must still
+    refuse an adversarial file whose PartialParsing span could be hiding
+    anything."""
+    _set_sast_status(monkeypatch, core.ENGINE_PARTIAL_PARSE,
+                     "ALL reported errors are PartialParsing")
+    rc = _run([_clean_target(tmp_path), "--engines", "sast", "--format", "text", "--quiet"])
+    text = capsys.readouterr().out
+
+    assert rc == 3, (
+        f"a report-only PartialParsing-only result must still be refused, got {rc} -- "
+        "this is the exact exit code an earlier version of this fix wrongly changed to 0"
+    )
+    assert "[BLIND]" in text, (
+        "partial-parse must fall through to the same [BLIND] fail-safe mark an "
+        "unrecognised status gets, not a distinct benign-looking mark"
+    )
+
+
+def test_partial_parse_still_blocks_a_gated_run(tmp_path, monkeypatch, capsys):
+    """🔴 THE EXPLOIT-CLOSING ASSERTION. Even a PartialParsing-only result must
+    not silently satisfy --fail-on. A file where the unparsed span happens to
+    hide a real vulnerability must still be refused, not certified clean.
+
+    ⚠️ Deliberately runs ALL FOUR engines, not `--engines sast` alone. An
+    audit measured that the narrower selection can pass this exact assertion
+    for the WRONG reason if GATE_TRUSTED_STATUSES is ever mutated to wrongly
+    trust this status: with only sast selected, sast is the sole engine and
+    contributes nothing measured, so the unrelated "NOTHING WAS MEASURED"
+    floor accidentally rescues the exit code -- proving nothing about
+    GATE_TRUSTED_STATUSES specifically. With secrets/sca/aisec also running
+    for real and genuinely measuring the clean target, only the
+    GATE_TRUSTED_STATUSES exclusion can be the thing forcing exit 3 here."""
+    _set_sast_status(monkeypatch, core.ENGINE_PARTIAL_PARSE,
+                     "ALL reported errors are PartialParsing")
+    rc = _run([_clean_target(tmp_path), "--fail-on", "INFO",
+               "--format", "json", "--quiet"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["meta"]["engines"]["sast"]["status"] == core.ENGINE_PARTIAL_PARSE, (
+        "fixture did not reach the partial-parse path"
+    )
+    assert rc == 3, (
+        f"a PartialParsing-only SAST result must block an explicit gate, got {rc} -- "
+        "this is the exact status the earlier reverted fix would have wrongly passed"
+    )
+
+
 def test_unknown_status_is_a_malfunction_by_default(tmp_path, monkeypatch, capsys):
     """An unrecognised future status is fail-closed in the default exit path."""
     _set_sast_status(monkeypatch, "partial", "future engine returned a partial result")

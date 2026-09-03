@@ -12,6 +12,56 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Fixed — SAST now names PartialParsing specifically, without weakening anything
+
+Semgrep's own `errors` array can contain several distinct failure types — a
+file that partially failed to parse (`PartialParsing`), or one that timed out,
+ran out of memory, overflowed the stack, or hit a fixpoint limit. PRAETOR
+treated any non-empty `errors` array as an unconditional hard `error`,
+correctly refusing to certify the scan clean — safe, but coarser than it
+needed to be for the one case (some source didn't parse, the rest did) where
+most of the file was genuinely measured.
+
+A loosening was written and reverted the same day, twice, both times caught
+by an independent adversarial audit before it shipped:
+
+1. **Filtering on semgrep's `level` field alone.** `Timeout`, `OutOfMemory`,
+   `StackOverflow` and `FixpointTimeout` all report `level: "warn"`,
+   identically to `PartialParsing`, in semgrep's own source — and an
+   adversarial target chooses which part of a file fails to parse. A
+   demonstrated exploit made a single deleted bracket swallow a real
+   `eval $PAYLOAD` inside the unparsed span, flipping a scan from
+   correctly-blocked to a silent pass.
+2. **Adding the new status to `NON_MALFUNCTION_STATUSES`, on the assumption
+   it was the same shape as `ENGINE_UNAVAILABLE`.** It is not, in the one
+   dimension that matters: `unavailable` is an ENVIRONMENT fact — a scanned
+   tree cannot make semgrep absent from the host. `PartialParsing` is chosen
+   BY the scanned tree. A second independent audit ran real semgrep
+   end-to-end against the exact adversarial file from finding 1 and measured
+   a report-only run (no `--fail-on`) go from the correct exit 3 to a silent
+   exit 0 — the same exploit class, revived one layer up. It also blinded the
+   pre-commit gate's own `[BLIND]` fail-safe: the new status had been given
+   its own display mark, opting it out of the default that catches every
+   unrecognised status.
+
+**Fixed correctly this time.** Classification is on `error_type`, never
+`level`: an errors list containing ONE OR MORE `PartialParsing` entries and
+NOTHING ELSE gets the new `ENGINE_PARTIAL_PARSE` status; any other type
+present, alone or mixed with `PartialParsing`, still forces the harsher
+`ENGINE_ERROR`. But the new status behaves EXACTLY like `ENGINE_ERROR`
+everywhere that matters — excluded from both `GATE_TRUSTED_STATUSES` and
+`NON_MALFUNCTION_STATUSES`, and given no entry in the report's status-mark
+table, so it falls through to the same `[BLIND]` default an unrecognised
+status gets. The only externally visible difference from a plain `error` is a
+more honest word in `meta.engines[*].status` and a more specific `detail`
+string — never a softer exit code, never a softer mark.
+
+⚠️ **`SCHEMA_VERSION` is now `4.0`.** Adding a new possible `status` word is
+the same class of breaking change as the 3.0 `unavailable`/`not-applicable`
+split — a consumer doing exhaustive status matching must add `partial-parse`
+to whatever it treats as a blind spot. See README's `schema_version 4.0`
+section.
+
 ### Fixed — a real finding next to a blind engine gave no stderr trace of the blind engine
 
 `--fail-on` returns exit 1 the instant a real finding is at or above the threshold,
