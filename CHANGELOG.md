@@ -17,7 +17,7 @@ Because PRAETOR is a security scanner, entries say what a change means for
 `references/audits/2026-09-02-aisec-competitor-survey.md` researched AI-security
 and agentic-threat scanners (garak, llm-guard, modelscan, Lakera's PINT
 benchmark, Semgrep's AI-focused registry packs) for techniques PRAETOR's
-aisec/sast engines had no equivalent for. Three landed here, each verified
+aisec/sast engines had no equivalent for. Four landed here, each verified
 against PRAETOR's actual current rule tables before building — not assumed
 from the research alone:
 
@@ -38,6 +38,14 @@ from the research alone:
   (verified live before adding: 27 rules, zero rule-ID overlap with the two
   packs already pulled). Covers MCP SSRF, MCP command injection, unsanitized
   MCP tool-call returns, and unsafe LangChain `exec` directly.
+- **`prompt-injection-role-hijack` widened** (aisec, `PROMPT_INJECTION`) with
+  two DAN-family jailbreak template markers a full pasted jailbreak persona
+  is expected to echo, distinct from the generic role-hijack phrasing the
+  rule already caught: a "Developer Mode" persona-announcement phrase, and a
+  bracketed all-caps jailbreak tag. Coverage-widening, not gap-closing.
+  Deliberately does NOT add bare speaker-label markers for the other common
+  DAN-family names — both are ordinary first names and would fire on routine
+  chat transcripts; see the comment at the rule site.
 
 Each new detector's own false-positive control is in the same test as its
 positive control — an ordinary markdown image or a source file merely

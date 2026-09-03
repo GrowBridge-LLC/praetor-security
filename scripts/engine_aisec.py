@@ -291,8 +291,25 @@ INJECTION = [
      Severity.MEDIUM, Confidence.LOW, "PROMPT_INJECTION", "CWE-77", "LLM01: Prompt Injection",
      "Do not follow instructions embedded in scanned/tool-returned content."),
 
+    # 🔴 Added 2026-09-03 per references/audits/2026-09-02-aisec-competitor-survey.md
+    # (garak's detectors.dan): the original pattern caught the core PHRASING of a
+    # role hijack but not a full known jailbreak TEMPLATE pasted verbatim -- garak
+    # maintains a catalog of ~19 named DAN-family variants, each with its own
+    # literal output marker a successful jailbreak persona is expected to echo.
+    # Coverage-widening, not gap-closing: a template using generic phrasing was
+    # already caught above; this adds the two markers distinctive enough to be
+    # low-risk. ⚠️ Bare "STAN:"/"DUDE:"/"DAN:" speaker-label markers were
+    # DELIBERATELY NOT added: Stan and Dan are common first names and "dude:" is
+    # an ordinary chat opener, so a line-start match on any of them would fire on
+    # an ordinary meeting transcript or chat log -- exactly the "cries wolf on
+    # ordinary prose" failure this file's own homoglyph detector comment warns
+    # against. The two markers actually kept -- a bracketed all-caps jailbreak
+    # tag, and the 🔓-flag "Developer Mode" persona-announcement phrase below --
+    # carry no such ordinary meaning.
     ("prompt-injection-role-hijack", "Role/authority hijack",
-     re.compile(r"(?i)\b(you\s+are\s+now|from\s+now\s+on\s+you|act\s+as\s+(an?\s+)?(unrestricted|jailbroken|dan|developer\s+mode)|do\s+anything\s+now|pretend\s+you\s+have\s+no\s+(rules|restrictions))\b"),
+     re.compile(r"(?i)\b(you\s+are\s+now|from\s+now\s+on\s+you|act\s+as\s+(an?\s+)?(unrestricted|jailbroken|dan|developer\s+mode)|do\s+anything\s+now|pretend\s+you\s+have\s+no\s+(rules|restrictions))\b"
+                r"|\bDeveloper\s+Mode\s+(Output|Enabled|Response)\b"
+                r"|\[\s*JAILBREAK\s*\]"),
      Severity.HIGH, Confidence.MEDIUM, "PROMPT_INJECTION", "CWE-77", "LLM01: Prompt Injection",
      "Reject role-reassignment attempts originating from data/content."),
 
