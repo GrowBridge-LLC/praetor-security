@@ -12,6 +12,106 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Added — `model`, a fifth engine: serialized-model / pickle scanning
+
+`scripts/engine_model.py` disassembles pickle opcodes with
+`pickletools.genops()` and never calls `pickle.load`, so it stays inside
+PRAETOR's one invariant: the scanner does not execute, import, install or build
+what it reads. It covers `.pt` / `.pth` / `.ckpt` / `.pkl` / `.npy` / `.npz` /
+`.h5` / `.keras` / `.bin` / `.joblib` / `.dill`, including zip-wrapped
+containers and object-dtype numpy members.
+
+**What it means for detection:** a checkpoint that reconstructs itself by
+calling `os.system` is now reported before anyone loads it. Previously PRAETOR
+read such a file as binary and skipped it entirely.
+
+It uses its own binary-safe walk (`core.walk_files(mode="model")`,
+`core.read_bytes`) rather than the shared text walk, because a pickle byte
+stream cannot pass `read_text`'s UTF-8 decode contract. `_apply_inline_ignores`
+had no engine allowlist at all and would have called `read_text` on those bytes,
+polluting the text `unreadable` accumulator and degrading unrelated scans;
+`_BINARY_STREAM_ENGINES` now guards it.
+
+### Fixed — attack chains asserted relationships they had not measured
+
+`chains.correlate()` required only that both link predicates matched *somewhere*
+in the scanned tree. Run against this repository it composed the secrets
+engine's own redaction **template string** with this project's teaching example
+of an **inert comment**, and narrated the pair as "A real credential in the
+tree... Rotate the credential regardless."
+
+**What it means for detection:** in a repository of any size, two unrelated
+findings of two given categories co-occurring is close to certain — so the
+chain proved co-occurrence and then described it as composition, at HIGH.
+
+Chains now declare `same-file` or `same-tree`. A `same-file` chain fires per
+file and may exceed its links' severity, because co-location in one config is
+real evidence. A `same-tree` chain is capped at MEDIUM and worded as a prompt to
+look. The basis is printed in the report and carried in the JSON, so a reader
+can check the evidence the severity rests on. Link rows now show `confidence`
+alongside `severity`.
+
+### Fixed — four ways to hide something from a scan, each demonstrated live
+
+An adversarial audit built working fixtures for every item below and confirmed
+each with a positive control.
+
+- **A file over `--max-file-size` vanished with no record anywhere.** Padding a
+  source file past 3 MB hid it, and one remaining small file kept the whole-tree
+  floor quiet: the report read as a complete, fully-measured clean scan, exit 0,
+  over a live-shaped credential. The cap stays; the silence does not — see the
+  new coverage-cap table in `references/LIMITS.md`. The zero-files floor also
+  now outranks the findings check, because with zero files opened no finding can
+  be about the target's content.
+- **A hostile `.cursor/hooks.json` under `vendor/` was invisible to `aisec`** —
+  the one engine whose threat model is a malicious dependency planting agent
+  instructions. The byte-identical file at the repository root was correctly
+  reported HIGH; the only difference was a directory name the scanned tree
+  chose. `aisec` now takes a second walk admitting agent configs **by name**,
+  applied before `getsize()` and before the binary sniff, so it costs a
+  traversal rather than the 111,605 file opens that made an earlier unconditional
+  wide walk a measured mistake.
+- **A credential on a line padded past 4000 characters escaped every secrets
+  check.** The anchored provider and connection-string rules now run over long
+  lines in overlapping windows. The unanchored passes stay capped, because they
+  produce noise on minified assets rather than signal, and the coverage note now
+  states which of the two ran instead of claiming the line was skipped.
+- **base64 unwrapping recognised six hand-written marker strings**, so every
+  provider outside that list was invisible once wrapped. It now asks the
+  `PROVIDERS` table itself, so a provider added tomorrow is covered on the same
+  commit.
+
+Writing the test for that last item uncovered a further gap nobody had asked
+about: `B64BLOB` ends with `\b`, so the `=` padding is never captured, and the
+length check then discarded **every** blob whose plaintext length is not a
+multiple of three. The padding is restored rather than the input rejected.
+
+### Fixed — `chains` and `capability` would not have installed
+
+Both modules shipped without reaching `pyproject.toml`'s `py-modules`. The whole
+test suite stayed green because every test imports from the source tree; an
+installed wheel raises `ImportError` on the first scan.
+`tests/test_packaging_declares_every_module.py` now walks the import graph from
+the CLI entry point rather than trusting a hand-kept list.
+
+### Changed — capability profile reports severity, and stops missing an auto-run primitive
+
+`executes_on_load` keyed only on `category == "DANGEROUS_HOOK"`, so
+`npm-lifecycle-exec` — the most unconditional auto-run primitive in the rule set,
+no config gate and no matching event — raised no capability at all. It is now
+enumerated by rule id, deliberately not by widening to `category ==
+"SUPPLY_CHAIN"`, which also holds vulnerable-dependency findings that do not
+execute on load.
+
+Evidence now splits into production and test/example paths — marked, never
+dropped — and the summary line leads with the worst severity present rather than
+listing dimensions in a fixed order.
+
+### Added — `schema_version` 4.1
+
+Two additive top-level JSON keys, `chains` and `capability_profile`. MINOR: a
+4.0 consumer keeps working and ignores them. See README's schema-version table.
+
 ### Added — `_scan_mcp` Rust port + its differential-testing infrastructure (no detection change)
 
 Engineering progress, not a detection change — the live Python `aisec` engine

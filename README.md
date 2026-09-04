@@ -174,6 +174,34 @@ some findings or none. If your integration reads the report and decides anything
 the exit code or the finding count alone. (`--fail-on` closes this specific gap for you automatically,
 by turning any blind spot into exit `3` — but only if you pass it.)
 
+### schema_version 4.1 — two additive report sections
+
+MINOR, not major, and the distinction is the point: nothing was renamed, removed
+or re-typed. A 4.0 consumer keeps working and simply ignores two new top-level
+keys.
+
+- **`chains`** — an array of attack chains: findings that COMPOSE into one path.
+  Always present; an empty array means no chain matched, which (like an empty
+  findings list) is not a statement that the tree is safe. Each entry carries
+  `chain_id`, `title`, `severity`, `proximity`, `scope`, `why_it_composes`,
+  `what_to_verify`, and `links`.
+  🔴 **Read `proximity` before you act on `severity`.** `same-file` means both
+  links came from one file — real evidence of composition. `same-tree` means only
+  that both appeared somewhere in the scan, which in a large repository is close
+  to certain; those chains are capped at MEDIUM and are a prompt to look, not an
+  escalation. `scope` names the file (or says the whole tree).
+- **`capability_profile`** — one entry per capability dimension, answering "if I
+  open this repository in an agent right now, what have I authorised?" Each
+  carries `status` (`present` / `none` — **never** `safe`), `evidence_count`,
+  `production_evidence_count`, `test_or_example_evidence_count`,
+  `worst_severity`, and up to three `examples`.
+  ⚠️ It is computed from ACTIVE findings, so it inherits every miss they have. A
+  capability reported `none` means no rule matched one.
+
+Both sections only ADD. Neither suppresses, downgrades or re-buckets a finding,
+and neither changes an exit code. See `references/LIMITS.md` for what each one
+does not claim.
+
 ### schema_version 4.0 — a new SAST status word
 
 `meta.engines.sast.status` can now be `partial-parse`: semgrep ran, and every

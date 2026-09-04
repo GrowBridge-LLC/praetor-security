@@ -92,6 +92,76 @@ finding as a lead to verify, and every clean result as an incomplete negative.
   suppression.
 - New smuggling channels (novel invisible code points, steganographic encodings)
   beyond the covered set will be missed.
+- **Encoded payloads are decoded ONE level and rescanned.** A payload wrapped
+  twice - base64 of base64 - is not found. This is a bound, not an oversight:
+  following attacker-chosen nesting to an attacker-chosen depth is how a scanner
+  is made to spend an unbounded amount of time on one file. ROT13 and other
+  substitution ciphers are not attempted at all.
+- **Agent configs inside skipped directories are reached BY NAME.** A hostile
+  `.cursor/hooks.json` under `vendor/` or `node_modules/` is found, because
+  `engine_aisec.is_agent_config_path` names the shapes this engine recognises and
+  a second walk admits them. ⚠️ That is an ENUMERATION - agent hook configs, MCP
+  manifests, git hooks. A vendor spelling absent from those lists is still
+  invisible inside a skipped directory. The **prose** rules deliberately do not
+  run over vendored trees at all.
+
+## Attack chains (the `chains` report section)
+
+- **A chain is a hypothesis, never a demonstrated exploit.** It says these
+  findings could compose into this path; go verify. It does not assert the path
+  is reachable, that the injected text will be read, or that the hook will fire.
+- **Read the `basis` line, because it is the evidence the severity rests on.**
+  `same-file` means both links come from one file, which is real evidence of
+  composition. `same-tree` means only that both appear somewhere in the scan -
+  weak evidence, and those chains are capped at MEDIUM for exactly that reason.
+- 🔴 **Tree-wide co-occurrence is close to certain in any large repository.** An
+  earlier version required only that, and produced a confident, entirely false
+  HIGH chain on this repository's own tree. If a `same-tree` chain looks
+  compelling, that feeling is the thing to distrust.
+- ⚠️ **Every chain today has exactly TWO links.** The correlator walks a chain's
+  link list generically, so an N-link chain needs only a table entry - but none
+  exists. A three-way composition is reported as its separate two-link parts,
+  never as one finding.
+- **Chains are computed over ACTIVE findings only** and can only ADD a section.
+  Nothing here suppresses, downgrades or re-buckets a finding. A filtered finding
+  cannot form a link.
+
+## Agent capability profile (the `capability_profile` report section)
+
+- **A capability reads PRESENT or `none`, never SAFE.** `none` means no rule
+  matched it - the same claim PRAETOR makes everywhere else. A profile with every
+  dimension at `none` is not a clean bill of health.
+- **The profile inherits every limit of the findings it reads.** It is computed
+  from active findings, so an engine that missed something reports a capability as
+  absent that is present. A breaker audit demonstrated exactly that: a secrets
+  miss propagated straight into `holds_credentials: none` on a tree holding a
+  credential.
+- **Evidence is split into production and test/example paths, and neither is
+  dropped.** A capability evidenced only by fixtures is still reported, marked.
+  Suppressing it would be suppression on PATH ALONE, which this project forbids.
+- ⚠️ **`executes_on_load` covers `DANGEROUS_HOOK` plus a hand-kept list of rule
+  ids** (today: `npm-lifecycle-exec`). A future rule describing install-time or
+  load-time execution must be added by hand. Nothing enforces that.
+
+## Coverage caps, and what each one discloses
+
+Every cap below reports itself. That is deliberate: a cap the operator can see is
+a decision, and a cap nobody records is a blind spot. A breaker audit found the
+one that did not report and turned it into a clean scan over a live-shaped
+credential.
+
+| Cap | What it drops | How it discloses |
+|---|---|---|
+| `--max-file-size` (3 MB) | the whole file, every engine | `file-too-large-skipped` finding + `meta.scope.oversize_files` |
+| 4000-char line | the UNANCHORED secrets passes only; provider and connection-string rules still run in overlapping windows | `secrets-long-line-skip` finding, naming which passes ran |
+| decode depth 1 | anything wrapped more than once | stated here; no per-file finding |
+| `--exclude`, skip dirs | matching paths | `meta.scope.skipped_dirs`, `excluded_by_pattern` |
+
+⚠️ These disclosures are reported at INFO in the COVERAGE category. They do NOT
+gate. A repository with a large asset has done nothing wrong, and a cap that
+failed builds would be switched off - which is worse than one that reports.
+Gating on reduced coverage is the operator's decision; `--allow-degraded` and
+`--fail-on INFO` exist for it.
 
 ## False positives and false negatives
 
