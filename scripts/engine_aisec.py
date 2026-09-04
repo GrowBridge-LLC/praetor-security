@@ -19,16 +19,23 @@ and secret scanners do not model:
                            scripts that execute on load or install.
   E. SAFETY BYPASS         instructions telling an agent to disable safety,
                            auto-approve, skip review, or escalate privileges.
+  F. ENCODED PAYLOAD       base64/hex/URL-encoded instruction-override or
+                           exfiltration payloads that plaintext matching alone
+                           misses -- decoded one level and rescanned against
+                           A and C's own rule tables.
 
 Mapped to the OWASP Top 10 for LLM Applications and to CWE where applicable.
 """
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import re
 import unicodedata
+import urllib.parse
 
 from core import Finding, Severity, Confidence, split_lines, GIT_HOOK_NAMES
 
@@ -391,6 +398,166 @@ EXFIL = [
 ]
 
 # --------------------------------------------------------------------------- #
+# F. Encoded payload (decode-then-rescan)
+# --------------------------------------------------------------------------- #
+#
+# INJECTION and EXFIL above match plaintext only. An attacker who base64/hex/
+# URL-encodes the same instruction defeats every rule in both tables with zero
+# extra effort -- garak's probes.encoding module tests this exact evasion class.
+#
+# Deliberately bounded, on both axes, because an earlier engine in this repo
+# hung ~244s on an unbounded pass over one file (see project memory: "the hang
+# had no exit code"). Every cap here is disclosed via a COVERAGE finding when
+# it's hit, never a silent truncation:
+#   - decode depth is exactly 1 -- the decoded text is rescanned once, its
+#     output is NEVER fed back in for a second decode pass. No recursion, so
+#     there is no exponential-blowup or infinite-loop shape to hang on.
+#   - a candidate blob must be 40-4000 chars (the upper bound is the same
+#     order of magnitude as the existing 6000-char per-line cap below).
+#   - at most 200 candidates and 200,000 decoded bytes are processed per file;
+#     the rest are counted and disclosed, not silently dropped.
+#
+# ROT13 is a known, disclosed gap, not an oversight: unlike base64/hex/URL
+# encoding, ROT13 output uses the same alphabet as ordinary prose, so there is
+# no cheap way to pick out "candidate" substrings the way _B64_CANDIDATE etc.
+# do below -- catching it would mean rot13-decoding and rescanning EVERY line
+# of EVERY file, roughly doubling this engine's total regex cost estate-wide
+# for a rarely-used real-world evasion. Revisit as its own scoped decision,
+# not folded in here under a different design's cost budget.
+_DECODE_CANDIDATE_MIN = 40
+_DECODE_CANDIDATE_MAX = 4000
+_DECODE_MAX_CANDIDATES_PER_FILE = 200
+_DECODE_MAX_BYTES_PER_FILE = 200_000
+
+_B64_CANDIDATE = re.compile(r"[A-Za-z0-9+/]{" + str(_DECODE_CANDIDATE_MIN) + "," + str(_DECODE_CANDIDATE_MAX) + r"}={0,2}")
+_HEX_CANDIDATE = re.compile(r"(?:[0-9a-fA-F]{2}){" + str(_DECODE_CANDIDATE_MIN // 2) + "," + str(_DECODE_CANDIDATE_MAX // 2) + r"}")
+
+# URL-encoding gets a different candidate shape than base64/hex: a realistic
+# evasion percent-encodes only what it needs to (spaces, punctuation) to break
+# a plaintext regex's \s+/word-boundary assumptions, leaving letters literal
+# -- so "10+ %XX groups back to back" (what base64/hex use) almost never
+# matches real quote()-style output. Count %XX occurrences anywhere in the
+# line instead, and decode the whole line once past a minimum count.
+_URLENC_GROUP = re.compile(r"%[0-9a-fA-F]{2}")
+# 3, not a round higher number: quote()'s default only escapes spaces and a
+# handful of punctuation characters, so a short realistic injection phrase
+# (e.g. a 4-word imperative -- 3 spaces) already sits right at this floor.
+# Ordinary code/config with an incidental %XX or two (a single encoded query
+# param) stays below it.
+_URLENC_MIN_GROUPS = 3
+
+
+def _decode_base64(s: str):
+    try:
+        pad = (-len(s)) % 4
+        raw = base64.b64decode(s + ("=" * pad), validate=True)
+        return raw.decode("utf-8", errors="strict")
+    except Exception:
+        return None
+
+
+def _decode_hex(s: str):
+    try:
+        raw = binascii.unhexlify(s)
+        return raw.decode("utf-8", errors="strict")
+    except Exception:
+        return None
+
+
+def _decode_urlenc(s: str):
+    try:
+        out = urllib.parse.unquote(s, errors="strict")
+        return out if out != s else None  # unquote() never raises on a plain string; require it to have actually changed
+    except Exception:
+        return None
+
+
+def _emit_decoded_findings(findings, rel, i, encoding_name, raw_form, decoded):
+    for group in (INJECTION, EXFIL):
+        for rule_id, title, rx, sev, conf, cat, cwe, owasp, fix in group:
+            if rx.search(decoded):
+                findings.append(Finding(
+                    engine="aisec", rule_id=rule_id + "-decoded", title=title + f" (inside {encoding_name}-decoded content)",
+                    severity=sev, confidence=conf, file=rel, line=i, category=cat,
+                    description=title + f". Not visible in plaintext -- only appears after decoding a {encoding_name} blob on this line.",
+                    snippet=(raw_form[:80] + " -> " + decoded.strip()[:120])[:200],
+                    fix=fix, cwe=cwe, owasp=owasp, references=[REF_LLM],
+                ))
+
+
+def _scan_decoded(text: str, rel: str) -> list:
+    """Decode-then-rescan: find candidate encoded blobs, decode exactly one
+    level, and re-run INJECTION/EXFIL against the decoded text. Bounded on
+    every axis above; see the module comment for why."""
+    findings: list = []
+    lines = split_lines(text)
+    candidates = 0
+    decoded_bytes = 0
+    budget_exceeded = False
+    seen = set()  # (line, start, end, encoding) -- encoding is part of the key so
+                  # base64 and hex, which share most of their alphabet, don't block
+                  # each other out on an identical span.
+
+    for i, line in enumerate(lines, start=1):
+        if len(line) > 6000:
+            continue  # already disclosed by aisec-long-line-skip in scan()
+
+        for pattern, decoder, encoding_name in (
+            (_B64_CANDIDATE, _decode_base64, "base64"),
+            (_HEX_CANDIDATE, _decode_hex, "hex"),
+        ):
+            for m in pattern.finditer(line):
+                key = (i, m.start(), m.end(), encoding_name)
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                if candidates >= _DECODE_MAX_CANDIDATES_PER_FILE or decoded_bytes >= _DECODE_MAX_BYTES_PER_FILE:
+                    budget_exceeded = True
+                    continue
+                candidates += 1
+
+                blob = m.group(0)
+                decoded = decoder(blob)
+                if not decoded:
+                    continue
+                decoded_bytes += len(decoded)
+                _emit_decoded_findings(findings, rel, i, encoding_name, blob, decoded)
+
+        # URL-encoding: whole-line, count-gated (see the constant's own comment
+        # for why this can't be a contiguous-span candidate like base64/hex).
+        if len(_URLENC_GROUP.findall(line)) >= _URLENC_MIN_GROUPS:
+            key = (i, 0, len(line), "url-encoded")
+            if key not in seen:
+                seen.add(key)
+                if candidates >= _DECODE_MAX_CANDIDATES_PER_FILE or decoded_bytes >= _DECODE_MAX_BYTES_PER_FILE:
+                    budget_exceeded = True
+                else:
+                    candidates += 1
+                    decoded = _decode_urlenc(line)
+                    if decoded:
+                        decoded_bytes += len(decoded)
+                        _emit_decoded_findings(findings, rel, i, "url-encoded", line, decoded)
+
+    if budget_exceeded:
+        findings.append(Finding(
+            engine="aisec", rule_id="aisec-decode-budget-exceeded",
+            title="Decode-then-rescan coverage limited by per-file budget",
+            severity=Severity.INFO, confidence=Confidence.HIGH,
+            file=rel, line=1, category="COVERAGE",
+            description=(
+                f"This file had more than {_DECODE_MAX_CANDIDATES_PER_FILE} candidate encoded "
+                f"blobs or exceeded {_DECODE_MAX_BYTES_PER_FILE} decoded bytes; the remainder "
+                "were not decoded or rescanned."
+            ),
+            snippet=f"candidates_processed={candidates}; decoded_bytes={decoded_bytes}",
+            fix="Split the file, or narrow --exclude, to bring it under the decode budget.",
+            references=[REF_LLM],
+        ))
+    return findings
+
+
+# --------------------------------------------------------------------------- #
 # D. Dangerous hooks & supply-chain lifecycle scripts
 # --------------------------------------------------------------------------- #
 
@@ -721,6 +888,7 @@ def scan(scan_files, read_text) -> list:
         findings.extend(_scan_html_comments(text, rel))
         findings.extend(_scan_hooks(text, rel))
         findings.extend(_scan_mcp(text, rel))
+        findings.extend(_scan_decoded(text, rel))
 
         lines = split_lines(text)
         skipped = 0

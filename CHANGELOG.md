@@ -17,7 +17,7 @@ Because PRAETOR is a security scanner, entries say what a change means for
 `references/audits/2026-09-02-aisec-competitor-survey.md` researched AI-security
 and agentic-threat scanners (garak, llm-guard, modelscan, Lakera's PINT
 benchmark, Semgrep's AI-focused registry packs) for techniques PRAETOR's
-aisec/sast engines had no equivalent for. Four landed here, each verified
+aisec/sast engines had no equivalent for. Five landed here, each verified
 against PRAETOR's actual current rule tables before building — not assumed
 from the research alone:
 
@@ -46,6 +46,17 @@ from the research alone:
   Deliberately does NOT add bare speaker-label markers for the other common
   DAN-family names — both are ordinary first names and would fire on routine
   chat transcripts; see the comment at the rule site.
+- **Decode-then-rescan** (aisec, category F, new). Base64/hex/URL-encoded
+  instruction-override or exfiltration payloads defeat every plaintext
+  `INJECTION`/`EXFIL` rule with zero extra attacker effort — garak's
+  `probes.encoding` tests this exact evasion class. Candidate blobs are
+  decoded exactly one level (no recursion — an earlier engine in this repo
+  hung on an unbounded pass, see project memory) and rescanned against the
+  same rule tables; bounded on candidate count (200/file) and decoded bytes
+  (200KB/file), with a disclosed `aisec-decode-budget-exceeded` COVERAGE
+  finding when either cap is hit, never a silent drop. ROT13 is a stated,
+  deliberate gap, not an oversight — see the module comment on why it can't
+  share this design's cost budget.
 
 Each new detector's own false-positive control is in the same test as its
 positive control — an ordinary markdown image or a source file merely
