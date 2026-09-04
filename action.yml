@@ -1,0 +1,126 @@
+name: PRAETOR
+description: >-
+  Multi-engine static security scan (SAST, secrets, SCA, AI-security). Reads,
+  never runs the code it scans.
+author: GrowBridge-LLC
+branding:
+  icon: shield
+  color: red
+
+inputs:
+  target:
+    description: File or directory to scan, relative to the repo root.
+    required: false
+    default: "."
+  engines:
+    description: Comma-separated engine list, or "all".
+    required: false
+    default: "all"
+  format:
+    description: Report format (text, json, or both).
+    required: false
+    default: "both"
+  fail-on:
+    description: >-
+      Minimum severity that makes the action fail (INFO, LOW, MEDIUM, HIGH,
+      CRITICAL). Leave empty to never fail on findings alone.
+    required: false
+    default: ""
+  min-severity:
+    description: Minimum severity to include in the report at all.
+    required: false
+    default: "INFO"
+  allow-degraded:
+    description: >-
+      Allow a "true" exit even when an engine could not run. PRAETOR's own
+      default is to refuse this — only set true if you understand the gap it
+      opens (a blind engine reporting as if it were clean).
+    required: false
+    default: "false"
+  exclude:
+    description: >-
+      Newline- or comma-separated path-regex excludes, forwarded as repeated
+      --exclude flags.
+    required: false
+    default: ""
+  praetor-version:
+    description: >-
+      Version constraint for the praetor-security PyPI package (e.g. "==1.0.1"
+      or ">=1.0.0"). Empty installs the latest release.
+    required: false
+    default: ""
+  python-version:
+    description: Python version to run PRAETOR under.
+    required: false
+    default: "3.14"
+
+outputs:
+  exit-code:
+    description: PRAETOR's own process exit code.
+    value: ${{ steps.scan.outputs.exit-code }}
+  report-json:
+    description: Path to the JSON report, when format includes json/both.
+    value: ${{ steps.scan.outputs.report-json }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # Only needed if the calling workflow didn't already check out the repo
+      # itself. Safe to run twice — actions/checkout no-ops on a clean tree it
+      # already produced.
+
+    - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install PRAETOR
+      shell: bash
+      run: |
+        set -euo pipefail
+        spec="praetor-security[sast,sca]${{ inputs.praetor-version }}"
+        pip install "$spec"
+
+    - name: Run PRAETOR
+      id: scan
+      shell: bash
+      run: |
+        set -uo pipefail  # not -e: PRAETOR's own exit code is the signal, not a shell failure
+
+        args=("${{ inputs.target }}" --format "${{ inputs.format }}" \
+              --engines "${{ inputs.engines }}" --min-severity "${{ inputs.min-severity }}" \
+              --out "${GITHUB_WORKSPACE}/praetor-report")
+
+        if [ -n "${{ inputs.fail-on }}" ]; then
+          args+=(--fail-on "${{ inputs.fail-on }}")
+        fi
+        if [ "${{ inputs.allow-degraded }}" = "true" ]; then
+          args+=(--allow-degraded)
+        fi
+        if [ -n "${{ inputs.exclude }}" ]; then
+          # accept comma- or newline-separated, forward each as its own --exclude
+          IFS=$',\n' read -r -a excludes <<< "${{ inputs.exclude }}"
+          for pat in "${excludes[@]}"; do
+            [ -n "$pat" ] && args+=(--exclude "$pat")
+          done
+        fi
+
+        set +e
+        praetor "${args[@]}"
+        code=$?
+        set -e
+
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        if [ -f "${GITHUB_WORKSPACE}/praetor-report/praetor-report.json" ]; then
+          echo "report-json=${GITHUB_WORKSPACE}/praetor-report/praetor-report.json" >> "$GITHUB_OUTPUT"
+        fi
+        if [ -f "${GITHUB_WORKSPACE}/praetor-report/praetor-report.txt" ]; then
+          {
+            echo '## PRAETOR scan'
+            echo '```'
+            cat "${GITHUB_WORKSPACE}/praetor-report/praetor-report.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+        exit "$code"

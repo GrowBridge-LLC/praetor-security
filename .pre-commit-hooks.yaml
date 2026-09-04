@@ -1,0 +1,54 @@
+# PRAETOR pre-commit hook definitions.
+#
+# Add to a repo's own .pre-commit-config.yaml:
+#
+#   - repo: https://github.com/GrowBridge-LLC/praetor-security
+#     rev: vX.Y.Z   # pin to a released tag
+#     hooks:
+#       - id: praetor
+#
+# `language: python` means pre-commit installs this package into its own
+# isolated venv via the `praetor` console-script entry point already declared
+# in pyproject.toml ([project.scripts]) -- the same mechanism detect-secrets
+# uses, not a wrapper script.
+#
+# A bare install pulls only PRAETOR's stdlib-only engines (secrets, aisec) --
+# it has zero required runtime dependencies by design. SAST and SCA need
+# their optional extras, which a caller opts into explicitly:
+#
+#   - repo: https://github.com/GrowBridge-LLC/praetor-security
+#     rev: vX.Y.Z
+#     hooks:
+#       - id: praetor
+#         additional_dependencies: ["semgrep", "pip-audit"]
+#         args: ["--engines", "all"]
+#
+# The default hook below runs a fast, secrets-only, HIGH-and-above profile --
+# sized for every commit, the same class of tool as gitleaks/detect-secrets.
+# Use `praetor-full` (also defined here) as a heavier pre-push stage instead
+# of overriding args on every repo that wants full coverage.
+
+- id: praetor
+  name: PRAETOR (secrets, fast)
+  description: >-
+    Fast secrets-only PRAETOR scan, sized for every commit. Add
+    additional_dependencies and override args for full SAST/SCA/AI-security
+    coverage -- see praetor-full below, or this file's own header comment.
+  entry: praetor
+  language: python
+  types: [text]
+  pass_filenames: false
+  args: ["--engines", "secrets", "--fail-on", "HIGH"]
+
+- id: praetor-full
+  name: PRAETOR (all engines)
+  description: >-
+    Full PRAETOR scan across all four engines. Needs semgrep/pip-audit
+    installed via additional_dependencies to actually run sast/sca -- without
+    them those two engines report "unavailable" honestly rather than silently
+    passing. Sized for a pre-push stage, not every commit.
+  entry: praetor
+  language: python
+  types: [text]
+  pass_filenames: false
+  args: ["--engines", "all", "--fail-on", "HIGH"]

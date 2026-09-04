@@ -1,0 +1,99 @@
+name: Publish to PyPI
+
+# Fires only on a version tag (e.g. v1.0.1), never on an ordinary push -- a
+# release is a deliberate, human-triggered act (`git tag vX.Y.Z && git push
+# origin vX.Y.Z`), not something that happens as a side effect of merging.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5
+        with:
+          python-version: "3.14"
+
+      - name: Build wheel and sdist
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+
+      # PRAETOR's bundled ruleset ships via [tool.setuptools.data-files], not
+      # package-data, because this project ships flat py-modules rather than a
+      # real package -- package-data only attaches to a package and produced a
+      # wheel with no rules in it the one time it was tried. data-files installs
+      # relative to sys.prefix, which is a genuinely different code path in some
+      # install schemes (isolated build environments, user installs) than a
+      # straight `pip install` into a checkout. Prove the built wheel actually
+      # carries the rules before anything gets published, in a venv that has
+      # never seen this source tree -- catches "reports zero SAST findings once
+      # actually installed from PyPI" before it ships, not after.
+      - name: Verify the bundled ruleset survives a real wheel install
+        run: |
+          python -m venv /tmp/praetor-install-check
+          /tmp/praetor-install-check/bin/pip install dist/*.whl
+          cd /tmp
+          /tmp/praetor-install-check/bin/praetor --no-registry --version
+          /tmp/praetor-install-check/bin/python -c "
+          import subprocess, sys
+          out = subprocess.run(
+              [sys.executable.replace('python', 'praetor'), '--no-registry', '--format', 'json', '--out', '/tmp/praetor-install-check-report', str('.')],
+              cwd='/tmp', capture_output=True, text=True,
+          )
+          import json, pathlib
+          report = json.loads(pathlib.Path('/tmp/praetor-install-check-report/praetor-report.json').read_text())
+          engines = report.get('meta', {}).get('engines', {})
+          sast = engines.get('sast', {})
+          assert sast.get('status') != 'unavailable', f'SAST engine reports unavailable from an installed wheel -- bundled ruleset did not survive install: {sast}'
+          print('bundled ruleset found from installed wheel:', sast)
+          "
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  # Gated behind the "pypi" GitHub Environment -- configure it in the repo's
+  # own Settings > Environments with required reviewers before this job can
+  # ever run for real. That adds a manual approval step in front of an
+  # irreversible action (a PyPI release can be yanked but never truly undone),
+  # matching this repo's general posture toward destructive/irreversible ops.
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/praetor-security/
+    permissions:
+      # id-token: write is the ONLY permission this job needs -- it is what
+      # lets pypa/gh-action-pypi-publish exchange this workflow run's OIDC
+      # token for a short-lived PyPI upload token. No stored username,
+      # password, or API token anywhere in this repo or its secrets.
+      id-token: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+
+      # Pinned by commit SHA (v1.14.2, resolved 2026-09-04 via
+      # `gh api repos/pypa/gh-action-pypi-publish/releases/latest`), matching
+      # how invariants.yml already pins actions/checkout and
+      # actions/setup-python -- a floating tag on a publish step is exactly
+      # the kind of supply-chain surface this project's own scanner exists to
+      # flag in *other* people's workflows.
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
