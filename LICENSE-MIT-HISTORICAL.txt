@@ -1,0 +1,35 @@
+PRAETOR was released under the MIT License until 2026-09-04. On that date the
+project relicensed to the GNU Affero General Public License, version 3 (see
+LICENSE).
+
+⚠️ THIS FILE IS NOT DEAD TEXT. A licence change is not retroactive. Every commit
+published before the relicensing remains available under the MIT terms below,
+and anyone who obtained a copy under them keeps those rights permanently. This
+file is kept so that fact stays checkable rather than resting on someone's
+memory of it.
+
+The last MIT-licensed commit is 5f8f74e.
+
+----------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2026 The PRAETOR Authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

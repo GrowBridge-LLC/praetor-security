@@ -357,4 +357,25 @@ Rationale, conditions and the counter-argument that lost:
 
 ## License
 
-MIT - see [`LICENSE`](LICENSE).
+**GNU Affero General Public License, version 3** - see [`LICENSE`](LICENSE).
+
+PRAETOR was MIT-licensed until 2026-09-04. What that means for you:
+
+- **Using PRAETOR to scan your code changes nothing.** Running a scanner over
+  your repository, in a terminal or in CI, does not make your repository a
+  derivative work. Scan whatever you like, including proprietary code.
+- **Modifying PRAETOR and running it as a network service** does trigger the
+  AGPL's section 13: your users must be able to get your modified source.
+- **A licence change is not retroactive.** Every commit published before the
+  change stays available under MIT, and anyone who obtained a copy under those
+  terms keeps them permanently. The MIT text and the last MIT commit are
+  recorded in [`LICENSE-MIT-HISTORICAL.txt`](LICENSE-MIT-HISTORICAL.txt) so that
+  is checkable rather than remembered.
+- ⚠️ **Some organisations prohibit AGPL software internally.** That is a real
+  cost of this choice, stated here rather than discovered later.
+
+**The frontier capabilities are in the open-source core, not held back.**
+Attack-chain correlation, the agent capability profile and serialized-model
+scanning all ship here, under this licence, with no cap and nothing phoning
+home. They are the reason to choose PRAETOR, and they cannot be that if you
+cannot see them work.

@@ -12,6 +12,24 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Changed — licence is now AGPL-3.0 (was MIT)
+
+`LICENSE` is the verbatim GNU Affero General Public License, version 3.
+
+**What it means for detection: nothing.** No rule, threshold or engine changes,
+and running PRAETOR over your own code — proprietary or not, in a terminal or in
+CI — does not make your repository a derivative work. The clause that bites is
+section 13: modify PRAETOR and run it as a network service, and your users must
+be able to get your modified source.
+
+⚠️ **Not retroactive.** Every commit published before this stays available under
+MIT, and anyone who obtained a copy under those terms keeps them permanently.
+The MIT text and the last MIT commit are preserved in
+`LICENSE-MIT-HISTORICAL.txt` so that stays checkable rather than remembered.
+
+⚠️ **Some organisations prohibit AGPL software internally.** That is a real cost
+of the choice and it is stated in the README rather than left to be discovered.
+
 ### Added — `model`, a fifth engine: serialized-model / pickle scanning
 
 `scripts/engine_model.py` disassembles pickle opcodes with
