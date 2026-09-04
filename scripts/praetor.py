@@ -585,6 +585,154 @@ def _span_is_quoted(line: str, start: int, end: int) -> bool:
     return bool(_EXEMPLAR_QUOTED.search(before) and _EXEMPLAR_QUOTED.search(after))
 
 
+# --------------------------------------------------------------------------- #
+# Prohibition suppression (A3) -- prose that FORBIDS the thing it names
+# --------------------------------------------------------------------------- #
+#
+# 🔴 THE PROBLEM, MEASURED IN A SECOND REPOSITORY. A team documenting these very
+# false positives found that WRITING THE REPORT PRODUCED FIVE MORE OF THEM: the
+# document quoted the four offending lines so a reader could see them, and the
+# next scan went from 5 findings to 10, all five new ones inside the report. They
+# rewrote it to DESCRIBE each line instead of reproducing it and it went back to
+# 5. Measured, both directions.
+#
+# Their conclusion is the one worth acting on: **the rules impose a cost on
+# documenting their own failures, and the cost lands hardest on whoever is trying
+# to fix them.** Every one of their five is a comment that PROHIBITS the thing
+# detected -- including one warning that a scanner flags this exact prohibition,
+# and one that is a detector's own docstring defining the category it detects.
+#
+# 🔴 THE OBVIOUS FIX IS A VULNERABILITY, exactly as it was for quoting. "Suppress
+# when the line contains a negation" hands an attacker a suppression primitive:
+# prefix the payload with "Never" and the scanner goes quiet. The attacker writes
+# the whole line.
+#
+# So BOTH must hold, and neither is sufficient alone:
+#   1. the match sits in a COMMENT or DOCSTRING -- prose the file's author wrote,
+#      not a string that arrived as data; AND
+#   2. a prohibition token IMMEDIATELY GOVERNS the matched span -- within a short
+#      window ending where the match begins, not merely somewhere on the line.
+#
+# (2) is the load-bearing half and adjacency is what makes it so. A line that
+# forbids something and then does it -- a line reading "never use <flag>; for
+# deploys use <flag>" -- still fires on the SECOND occurrence, because no
+# prohibition governs it.
+#
+# (The flag is written as <flag> rather than spelled out. Spelled out, this
+# comment is itself a finding in PRAETOR's own self-scan -- the documentation
+# tax this pass exists to reduce, charged to the file that implements it.)
+# `test_a_prohibition_does_not_cover_a_later_live_instruction` holds that open.
+#
+# ⚠️ SCOPED TO SAFETY_BYPASS. Not to PROMPT_INJECTION, which has its own narrower
+# guard above, and not to anything behavioural, which lexical context already
+# handles. Widening this to another category needs its own argument.
+#
+# Fails SAFE like every other pass here: anything unproven is KEPT, and what is
+# suppressed moves to the filtered bucket with this reason attached.
+
+#: How far back from the match a prohibition may sit and still govern it.
+#: Deliberately short. "Never use X" and "do not pass X" fit; a prohibition three
+#: clauses earlier in the same sentence does not, because by then the line may
+#: have turned into an instruction again.
+_PROHIBITION_WINDOW = 40
+
+#: Tokens whose grammatical effect is to FORBID, REFUSE or REPORT the thing that
+#: follows them, rather than to ask for it.
+#:
+#: The last group -- flags/detects/reports/warns -- covers the case a second
+#: repository measured directly: a comment saying a scanner FLAGS a phrase is
+#: describing the detector, not issuing the instruction. One of their findings
+#: was a test comment anticipating this very false positive, flagged by it.
+_PROHIBITION_WORDS = (
+    r"never|do not|don't|must not|must never|cannot|can't|may not|"
+    r"forbidden|prohibited|disallowed|not allowed|refuses?|refused|rejects?|"
+    r"rejected|blocks?|blocked|prevents?|prevented|guards? against|"
+    r"without|instead of|rather than|no longer|skips? every|"
+    r"flags?|flagged|flagging|detects?|detected|reports?|warns? about"
+)
+
+_PROHIBITION = re.compile(
+    r"(?i)\b(" + _PROHIBITION_WORDS + r")\b[^.\n]{0,%d}$" % _PROHIBITION_WINDOW
+)
+
+_PROHIBITION_REASON = (
+    "the matched phrase is GOVERNED BY A PROHIBITION in the file's own prose "
+    "(a comment or docstring forbidding, or describing a tool that flags, the "
+    "thing named) -- documentation of the rule, not an instruction to follow it"
+)
+
+
+def _prohibition_governs(line: str, start: int) -> bool:
+    """True when a prohibition token sits immediately before the matched span.
+
+    Adjacency, not mere presence on the line. The window ends exactly where the
+    match begins, so a prohibition that has already been discharged earlier in
+    the line cannot cover a later live instruction.
+    """
+    return bool(_PROHIBITION.search(line[:start]))
+
+
+def _apply_prohibition(findings, target, read_text):
+    """Suppress SAFETY_BYPASS matches that the file's own prose forbids.
+
+    Both conditions must hold -- author's prose AND an adjacent prohibition. See
+    the comment block above for why either alone is a suppression primitive.
+    """
+    source_cache: dict = {}
+    label_cache: dict = {}
+    by_id = {rid: rx for rid, _t, rx, *_rest in engine_aisec.INJECTION}
+    for f in findings:
+        if getattr(f, "filtered", False) or f.engine not in _LEXCTX_ENGINES:
+            continue
+        if getattr(f, "category", "") != "SAFETY_BYPASS":
+            continue
+        if not f.file or f.line <= 0:
+            continue
+        rx = by_id.get(f.rule_id)
+        if rx is None:
+            continue
+        ap = _finding_source_path(target, f.file)
+        if ap not in source_cache:
+            source_cache[ap] = read_text(ap) or ""
+        text = source_cache[ap]
+        lines = core.split_lines(text)
+        if f.line > len(lines):
+            continue                      # unreadable / shifted -> KEEP
+        line = lines[f.line - 1]
+
+        # Condition 1: the file's own prose, not data.
+        key = (ap, f.file)
+        if key not in label_cache:
+            label_cache[key] = lexctx.classify_lines(text, f.file)
+        labels = label_cache[key]
+        if f.line > len(labels):
+            continue
+        if labels[f.line - 1] not in (lexctx.COMMENT, lexctx.DOCSTRING):
+            continue                      # live code or data -> KEEP
+
+        # Condition 2: a prohibition governs EVERY occurrence on the line.
+        #
+        # 🔴 `finditer`, NOT `search`, AND THE FIRST VERSION USED `search`. A
+        # finding is recorded per LINE, so testing only the first match let a
+        # single line carry a governed occurrence and an ungoverned one and be
+        # suppressed on the strength of the first:
+        #
+        #     a comment that forbids <flag> and then, after a semicolon,
+        #     tells the reader to use <flag> for deploys
+        #
+        # That is a suppression primitive the attacker writes, which is the exact
+        # shape of the quoting bypass this project already fixed once. If ANY
+        # occurrence on the line is ungoverned, the finding is KEPT.
+        matches = list(rx.finditer(line))
+        if not matches:
+            continue
+        if not all(_prohibition_governs(line, m.start()) for m in matches):
+            continue                      # any ungoverned occurrence -> KEEP
+
+        f.filtered = True
+        f.filter_reason = _PROHIBITION_REASON
+
+
 def _apply_injection_exemplar(findings, target, read_text):
     """Suppress injection matches that are quoted specimens inside a warning.
 
@@ -1091,6 +1239,7 @@ def main(argv=None):
     _apply_inline_ignores(all_findings, target, read_text)
     _apply_lexical_context(all_findings, target, read_text)
     _apply_injection_exemplar(all_findings, target, read_text)
+    _apply_prohibition(all_findings, target, read_text)
     _apply_reachability(all_findings, target, read_text)
 
     # -- interpretation -------------------------------------------------------

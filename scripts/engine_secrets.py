@@ -405,8 +405,8 @@ def _b64_unwrap_hit(blob: str) -> str:
     # Found by a test written for a DIFFERENT fix: the marker-list repair below
     # looked correct and was still returning nothing, because this check ran
     # first. Restore the padding instead of rejecting the input.
-    # 🔴 THE TRAILING `` WAS FIXED AND THE LEADING ONE WAS LEFT, so this was
-    # still wrong for a whole class of payloads. `B64BLOB` opens with `` too,
+    # 🔴 THE TRAILING `\b` WAS FIXED AND THE LEADING ONE WAS LEFT, so this was
+    # still wrong for a whole class of payloads. `B64BLOB` opens with `\b` too,
     # and `+` and `/` are not word characters -- so a blob whose first base64
     # character is one of them has that character dropped from the capture, and
     # everything after it decodes BYTE-MISALIGNED into noise. One prepended byte
