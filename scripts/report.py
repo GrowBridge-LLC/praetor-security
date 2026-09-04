@@ -224,11 +224,21 @@ def render_text(result: dict, meta: dict, redacted: bool = True) -> str:
         out.append("")
         for key, dim in prof.items():
             mark = "YES" if dim["status"] == "present" else " no"
-            count = f"  ({dim['evidence_count']} finding(s))" if dim["evidence_count"] else ""
+            count = ""
+            if dim["evidence_count"]:
+                # The split is shown, never subtracted. Twelve production
+                # configs and one test fixture used to render identically.
+                fixtures = dim.get("test_or_example_evidence_count", 0)
+                extra = f", {fixtures} in test/example paths" if fixtures else ""
+                count = (f"  [{dim['worst_severity']}] "
+                         f"({dim['evidence_count']} finding(s){extra})")
             out.append(f"  [{mark}] {key.replace('_', ' ')}{count}")
             if dim["status"] == "present":
                 for ex in dim["examples"]:
-                    out.append(f"          - {ex['rule_id']} @ {ex['file']}:{ex['line']}")
+                    out.append(
+                        f"          - {ex['severity']}/{ex['confidence']} "
+                        f"{ex['rule_id']} @ {ex['file']}:{ex['line']}"
+                    )
         out.append("")
         out.append("  A capability reads PRESENT or no -- never SAFE. 'no' means no rule")
         out.append("  matched it, which is not the same as the repository not having it.")
@@ -246,6 +256,11 @@ def render_text(result: dict, meta: dict, redacted: bool = True) -> str:
             out.append("")
             out.append(f"[C{idx}] {c['severity']}  {c['title']}")
             out.append(f"     chain   : {c['chain_id']}")
+            # Proximity and scope are printed because they ARE the evidence for
+            # the severity. "same-file" means the links share one file;
+            # "same-tree" means only that both appear somewhere in the scan. A
+            # reader who cannot tell those apart cannot check the claim.
+            out.append(f"     basis   : {c['proximity']} -- {c['scope']}")
             out.append(f"     why     : {c['why_it_composes']}")
             out.append(f"     verify  : {c['what_to_verify']}")
             for link in c["links"]:
@@ -254,8 +269,8 @@ def render_text(result: dict, meta: dict, redacted: bool = True) -> str:
                 out.append(f"     link    : {link['link']}{more}")
                 for ref in link["findings"]:
                     out.append(
-                        f"                - {ref['severity']} {ref['rule_id']} "
-                        f"@ {ref['file']}:{ref['line']}"
+                        f"                - {ref['severity']}/{ref['confidence']} "
+                        f"{ref['rule_id']} @ {ref['file']}:{ref['line']}"
                     )
 
     out.append("")

@@ -266,8 +266,8 @@ def engines_that_measured(engine_meta: dict) -> list:
     answer at all, and nothing was asking it -- so a scan in which EVERY engine
     was individually trustworthy and NONE of them ran was a clean bill of health.
 
-    Reached by `--engines ""`, which parses to the empty list: all four engines
-    become `disabled`, every one of them gate-trusted, and a tree containing a
+    Reached by `--engines ""`, which parses to the empty list: every engine
+    becomes `disabled`, every one of them gate-trusted, and a tree containing a
     live credential exits 0 under `--fail-on INFO`. A CI line reading
     `--engines "$ENGINES"` with the variable unset is a total silent false clean.
     Measured; an *invalid* engine name was correctly rejected with exit 2, so the
@@ -617,6 +617,40 @@ TEXT_NAMES = GIT_HOOK_NAMES | {
 
 DEFAULT_MAX_BYTES = 3_000_000  # 3 MB: skip huge minified bundles / data blobs
 
+#: Extensions admitted for MODEL-MODE candidacy (`mode="model"` on `_consider_file`
+#: / `walk_files`) -- walker-cheap, name-only, mirrors `scannable()`'s role for the
+#: text engines exactly. See references/DESIGN-model-scanning.md §1.3.
+#:
+#: `.bin` is deliberately included even though it is the least specific entry here
+#: (a raw tensor dump, a disk image, an ELF -- anything could be `.bin`). Excluding
+#: it would create a silent gap for one of the commonest real-world model-weight
+#: extensions; the ambiguity is resolved one layer up, by MAGIC BYTES, inside
+#: engine_model.py -- this set decides candidacy only, never format.
+#:
+#: `.safetensors` is admitted for a different reason: the engine needs to SEE the
+#: file in order to positively recognise it as safe-by-design and emit nothing,
+#: rather than never seeing it at all (indistinguishable from "we didn't get to
+#: it") or misclassifying it as unrecognized.
+MODEL_EXTS = {
+    ".pkl", ".pickle", ".pt", ".pth", ".ckpt", ".bin", ".joblib", ".dill",
+    ".npy", ".npz", ".h5", ".hdf5", ".keras", ".model", ".safetensors",
+}
+
+#: Walker-level sanity ceiling for model-mode admission, deliberately far larger
+#: than DEFAULT_MAX_BYTES. A real checkpoint's PICKLED OBJECT GRAPH is KB-scale;
+#: the multi-GB payload is raw tensor storage this design never opens (see
+#: engine_model.py's own internal, per-format byte/opcode bounds -- THOSE are the
+#: real scanning-cost controls, not this constant). This exists only to reject a
+#: pathological input (a sparse file, a device node), not to gate ordinary model
+#: files the way DEFAULT_MAX_BYTES gates ordinary text files.
+DEFAULT_MODEL_MAX_ADMIT_BYTES = 50 * 1024 ** 3  # 50 GB
+
+
+def model_candidate(name: str) -> bool:
+    """Extension-only admission check for model-mode candidacy. See MODEL_EXTS."""
+    _, ext = os.path.splitext(name.lower())
+    return ext in MODEL_EXTS
+
 
 def _binary_and_nul_in_sniff(path: str, sniff: int = 4096) -> tuple[bool, bool]:
     """
@@ -726,7 +760,8 @@ class ScanFile:
 
 
 def _consider_file(ap: str, rel: str, max_bytes: int, excludes: list,
-                    stats: Optional[dict]) -> Optional["ScanFile"]:
+                    stats: Optional[dict], mode: str = "text",
+                    admit=None) -> Optional["ScanFile"]:
     """The single per-file admission decision used by `walk_files()`'s
     directory-walk loop: symlink refusal, the exclude regex, the size cap,
     the binary/NUL sniff. Factored out so a future second file selector (a
@@ -735,6 +770,21 @@ def _consider_file(ap: str, rel: str, max_bytes: int, excludes: list,
     `references/audits/2026-08-13-scope-and-cost-research.md` §3 for why that
     matters and why it was not built: `git log 0930947` reverted an earlier
     attempt after it turned a real, gitignored credential into a false clean.
+
+    `mode` controls exactly two things, and NOTHING else -- see
+    references/DESIGN-model-scanning.md §1.2. Symlink refusal, the exclude
+    regex, and the `stats["excluded_by_pattern"]` bookkeeping stay ONE code
+    path for both modes, on purpose: a future change to exclude-matching or
+    symlink handling must change both candidate sets by construction, because
+    it changes the one function both call.
+
+      1. WHICH CANDIDACY PREDICATE decides admission -- `scannable()` for
+         mode="text" (unchanged), `model_candidate()` for mode="model".
+      2. WHETHER THE BINARY/NUL SNIFF FIRES. A positive binary sniff is
+         EXPECTED, not disqualifying, for a model file -- so mode="model"
+         never calls `_binary_and_nul_in_sniff` at all: `contains_nul` is
+         meaningless for a binary target and the 4096-byte read would cost
+         real time for nothing.
     """
     if os.path.islink(ap):
         return None
@@ -743,14 +793,49 @@ def _consider_file(ap: str, rel: str, max_bytes: int, excludes: list,
             stats["excluded_by_pattern"] += 1
         return None
     fn = os.path.basename(rel)
-    if not scannable(fn):
+    if mode == "model":
+        if not model_candidate(fn):
+            return None
+    else:
+        if not scannable(fn):
+            return None
+    # 🔴 APPLIED BEFORE getsize() AND BEFORE THE BINARY SNIFF, WHICH OPENS THE
+    # FILE. That ordering is the whole point of this parameter. A caller that
+    # wants only a few file SHAPES out of a wide walk -- `aisec` needs agent
+    # configs from inside `vendor/`, which the default skip list prunes -- would
+    # otherwise pay the cost that made the previous unconditional wide walk a
+    # measured mistake: 111,605 files opened on a real repository. With the
+    # predicate here, the traversal still visits every directory entry but opens
+    # almost nothing.
+    if admit is not None and not admit(rel):
         return None
     try:
         size = os.path.getsize(ap)
     except OSError:
         return None
     if size > max_bytes:
+        # 🔴 THIS DROP USED TO BE COMPLETELY SILENT, and a breaker audit turned
+        # that into a clean scan over a live-shaped credential. Every other cap
+        # in this codebase discloses itself -- long lines, unreadable files,
+        # skipped directories, pattern excludes -- but a file over
+        # `--max-file-size` vanished with no record in the text report, the
+        # JSON, or any stat. Padding a source file past 3 MB was enough to hide
+        # it, and as long as ONE small file remained the whole-tree floor never
+        # fired either. The report read as a complete, fully-measured scan.
+        #
+        # ⚠️ The size cap itself is right: a multi-gigabyte asset must not be
+        # read into memory. What was wrong was refusing silently. A cap the
+        # operator can see is a decision; a cap nobody records is a blind spot.
+        if stats is not None:
+            stats["oversize_files"] += 1
+            # Bounded: a tree of 100k large assets must not build a 100k-entry
+            # list. The COUNT above is always exact; the names are a sample, and
+            # the report says so rather than implying the list is complete.
+            if len(stats["oversize_examples"]) < 20:
+                stats["oversize_examples"].append((rel, size))
         return None
+    if mode == "model":
+        return ScanFile(ap, rel, size, False)
     binary, has_nul = _binary_and_nul_in_sniff(ap)
     if binary:
         return None
@@ -765,10 +850,19 @@ def walk_files(
     max_bytes: int = DEFAULT_MAX_BYTES,
     extra_excludes: Optional[Iterable[str]] = None,
     stats: Optional[dict] = None,
+    mode: str = "text",
+    admit=None,
 ) -> list:
     """
     Enumerate scannable text files under `target` exactly once. Returns a list of
     ScanFile. Never opens for execution; never follows into skipped dirs.
+
+    `mode="model"` reuses this SAME traversal, the SAME `DEFAULT_SKIP_DIRS`
+    pruning, and the SAME `stats["skipped_dirs"]` bookkeeping as the text walk --
+    one loop, a threaded-through argument, never a second walker kept in sync by
+    hand. See `_consider_file`'s docstring and references/DESIGN-model-scanning.md
+    §1.2 for what `mode` changes (candidacy predicate + binary-sniff skip) and,
+    just as importantly, what it does NOT change.
 
     🔴 `stats`, when a dict is passed, RECORDS WHAT THIS WALKER REFUSED.
 
@@ -779,7 +873,9 @@ def walk_files(
     `README.md` and `package.json` -- and the scan exited 0 reporting no findings.
 
     Keys populated: `skipped_dirs` (dirname -> file count), `skipped_code_files`,
-    `kept_code_files`. The caller decides what to do with them; this function only
+    `kept_code_files`, `excluded_by_pattern`, `oversize_files` (an exact count)
+    and `oversize_examples` (a bounded sample of `(relpath, size)`). The caller
+    decides what to do with them; this function only
     counts. `praetor.py` turns the third and second into the scope floor.
 
     The extra `os.walk` over pruned subtrees runs ONLY when `stats` is passed, so
@@ -791,6 +887,8 @@ def walk_files(
         stats.setdefault("skipped_code_files", 0)
         stats.setdefault("kept_code_files", 0)
         stats.setdefault("excluded_by_pattern", 0)
+        stats.setdefault("oversize_files", 0)
+        stats.setdefault("oversize_examples", [])
     excludes = [re.compile(p) for p in (extra_excludes or [])]
     target = os.path.abspath(target)
     out: list = []
@@ -803,6 +901,18 @@ def walk_files(
         try:
             size = os.path.getsize(target)
         except OSError:
+            return out
+        if mode == "model":
+            # Mirrors the directory-walk branch of _consider_file: candidacy is
+            # model_candidate(), not scannable(), and the binary sniff never
+            # runs -- a positive sniff is expected for a model file, not
+            # disqualifying.
+            if model_candidate(name) and size <= max_bytes:
+                try:
+                    rel = os.path.relpath(target, os.getcwd()).replace("\\", "/")
+                except ValueError:
+                    rel = name
+                out.append(ScanFile(target, rel, size, False))
             return out
         binary, has_nul = _binary_and_nul_in_sniff(target)
         if scannable(name) and size <= max_bytes and not binary:
@@ -857,7 +967,7 @@ def walk_files(
         for fn in files:
             ap = os.path.join(root, fn)
             rel = os.path.relpath(ap, target).replace("\\", "/")
-            sf = _consider_file(ap, rel, max_bytes, excludes, stats)
+            sf = _consider_file(ap, rel, max_bytes, excludes, stats, mode=mode, admit=admit)
             if sf is not None:
                 out.append(sf)
     return out
@@ -904,3 +1014,30 @@ def read_text(path: str, max_bytes: int = DEFAULT_MAX_BYTES) -> str:
     # surfaces, so the engine never reports `ok` about a file it could not read.
     # Designed, not built: it needs its own audit, not a fourth same-night patch.
     return data.decode("utf-8", errors="surrogatepass")
+
+
+def read_bytes(path: str, max_bytes: int) -> bytes:
+    """
+    Read up to `max_bytes` of a file's RAW content without ever executing,
+    importing, or decoding it. Parallel in shape to `read_text`, for engines
+    (currently: `model`) that need genuine bytes rather than decoded text --
+    feeding pickle-opcode bytes through `read_text`'s UTF-8 decoder would
+    corrupt or outright reject them (`errors="surrogatepass"` decodes, it does
+    not round-trip arbitrary binary).
+
+    Bounded and silent on OSError, exactly like `read_text`'s own OSError
+    branch: this primitive's job is only to never raise past its own boundary
+    and never read more than it was told to. Turning a failure into a
+    recorded, reported blind spot is `praetor.py`'s `read_bytes` closure's
+    job, not this function's -- same division of labour as `read_text`.
+
+    No decoding is attempted and none is possible to get wrong: unlike
+    `read_text`, there is no codec here that could raise on an invalid byte,
+    so there is nothing analogous to `read_text`'s documented
+    "raises on an invalid start byte" behaviour to preserve.
+    """
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(max_bytes)
+    except OSError:
+        return b""

@@ -2,7 +2,7 @@
 
 **Multi-engine static security analysis for code, repos, and AI agent skills.**
 
-PRAETOR fuses four complementary security engines into a single prioritized,
+PRAETOR fuses five complementary security engines into a single prioritized,
 deduplicated, false-positive-filtered report - human-readable and JSON. It is
 built as a [Claude Code](https://docs.claude.com/en/docs/claude-code) skill but
 the scanner (`scripts/praetor.py`) is a standalone Python CLI that runs anywhere.
@@ -17,7 +17,7 @@ is never built -- see [`references/LIMITS.md`](references/LIMITS.md)).
 
 ## Why PRAETOR
 
-Most scanners do one thing. PRAETOR combines four lenses and, crucially, adds an
+Most scanners do one thing. PRAETOR combines five lenses and, crucially, adds an
 **interpretation layer** that turns N raw tool outputs into one coherent,
 ranked answer - the part that usually separates a useful security review from a
 wall of noise.
@@ -28,7 +28,7 @@ LLM-in-the-loop pipeline actually faces - prompt injection hidden in docs,
 invisible-Unicode instruction smuggling, data-exfiltration patterns, and
 dangerous auto-run hooks.
 
-## The four engines
+## The five engines
 
 | Engine | Finds | Backend | Requires |
 |--------|-------|---------|----------|
@@ -36,9 +36,10 @@ dangerous auto-run hooks.
 | **secrets** | Hardcoded API keys & tokens (AWS, GCP, GitHub, Slack, Stripe, OpenAI, Anthropic, Google, Twilio, SendGrid, npm, JWT), PEM private keys, DB connection-string passwords, base64-wrapped secrets, high-entropy strings | built-in (stdlib) | nothing |
 | **sca** | Known-vulnerable dependencies with CVE/GHSA IDs, severity, and upgrade path | [osv-scanner](https://github.com/google/osv-scanner) -> [pip-audit](https://github.com/pypa/pip-audit) -> `npm audit` | one of those (optional) |
 | **aisec** | Prompt-injection payloads, invisible-Unicode / [Trojan Source](https://trojansource.codes/) smuggling, data exfiltration, dangerous auto-run hooks (Claude Code, Cursor, Windsurf, Cline / git / npm lifecycle), safety-bypass instructions | built-in (stdlib) | nothing |
+| **model** | Dangerous globals (`os.system`, `subprocess.*`, `builtins.eval`, pickle gadget-chain components, ...) referenced inside `.pt`/`.pth`/`.ckpt`/`.pkl`/`.pickle`/`.npy`/`.npz`/`.h5`/`.hdf5`/`.keras`/`.bin`/`.joblib`/`.dill` files, via pickle-**opcode disassembly** (`pickletools.genops()` -- never `pickle.load`); a bounded heuristic for Keras `Lambda`-layer RCE in HDF5; `.safetensors` recognized as safe-by-design | built-in (stdlib) | nothing |
 
-The `secrets` and `aisec` engines are pure Python standard library and always
-run. `sast` and `sca` degrade gracefully: if their backend is missing, that
+The `secrets`, `aisec`, and `model` engines are pure Python standard library and
+always run. `sast` and `sca` degrade gracefully: if their backend is missing, that
 engine reports itself **skipped** and the scan continues.
 
 ## Install
@@ -121,7 +122,7 @@ python scripts/praetor.py /path/to/target --fail-on HIGH --format json
 
 | Option | Meaning |
 |--------|---------|
-| `--engines` | Comma list of `sast,secrets,sca,aisec` (default: all) |
+| `--engines` | Comma list of `sast,secrets,sca,aisec,model` (default: all) |
 | `--format` | `text`, `json`, or `both` (default: text) |
 | `--out DIR` | Write `praetor-report.txt` / `.json` to DIR |
 | `--min-severity` | Hide active findings below this level |
@@ -157,7 +158,7 @@ apply-gate, or another agent to consume.
 
 ### The engine-status contract — read this before trusting exit 0
 
-`report["meta"]["engines"]` is an object keyed by engine name (`sast`, `secrets`, `sca`, `aisec`).
+`report["meta"]["engines"]` is an object keyed by engine name (`sast`, `secrets`, `sca`, `aisec`, `model`).
 Each value has a `status` field, one of: `ok`, `not-applicable`, `disabled`, `unavailable`, `error`,
 `partial-parse` (SAST only, `schema_version` 4.0+). Only `ok` means the engine actually ran and
 looked. `unavailable`, `error`, and `partial-parse` are all blind spots — the engine did not produce

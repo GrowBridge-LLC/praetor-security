@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "praetor-security"
 version = "1.0.0"
-description = "Multi-engine static security analysis (SAST, secrets, SCA, AI-security) for code, repos, and AI-agent skills/plugins/MCP servers. Reads, never runs."
+description = "Multi-engine static security analysis (SAST, secrets, SCA, AI-security, serialized-model) for code, repos, and AI-agent skills/plugins/MCP servers. Reads, never runs."
 readme = "README.md"
 requires-python = ">=3.8"
 license = { file = "LICENSE" }
@@ -52,9 +52,16 @@ Issues = "https://github.com/GrowBridge-LLC/praetor-security/issues"
 
 [tool.setuptools]
 package-dir = { "" = "scripts" }
+# 🔴 HAND-KEPT, AND IT HAS ALREADY FAILED ONCE. `chains` and `capability`
+# shipped in two commits without being added here. Nothing in the test suite
+# noticed, because every test imports from the source tree -- the break only
+# appears in an INSTALLED wheel, where `interpret.py` raises ImportError on the
+# first scan. `tests/test_packaging_declares_every_module.py` now reads this
+# list against `scripts/*.py` and fails when they disagree.
 py-modules = [
     "praetor", "core", "interpret", "report", "lexctx", "taint",
-    "engine_sast", "engine_secrets", "engine_sca", "engine_aisec",
+    "chains", "capability",
+    "engine_sast", "engine_secrets", "engine_sca", "engine_aisec", "engine_model",
 ]
 
 # The bundled offline Semgrep rules.

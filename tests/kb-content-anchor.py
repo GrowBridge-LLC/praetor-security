@@ -8,7 +8,14 @@ import sys
 import unicodedata
 from pathlib import Path
 
-EXPECTED_UNRESOLVED = 29
+EXPECTED_UNRESOLVED = 28
+# 2026-09-04: RULES-readme-0046 became RESOLVED. Its quote was a prose summary
+# of a rule rename; README.md now presents that rename as a two-row table, so
+# the claim was re-quoted from the table row it actually cites. The same
+# HEAD-vs-working-tree unresolved-set comparison the note below describes was
+# run again and named exactly one moving record (29 -> 28), in the SAFE
+# direction, with NOTHING newly unresolved.
+#
 # Consolidation 2026-08-31: STATE-PAIR-CHANNEL-0008 moved from an obsolete
 # multi-purpose queue description to one direct historical-record anchor. A
 # HEAD-vs-working-tree unresolved-set comparison proved it is the only record

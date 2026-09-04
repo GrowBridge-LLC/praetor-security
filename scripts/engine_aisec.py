@@ -671,6 +671,33 @@ def _is_agent_hook_config(low_rel: str, base: str) -> bool:
         return True
     padded = "/" + low_rel
     return any(d in padded or low_rel.startswith(d) for d in AGENT_CONFIG_DIRS)
+
+
+def is_agent_config_path(relpath: str) -> bool:
+    """PUBLIC. True when a path is an agent hook config, MCP manifest, or git
+    hook -- the file shapes this engine recognises by NAME rather than content.
+
+    🔴 EXISTS SO THE WALKER CAN REACH THESE FILES INSIDE SKIPPED DIRECTORIES.
+    `core.DEFAULT_SKIP_DIRS` prunes `vendor/`, `node_modules/`, `dist/` and 33
+    other names, and THE SCANNED TREE CHOOSES ITS OWN DIRECTORY NAMES. A breaker
+    audit put a `.cursor/hooks.json` running a remote script through a shell
+    under `vendor/evil-pkg/` and this engine never saw it: zero findings, exit 0,
+    `executes_on_load: no`. The byte-identical file at the repository root was
+    correctly reported HIGH.
+
+    A malicious dependency planting hostile agent instructions IS this engine's
+    threat model, so the pruning was hiding precisely what it exists to find.
+    `scripts/praetor.py` uses this predicate to add such files back from a wider
+    walk. Deliberately name-based and narrow: the prose rules stay out of
+    vendored trees, where they would be cost and noise rather than signal.
+    """
+    low_rel = (relpath or "").replace("\\", "/").lower()
+    base = os.path.basename(low_rel)
+    return (
+        _is_agent_hook_config(low_rel, base)
+        or base in MCP_MANIFEST_NAMES
+        or _is_git_hook(base)
+    )
 # ⚠️ GIT_HOOK_NAMES comes from `core` -- the SAME set the walker uses to decide
 # what to open. It used to be a 9-name copy here, survivable only because the
 # path predicate also fired on *any* directory called `hooks/`, which quietly

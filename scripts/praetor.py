@@ -2,7 +2,7 @@
 """
 PRAETOR -- multi-engine security analysis.
 
-A best-in-class, open-source security scanner. It runs four complementary engines
+A best-in-class, open-source security scanner. It runs five complementary engines
 over a target path and fuses their output into one prioritized, deduplicated,
 false-positive-filtered report (human-readable + JSON).
 
@@ -17,6 +17,9 @@ vendor's spelling of it.
   sca      osv-scanner / pip-audit / npm known-vulnerable dependencies
   aisec    built-in                      prompt injection, invisible-unicode, exfil,
                                          dangerous auto-run hooks, safety-bypass
+  model    built-in                      pickle-opcode disassembly (pickletools.genops,
+                                         never pickle.load) for .pt/.pth/.ckpt/.pkl/.npy/
+                                         .npz/.h5/.hdf5/.keras/.bin/.joblib/.dill
 
 SAFETY: PRAETOR is a STATIC analyzer. It reads files; it never executes, imports,
 installs, or evaluates the code it scans, and it never transmits scan data
@@ -68,10 +71,33 @@ import engine_secrets            # noqa: E402
 import engine_aisec             # noqa: E402
 import engine_sast              # noqa: E402
 import engine_sca               # noqa: E402
+import engine_model             # noqa: E402
 import interpret                # noqa: E402
 import lexctx                   # noqa: E402
 import taint                    # noqa: E402
 import report                   # noqa: E402
+
+
+def _emit_nothing_examined(target: str, args) -> None:
+    """Explain a scan that opened zero files. Called from BOTH exit paths.
+
+    It used to be written out inline at one of them. The gated path now checks
+    the same condition earlier -- see the comment at that call site -- and two
+    copies of an operator-facing explanation drift.
+    """
+    sys.stderr.write(
+        "praetor: NOTHING WAS EXAMINED -- 0 files were opened, so --fail-on "
+        "has no basis to pass.\n"
+    )
+    sys.stderr.write(
+        f"  target: {target}\n"
+        f"  --max-file-size: {args.max_file_size}\n"
+        f"  --exclude: {args.exclude or '(none)'}\n"
+    )
+    sys.stderr.write(
+        "  An empty file set is not a clean tree. Widen the filters, or pass "
+        "--allow-degraded to gate on findings alone.\n"
+    )
 
 
 def _atomic_write_text(path: str, content: str) -> None:
@@ -138,13 +164,13 @@ def _find_bundled_rules():
 
 RULES_DIR, BUNDLED_SEMGREP = _find_bundled_rules()
 
-ALL_ENGINES = ["sast", "secrets", "sca", "aisec"]
+ALL_ENGINES = ["sast", "secrets", "sca", "aisec", "model"]
 
 
 def parse_args(argv):
     p = argparse.ArgumentParser(
         prog="praetor",
-        description="Multi-engine static security analysis (SAST + secrets + SCA + AI-security).",
+        description="Multi-engine static security analysis (SAST + secrets + SCA + AI-security + serialized-model).",
         # 🔴 argparse abbreviates long options BY DEFAULT, and one of ours disarms
         # the gate. With allow_abbrev left at True, `--allow` is an unambiguous
         # prefix of `--allow-degraded`, so seven characters turned exit 3 into
@@ -159,7 +185,7 @@ def parse_args(argv):
     )
     p.add_argument("target", nargs="?", default=".", help="File or directory to scan (default: current dir).")
     p.add_argument("--engines", default="all",
-                   help="Comma list of engines to run: sast,secrets,sca,aisec (default: all).")
+                   help="Comma list of engines to run: sast,secrets,sca,aisec,model (default: all).")
     p.add_argument("--format", choices=["text", "json", "both"], default="text",
                    help="Report format (default: text).")
     p.add_argument("--out", default="", help="Directory to write praetor-report.txt / .json.")
@@ -249,6 +275,37 @@ def _finding_source_path(target: str, finding_file: str) -> str:
     return os.path.join(target, finding_file.replace("/", os.sep))
 
 
+#: Engines whose `f.line` is a BYTE OFFSET into a binary stream (currently:
+#: `model`, from `pickletools.genops()`'s own `pos`), never a source line.
+#:
+#: Unlike `_LEXCTX_ENGINES`/`_REACHABILITY_ENGINES`, which are ALLOWLISTS that
+#: already exclude `model` by simply never naming it, `_apply_inline_ignores`
+#: below has NO allowlist -- it runs for every engine's findings by design (a
+#: human's `# nosec` next to a hardcoded secret must be able to suppress it,
+#: so `secrets` is deliberately NOT exempted there the way it is from lexctx/
+#: reachability). That makes `model` a special case needing its OWN explicit
+#: exemption, or `_apply_inline_ignores` would call `read_text()` on a binary
+#: pickle/ZIP/HDF5/npy file and:
+#:   1. very likely RAISE -- `core.read_text` raises on an invalid UTF-8 start
+#:      byte by design (see its own docstring), and a binary model file is
+#:      essentially arbitrary bytes, so this is the COMMON case, not an edge
+#:      case. The caught exception feeds `unreadable` (the TEXT decode-failure
+#:      accumulator secrets/aisec's blind-spot status depends on), so every
+#:      scan with a non-COVERAGE model finding would spuriously degrade under
+#:      `--fail-on` -- a model finding would make the SCAN LOOK LESS MEASURED,
+#:      the opposite of what a real finding should do.
+#:   2. even on the rare byte sequence that happened to decode without
+#:      raising, resolve a byte OFFSET as if it were a 1-based source LINE
+#:      INDEX against `split_lines()` output -- meaningless, and a suppression
+#:      mechanism trusting meaningless input is exactly the "fails toward
+#:      suppression" shape CLAUDE.md's suppression section warns against.
+#: This is the same class of scope decision as `secrets`' own exclusion from
+#: lexctx/reachability: the safety is not a property of `_apply_inline_ignores`
+#: itself, it is this exclusion made next to it, for a reason specific to what
+#: `model` findings' `line` field actually means.
+_BINARY_STREAM_ENGINES = ("model",)
+
+
 def _apply_inline_ignores(findings, target, read_text):
     """
     Mark findings filtered when their flagged source line carries an inline ignore
@@ -258,6 +315,8 @@ def _apply_inline_ignores(findings, target, read_text):
     cache: dict = {}
     for f in findings:
         if getattr(f, "category", "") == "COVERAGE":
+            continue
+        if f.engine in _BINARY_STREAM_ENGINES:
             continue
         if not f.file or f.line <= 0:
             continue
@@ -288,6 +347,17 @@ def _apply_inline_ignores(findings, target, read_text):
 # written down, not by being executed. Adding "secrets" here would make PRAETOR
 # blind to `# password = "hunter2"`.
 # Held by tests/test_lexctx_and_suppression_policy.py.
+#
+# 🔴 `model` IS ALSO DELIBERATELY ABSENT, for a THIRD, DIFFERENT reason from
+# either of the above. `f.line` for a `model` finding is a BYTE OFFSET into a
+# binary pickle-opcode stream (`pickletools.genops()`'s own `pos`), not a
+# source line -- there is no "comment" or "docstring" for a byte offset to be
+# inside, because the file has no source text at all. `lexctx.classify_lines`
+# expects `read_text()`-decoded source; feeding it a binary model file's
+# (attempted, likely-raising) decode would be meaningless even if it somehow
+# succeeded. See `_BINARY_STREAM_ENGINES` below, which is what actually keeps
+# `model` findings out of `read_text()` entirely, and `_apply_inline_ignores`'
+# own comment for the fuller version of this reasoning.
 _LEXCTX_ENGINES = ("aisec",)
 
 _LEXCTX_REASONS = {
@@ -304,6 +374,18 @@ _LEXCTX_REASONS = {
 # inert" -- byte-identical to a regex pattern. Measured, after the opposite was
 # claimed publicly. The safety comes from THIS SCOPE, never from the analysis.
 # Held by tests/test_taint_reachability.py.
+#
+# 🔴 `model` IS ALSO ABSENT, and for the SAME reason it is absent from
+# `_LEXCTX_ENGINES` above: `taint.is_provably_inert()` parses Python SOURCE
+# (`ast.parse` on `read_text()`-decoded text) to ask whether a matched string
+# reaches a dangerous sink in that file. A pickle-opcode stream is not Python
+# source and `f.line` is a byte offset, not a line -- there is no AST to walk
+# and no sink-reachability question that means anything here. This is the
+# identical class of decision CLAUDE.md's suppression section names: the
+# safety is a SCOPE decision made next to the mechanism, not a property the
+# mechanism has on its own -- reachability analysis would not "rescue" a
+# model finding any more than it rescues a secret, just for a different
+# underlying reason (no source to analyze at all, vs. disclosure-not-execution).
 _REACHABILITY_ENGINES = ("aisec",)
 
 
@@ -527,16 +609,74 @@ def main(argv=None):
     # narrowing this walk to Git's tracked/unignored list turned a detectable
     # ignored config file into a successful clean result. The cost is real, but
     # recall is not an implicit speed trade an operator has authorized.
+    #
+    # 🔴 AISEC NEEDS THIS SAME WIDE WALK, FOR AGENT-CONFIG FILES ONLY. A breaker
+    # audit put a `.cursor/hooks.json` that pipes a downloaded script into a
+    # shell at `vendor/evil-pkg/`. PRAETOR reported zero findings,
+    # `executes_on_load: no`, exit 0. The identical file at the repository root
+    # was correctly reported HIGH. The only difference was a directory name the
+    # SCANNED TREE chose.
+    #
+    # That is aisec's own threat model -- a malicious dependency planting hostile
+    # agent instructions -- landing in exactly the blind spot this comment block
+    # already described for secrets. The reasoning was written down and then not
+    # carried to the second engine that needed it.
+    #
+    # ⚠️ ONLY the agent-config files, not the whole vendored tree. aisec's prose
+    # rules over every vendored README would be cost and noise; its CONFIG rules
+    # are keyed on specific basenames and directories, so the widening is cheap
+    # and targeted. Vendored prose remains out of scope, stated rather than
+    # implied.
+    # ⚠️ TWO SEPARATE WIDE WALKS, NOT ONE SHARED ONE, and the difference is
+    # cost. The secrets walk admits every text file and opens each to sniff for
+    # binary content; doing that unconditionally was a measured mistake --
+    # 111,605 files / 1,739 MB on a real repository, for an engine that never
+    # ran. The aisec walk passes `admit=`, which `core._consider_file` applies
+    # BEFORE getsize() and before the sniff, so it traverses the same
+    # directories and opens almost nothing.
     secret_files = (
         core.walk_files(target, skip_dirs=core.SECRETS_SKIP_DIRS,
                         max_bytes=args.max_file_size, extra_excludes=args.exclude)
         if "secrets" in engines else []
     )
+    if "aisec" in engines:
+        already = {sf.abspath for sf in scan_files}
+        aisec_files = scan_files + [
+            sf for sf in core.walk_files(
+                target, skip_dirs=core.SECRETS_SKIP_DIRS,
+                max_bytes=args.max_file_size, extra_excludes=args.exclude,
+                admit=engine_aisec.is_agent_config_path)
+            if sf.abspath not in already
+        ]
+    else:
+        aisec_files = scan_files
+    # 🔴 A THIRD, DIFFERENTLY-SHAPED WALK FOR MODEL FILES ONLY -- mode="model"
+    # on the SAME `core.walk_files`/`_consider_file` used above, not a second
+    # implementation (see references/DESIGN-model-scanning.md §1.2). Gated
+    # behind engine selection for the identical reason `secret_files` is: an
+    # unconsumed enumeration is wasted cost (measured precedent: 111,605 files
+    # walked to produce a number nothing consumed, above).
+    #
+    # `max_bytes` here is DELIBERATELY `core.DEFAULT_MODEL_MAX_ADMIT_BYTES`
+    # (50 GB), NOT `args.max_file_size` (default 3 MB): a real checkpoint's
+    # pickled object graph is KB-scale but the file on disk routinely runs
+    # into the gigabytes (raw tensor storage this engine never opens), so the
+    # operator's TEXT byte cap would reject essentially every real model file
+    # from candidacy -- see design §1.2. The engine's OWN internal per-format
+    # bounds (engine_model.py's MAX_RAW_PICKLE_BYTES_SCANNED etc.) are the
+    # real scanning-cost controls, not this admission ceiling.
+    model_files = (
+        core.walk_files(target, skip_dirs=scan_skip_dirs,
+                        max_bytes=core.DEFAULT_MODEL_MAX_ADMIT_BYTES,
+                        extra_excludes=args.exclude, mode="model")
+        if "model" in engines else []
+    )
     nul_text_files = {
-        sf.abspath for sf in (scan_files + secret_files) if sf.contains_nul
+        sf.abspath for sf in (scan_files + secret_files + aisec_files) if sf.contains_nul
     }
     _log(args.quiet, f"  enumerated {len(scan_files)} text file(s)"
-                     f" ({len(secret_files)} for secrets)")
+                     f" ({len(secret_files)} for secrets, {len(aisec_files)} for aisec,"
+                     f" {len(model_files)} for model)")
 
     # 🔴 --exclude MATCHING NOTHING IS INDISTINGUISHABLE FROM HAVING NOTHING TO
     # EXCLUDE, AND THE ONLY VISIBLE SYMPTOM WAS A TIMEOUT UNDER THE WRONG NAME.
@@ -587,7 +727,24 @@ def main(argv=None):
             unreadable.append((path, f"{type(exc).__name__}: {exc}"[:160]))
             return ""
 
-    def _status_after_reading(name, before, ok_detail):
+    # A SECOND, BINARY-FLAVORED accumulator for the model engine -- see
+    # references/DESIGN-model-scanning.md §5.1. `core.read_bytes` already
+    # catches `OSError` internally and returns `b""` (mirroring
+    # `core.read_text`'s own OSError branch), so this wrapper's `except` is a
+    # forward-compatible net for whatever `core.read_bytes` might someday need
+    # to raise rather than swallow -- kept separate from `unreadable` (not
+    # merged into it) so a model-engine read failure is never confused with a
+    # text-decode failure in either the report or the degraded-scan gate.
+    unreadable_binary: list = []
+
+    def read_bytes(path, max_bytes):
+        try:
+            return core.read_bytes(path, max_bytes)
+        except Exception as exc:  # noqa -- the reason is recorded, not swallowed
+            unreadable_binary.append((path, f"{type(exc).__name__}: {exc}"[:160]))
+            return b""
+
+    def _status_after_reading(name, before, ok_detail, unreadable_list=None, verb="decoded"):
         """Record `name`'s status, refusing to say `ok` about a file it could not read.
 
         🔴 THE EXIT CODE IS THE GATE; THE STATUS IS WHAT A HUMAN READS. Isolating
@@ -596,13 +753,20 @@ def main(argv=None):
         layer up and survives any exit-code-only assertion.
         `tests/test_suppression_is_not_attacker_controlled.py` pins this, and it
         caught exactly this regression in the first version of the isolation.
+
+        `unreadable_list` defaults to the TEXT accumulator (`unreadable`) so
+        every existing call site is unchanged; the model engine passes
+        `unreadable_binary` and `verb="opened"` instead -- a model file that
+        could not be read failed to OPEN, not to decode (there is no decode
+        step for raw bytes).
         """
-        missed = unreadable[before:]
+        src = unreadable if unreadable_list is None else unreadable_list
+        missed = src[before:]
         if not missed:
             return {"status": "ok", "detail": ok_detail}
         first = os.path.relpath(missed[0][0], target)
         return {"status": "error",
-                "detail": (f"{len(missed)} file(s) could not be decoded and were NOT "
+                "detail": (f"{len(missed)} file(s) could not be {verb} and were NOT "
                            f"scanned (first: {first}: {missed[0][1]}); "
                            f"the rest of the tree was scanned -- {ok_detail}")}
 
@@ -629,7 +793,7 @@ def main(argv=None):
         _log(args.quiet, "  [aisec] scanning...")
         try:
             _unread_before = len(unreadable)
-            fs = engine_aisec.scan(scan_files, read_text)
+            fs = engine_aisec.scan(aisec_files, read_text)
             all_findings.extend(fs)
             engine_meta["aisec"] = _status_after_reading(
                 "aisec", _unread_before,
@@ -684,10 +848,72 @@ def main(argv=None):
     else:
         engine_meta["sca"] = {"status": "disabled", "detail": "not selected"}
 
+    # -- model ------------------------------------------------------------------
+    # Pickle-opcode disassembly (pickletools.genops() only -- see engine_model.py's
+    # own header for the never-execute argument). `not-applicable` mirrors how
+    # `sca` reports "no dependency manifests": no model-shaped files existing in
+    # the TARGET is a property of what was scanned, not something unmeasured --
+    # see references/DESIGN-model-scanning.md §5.2, confirmed against
+    # report.py's _STATUS_MARKS (ENGINE_NOT_APPLICABLE renders "[n/a]" and sits in
+    # both GATE_TRUSTED_STATUSES and NON_MALFUNCTION_STATUSES).
+    if "model" in engines:
+        if not model_files:
+            engine_meta["model"] = {"status": "not-applicable",
+                                    "detail": "no model-shaped file (.pt/.pth/.ckpt/.pkl/.npy/"
+                                              ".npz/.h5/.hdf5/.keras/.bin/.joblib/.dill/"
+                                              ".safetensors) found in target"}
+        else:
+            _log(args.quiet, "  [model] scanning serialized-model files...")
+            try:
+                _unread_before = len(unreadable_binary)
+                fs = engine_model.scan(model_files, read_bytes)
+                all_findings.extend(fs)
+                engine_meta["model"] = _status_after_reading(
+                    "model", _unread_before,
+                    f"{len(fs)} raw finding(s); pickle-opcode disassembly via pickletools.genops "
+                    "(never pickle.load)",
+                    unreadable_list=unreadable_binary, verb="opened")
+            except Exception as e:  # noqa
+                engine_meta["model"] = {"status": "error", "detail": f"{e}"}
+    else:
+        engine_meta["model"] = {"status": "disabled", "detail": "not selected"}
+
     # -- inline suppression ---------------------------------------------------
     # Honor auditable, in-source ignore markers on the flagged line
     # (# nosec / # nosemgrep / # praetor:ignore, and // variants). Suppressed
     # findings are marked filtered WITH a reason -- never silently dropped.
+    # 🔴 DISCLOSE EVERY FILE THE WALKER REFUSED FOR SIZE. A breaker audit padded
+    # a source file past --max-file-size and PRAETOR reported a complete, clean
+    # scan over a live-shaped credential: the drop left no trace in the text
+    # report, the JSON, or any stat, and one remaining small file kept the
+    # whole-tree floor quiet. The cap stays; the silence does not.
+    #
+    # ⚠️ Reported at INFO, in the COVERAGE category, exactly like the other
+    # coverage notes -- NOT raised to a gating severity. A repository with a
+    # large asset has not done anything wrong, and a cap that failed builds
+    # would be turned off, which is worse than one that reports. Gating on
+    # reduced coverage is the operator's decision, and `--allow-degraded`
+    # already exists for it.
+    oversize_n = scope_stats.get("oversize_files", 0)
+    if oversize_n:
+        examples = scope_stats.get("oversize_examples", [])
+        shown = ", ".join(f"{rel} ({size} bytes)" for rel, size in examples[:5])
+        more = f" (+{oversize_n - len(examples)} more not listed)" if oversize_n > len(examples) else ""
+        all_findings.append(core.Finding(
+            engine="praetor", rule_id="file-too-large-skipped",
+            title="File(s) skipped: larger than the size cap",
+            severity=core.Severity.INFO, confidence=core.Confidence.HIGH,
+            file=".", line=1, category="COVERAGE",
+            description=(
+                f"{oversize_n} file(s) exceeded --max-file-size "
+                f"({args.max_file_size} bytes) and were NOT scanned by any engine. "
+                "Nothing was examined in them, so no finding from them can appear "
+                "above -- and their absence is not evidence they are clean."
+            ),
+            snippet=f"oversize_files={oversize_n}; cap={args.max_file_size}; examples: {shown}{more}",
+            fix="Raise --max-file-size, or scan the oversized files separately, if their content matters.",
+        ))
+
     _apply_inline_ignores(all_findings, target, read_text)
     _apply_lexical_context(all_findings, target, read_text)
     _apply_injection_exemplar(all_findings, target, read_text)
@@ -738,6 +964,16 @@ def main(argv=None):
             "skipped_dirs": dict(sorted(scope_stats.get("skipped_dirs", {}).items())),
             "skipped_code_files": scope_stats.get("skipped_code_files", 0),
             "kept_code_files": scope_stats.get("kept_code_files", 0),
+            # A file over --max-file-size used to leave no record at all, which
+            # let padding a source file past the cap hide it from a scan that
+            # then reported itself complete. The count is exact; the examples
+            # are a bounded sample -- see core._consider_file.
+            "oversize_files": scope_stats.get("oversize_files", 0),
+            "oversize_examples": [
+                {"file": rel, "bytes": size}
+                for rel, size in scope_stats.get("oversize_examples", [])
+            ],
+            "max_file_size": args.max_file_size,
             "default_skips_disabled": bool(args.no_default_skips),
             # Files an engine asked for and could not decode. Reported so the
             # skip is never silent; see the unreadable floor below.
@@ -746,11 +982,18 @@ def main(argv=None):
                 {"file": os.path.relpath(p, target).replace("\\", "/"), "error": why}
                 for p, why in unreadable[:5]
             ],
+            # Same discipline, BINARY-flavored: model files the engine could not
+            # open at all (permissions, a race with the walker). Kept as its own
+            # field rather than merged into `unreadable_files` -- see
+            # `unreadable_binary`'s own definition above for why the two
+            # accumulators must never be confused with each other.
+            "unreadable_binary_files": len(unreadable_binary),
         },
         # None, not 0, when secrets did not run: "the engine read nothing" and
         # "the engine was not asked" are different facts, and reporting 0 for the
         # second is the same one-word-two-facts defect as `unavailable` was.
         "secret_file_count": (len(secret_files) if "secrets" in engines else None),
+        "model_file_count": (len(model_files) if "model" in engines else None),
         "nul_text_file_count": len(nul_text_files),
         "engines": engine_meta,
         "min_severity": args.min_severity,
@@ -775,6 +1018,19 @@ def main(argv=None):
         print(js)
 
     # -- exit code ------------------------------------------------------------
+    # 🔴 "NOTHING WAS EXAMINED" MUST MEAN NOTHING, NOT NO TEXT FILE. This
+    # condition was `not scan_files`, the TEXT walk alone. That was survivable
+    # only because the floor sat after the findings check and a model-only scan
+    # never reached it; moving the floor above `has_findings` exposed the
+    # narrowness immediately, as two model-engine tests going red.
+    #
+    # A target holding one `.pkl` and no text file has been measured -- by the
+    # model engine, over its own walk. Reporting "0 files were opened" there
+    # would be false, and it would fail a legitimate scan. Every list an engine
+    # actually reads is counted here, so adding a sixth engine with its own walk
+    # means adding it to this line, and nothing else enforces that.
+    nothing_examined = not (scan_files or secret_files or aisec_files or model_files)
+
     # 🔴 The gate reads engine STATUS, not just findings. An engine that errored
     # or was unavailable produced zero findings for a reason that has nothing to
     # do with the target being clean -- and before 2026-08-12 this block consulted
@@ -813,6 +1069,22 @@ def main(argv=None):
                     "Re-run once the engine is available, or pass --allow-degraded to "
                     "gate on findings alone.\n"
                 )
+        # 🔴 THE ZERO-FILES FLOOR OUTRANKS `has_findings`, and ONLY it does.
+        # "1 outranks 3" is the documented rule everywhere else in this block,
+        # because a real finding is the more actionable signal. That reasoning
+        # needs a real finding, and when the walker opened ZERO files no finding
+        # can be about the target's content -- only about the coverage failure
+        # itself.
+        #
+        # It became reachable when the oversized-file disclosure was added: a
+        # byte cap below every file now emits a COVERAGE note, `--fail-on INFO`
+        # saw a finding, and exit 3 ("nothing was examined") silently became
+        # exit 1 ("a finding exists"). Both are non-zero, so no gate was
+        # disarmed -- but 3 names the cause and 1 hides it behind a note about
+        # the cause. The more specific diagnosis wins.
+        if nothing_examined and not args.allow_degraded:
+            _emit_nothing_examined(target, args)
+            return 3
         if has_findings:
             return 1
         if blind and not args.allow_degraded:
@@ -847,20 +1119,11 @@ def main(argv=None):
         # older than this floor and is not closed by it.
         # Checked BEFORE the measured-engine floor because zero files examined
         # is the root cause and the more actionable diagnosis.
-        if not scan_files and not args.allow_degraded:
-            sys.stderr.write(
-                "praetor: NOTHING WAS EXAMINED -- 0 files were opened, so --fail-on "
-                "has no basis to pass.\n"
-            )
-            sys.stderr.write(
-                f"  target: {target}\n"
-                f"  --max-file-size: {args.max_file_size}\n"
-                f"  --exclude: {args.exclude or '(none)'}\n"
-            )
-            sys.stderr.write(
-                "  An empty file set is not a clean tree. Widen the filters, or pass "
-                "--allow-degraded to gate on findings alone.\n"
-            )
+        # Reached only in a run WITHOUT --fail-on; the gated path checks the same
+        # condition above, before `has_findings`. One emitter, called from both,
+        # so the two paths cannot drift into saying different things.
+        if nothing_examined and not args.allow_degraded:
+            _emit_nothing_examined(target, args)
             return 3
         # 🔴 THE SCOPE FLOOR. The floor above catches a tree emptied ENTIRELY and
         # nothing else -- "one file defeats it" is stated in its own comment, and
@@ -913,30 +1176,38 @@ def main(argv=None):
         # mistakes which line is load-bearing.
         #
         # The primary enforcement is `_status_after_reading`, which refuses to
-        # report `ok` for an engine that could not decode a file; the existing
-        # degraded path then returns 3. Both engines that read text are wrapped,
-        # so on today's code this block is unreachable.
+        # report `ok` for an engine that could not decode/open a file; the
+        # existing degraded path then returns 3. All three engines that read
+        # bytes off disk (secrets/aisec via `read_text`+`unreadable`, model via
+        # `read_bytes`+`unreadable_binary`) are wrapped, so on today's code this
+        # block is unreachable.
         #
-        # It is kept because that wrapping is an ENUMERATION -- two call sites,
-        # by hand -- and this repository's whole history is enumerations missing
-        # their next member. A future engine that calls `read_text` without the
-        # wrapper would otherwise reach the gate reporting `ok`. This catches it.
-        # ⚠️ It cannot catch an engine that opens files WITHOUT `read_text`; that
-        # route bypasses the recording entirely and nothing here sees it.
-        if unreadable and not args.allow_degraded:
+        # It is kept because that wrapping is an ENUMERATION -- three call
+        # sites, by hand, across TWO accumulators -- and this repository's whole
+        # history is enumerations missing their next member (this block itself
+        # grew from "two call sites" to "three, across two accumulators" when
+        # `model` was added; the same fate awaits whichever engine comes after
+        # it). A future engine that calls `read_text`/`read_bytes` without the
+        # wrapper, or introduces a THIRD accumulator nobody adds here, would
+        # otherwise reach the gate reporting `ok`. This catches it.
+        # ⚠️ It cannot catch an engine that opens files WITHOUT `read_text`/
+        # `read_bytes`; that route bypasses the recording entirely and nothing
+        # here sees it.
+        if (unreadable or unreadable_binary) and not args.allow_degraded:
+            total_unreadable = len(unreadable) + len(unreadable_binary)
             sys.stderr.write(
-                f"praetor: {len(unreadable)} FILE(S) COULD NOT BE READ -- they were "
-                "selected for scanning and no engine could decode them, so this scan "
-                "did not cover its whole target.\n"
+                f"praetor: {total_unreadable} FILE(S) COULD NOT BE READ -- they were "
+                "selected for scanning and no engine could decode/open them, so this "
+                "scan did not cover its whole target.\n"
             )
-            for path, why in unreadable[:5]:
+            for path, why in (unreadable + unreadable_binary)[:5]:
                 sys.stderr.write(f"  {os.path.relpath(path, target)}: {why}\n")
-            if len(unreadable) > 5:
-                sys.stderr.write(f"  ... and {len(unreadable) - 5} more\n")
+            if total_unreadable > 5:
+                sys.stderr.write(f"  ... and {total_unreadable - 5} more\n")
             sys.stderr.write(
-                "  An undecodable file is a BLIND SPOT, not a clean file. Exclude "
-                "them deliberately with --exclude, or pass --allow-degraded to gate "
-                "on findings alone.\n"
+                "  An undecodable/unopenable file is a BLIND SPOT, not a clean file. "
+                "Exclude them deliberately with --exclude, or pass --allow-degraded to "
+                "gate on findings alone.\n"
             )
             return 3
         # 🔴 A whole-scan floor, not a per-engine one. Reached only when every

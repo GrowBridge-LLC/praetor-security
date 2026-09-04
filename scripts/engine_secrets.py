@@ -290,31 +290,105 @@ def is_known_fp_shape(value: str) -> bool:
     return bool(GIT_SHA.match(v) or UUID.match(v) or HEX_COLOR.match(v) or INTEGRITY_HASH.match(v))
 
 
+#: Shapes worth naming that NO provider rule matches on its own: a PEM block
+#: and a GCP service-account JSON envelope are recognised by their structure,
+#: not by a token pattern. Everything a provider rule can find is found by
+#: running the provider rules, below -- these are the remainder, not a list to
+#: grow whenever a new vendor appears.
+_B64_STRUCTURAL_MARKERS = {
+    "-----BEGIN": "PEM private key",
+    "\"type\": \"service_account\"": "GCP service-account JSON",
+}
+
+
 def _b64_unwrap_hit(blob: str) -> str:
-    """Return a short reason if a base64 blob decodes to something secret-shaped."""
-    if len(blob) % 4 != 0 and not blob.endswith("="):
+    """Return a short reason if a base64 blob decodes to something secret-shaped.
+
+    🔴 THIS FUNCTION USED TO BE A HAND-WRITTEN LIST OF SIX MARKER STRINGS, and
+    a breaker audit proved what that cost. It recognised `AKIA`, `xoxb-`,
+    `postgres://`, `mongodb`, a PEM header and a GCP envelope -- so every OTHER
+    provider PRAETOR can detect in plaintext was invisible once base64-wrapped.
+    The audit demonstrated it live with a base64-encoded Anthropic-shaped key:
+    zero findings, exit 0, and the capability profile went on to report
+    `holds_credentials: none` on a tree that held one.
+
+    ⇒ The repair is not a longer list. It is to ASK THE REAL DETECTOR. The
+    decoded text now goes back through the same PROVIDERS table and connection-
+    string rule the plaintext path uses, so a provider added tomorrow is covered
+    here on the same commit, with nobody remembering to add it -- the failure
+    mode of every hand-maintained list in this repository so far.
+
+    ⚠️ ONE LEVEL ONLY. Decoding the result again would follow attacker-chosen
+    nesting to an attacker-chosen depth. Double-wrapped content is a stated,
+    accepted gap, not an oversight -- the same bound `engine_aisec` places on
+    its own decode pass, for the same reason.
+    """
+    # 🔴 THIS USED TO REJECT ANY BLOB WHOSE LENGTH WAS NOT A MULTIPLE OF FOUR,
+    # and that discarded most real blobs before the unwrap ever ran. `B64BLOB`
+    # ends with `\b`, and `=` is not a word character, so the trailing `=`
+    # padding is never captured -- the regex backtracks `={0,2}` to zero to
+    # satisfy the boundary. Every credential whose plaintext length is not a
+    # multiple of three therefore arrived here mis-sized and was dropped.
+    #
+    # Found by a test written for a DIFFERENT fix: the marker-list repair below
+    # looked correct and was still returning nothing, because this check ran
+    # first. Restore the padding instead of rejecting the input.
+    padded = blob + "=" * (-len(blob) % 4)
+    if len(padded) % 4 != 0:
         return ""
     try:
-        decoded = base64.b64decode(blob, validate=True).decode("utf-8", "replace")
+        decoded = base64.b64decode(padded, validate=True).decode("utf-8", "replace")
     except Exception:
         return ""
-    markers = {
-        "-----BEGIN": "PEM private key",
-        "\"type\": \"service_account\"": "GCP service-account JSON",
-        "AKIA": "AWS access key",
-        "xoxb-": "Slack token",
-        "postgres://": "database connection string",
-        "mongodb": "database connection string",
-    }
-    for m, reason in markers.items():
-        if m in decoded:
+
+    for marker, reason in _B64_STRUCTURAL_MARKERS.items():
+        if marker in decoded:
             return reason
+
+    # Ask the detector, do not re-describe it.
+    for rule_id, title, rx, _sev, _conf, _fix in PROVIDERS:
+        for m in rx.finditer(decoded):
+            if not is_dummy(m.group("secret")):
+                return title
+    for m in CONNSTR.finditer(decoded):
+        if not is_dummy(m.group("secret")):
+            return "database connection string"
     return ""
 
 
 # --------------------------------------------------------------------------- #
 # Path-context confidence hints
 # --------------------------------------------------------------------------- #
+
+#: Above this length a line stops getting the unanchored passes (generic
+#: keyword assignment, standalone entropy, base64 unwrap). The anchored
+#: provider rules still run, in windows -- see the comment at the scan loop.
+_LINE_CAP = 4000
+
+#: Windows overlap so a credential straddling a window boundary is still whole
+#: inside one of them. It must exceed the longest single token any anchored
+#: rule can match; a GitHub fine-grained PAT is 94 characters and is the
+#: longest today, so 512 leaves a wide margin without needing a recount here
+#: every time a rule is added.
+_LINE_WINDOW_OVERLAP = 512
+
+
+def _line_windows(line: str):
+    """Yield the segments the anchored rules should scan for one line.
+
+    A short line yields itself, unchanged -- the overwhelmingly common case
+    costs nothing. A long line yields overlapping windows, so padding a line
+    can no longer hide a credential from the anchored rules.
+    """
+    if len(line) <= _LINE_CAP:
+        yield line
+        return
+    step = _LINE_CAP - _LINE_WINDOW_OVERLAP
+    for start in range(0, len(line), step):
+        yield line[start:start + _LINE_CAP]
+        if start + _LINE_CAP >= len(line):
+            return
+
 
 def _path_is_lockfile(relpath: str) -> bool:
     low = relpath.lower()
@@ -384,48 +458,73 @@ def scan(scan_files, read_text) -> list:
         # ---- per-line scanning ----
         skipped = 0
         for i, line in enumerate(lines, start=1):
-            if len(line) > 4000:  # skip absurd minified lines
-                skipped += 1
-                continue
             line_findings: list = []
             line_secrets: list = []
 
-            # provider patterns
-            for rule_id, title, rx, sev, conf, fix in PROVIDERS:
-                for m in rx.finditer(line):
-                    secret = m.group("secret")
-                    if is_dummy(secret):
+            # 🔴 A LONG LINE USED TO SKIP EVERY CHECK, AND THAT WAS AN EVASION.
+            # A breaker audit padded one line past the cap and PRAETOR exited 0
+            # on a tree holding a live-shaped AWS key -- the only trace was an
+            # INFO coverage note, which gates nothing.
+            #
+            # The cap itself is not the mistake: minified assets really are
+            # megabytes of high-entropy text, and running the ENTROPY and
+            # GENERIC passes over them floods the report with noise, which is a
+            # different way to hide a real finding.
+            #
+            # ⇒ The two passes are separated instead of the line being dropped.
+            # The ANCHORED, high-signal rules (provider patterns and connection
+            # strings) now run over the whole line in overlapping windows, so
+            # padding no longer hides a credential they can recognise. The
+            # noisy, unanchored passes stay capped, and the coverage note below
+            # says exactly which of the two ran.
+            long_line = len(line) > _LINE_CAP
+            if long_line:
+                skipped += 1
+
+            for seg in _line_windows(line):
+                # provider patterns
+                for rule_id, title, rx, sev, conf, fix in PROVIDERS:
+                    for m in rx.finditer(seg):
+                        secret = m.group("secret")
+                        if is_dummy(secret):
+                            continue
+                        c = conf
+                        if _path_is_test_or_example(rel):
+                            c = Confidence.MEDIUM if conf == Confidence.HIGH else Confidence.LOW
+                        f = Finding(
+                            engine="secrets", rule_id=rule_id, title=title,
+                            severity=sev, confidence=c, file=rel, line=i, category="SECRET",
+                            specificity=PROVIDER_SPECIFICITY.get(rule_id, 0),
+                            description=f"Hard-coded credential detected: {title}.",
+                            snippet=redact_line(seg, secret),
+                            fix=fix, cwe=CWE_SECRET, owasp=OWASP_SECRET, references=REF_SECRET,
+                        )
+                        if secret in KNOWN_EXAMPLES:
+                            f.filtered = True
+                            f.filter_reason = "well-known published documentation example token (not a live credential)"
+                        _add_line_secret(line_findings, line_secrets, f, secret)
+                # connection strings w/ embedded password
+                for m in CONNSTR.finditer(seg):
+                    pw = m.group("secret")
+                    if is_dummy(pw):
                         continue
-                    c = conf
-                    if _path_is_test_or_example(rel):
-                        c = Confidence.MEDIUM if conf == Confidence.HIGH else Confidence.LOW
-                    f = Finding(
-                        engine="secrets", rule_id=rule_id, title=title,
-                        severity=sev, confidence=c, file=rel, line=i, category="SECRET",
-                        specificity=PROVIDER_SPECIFICITY.get(rule_id, 0),
-                        description=f"Hard-coded credential detected: {title}.",
-                        snippet=redact_line(line, secret),
-                        fix=fix, cwe=CWE_SECRET, owasp=OWASP_SECRET, references=REF_SECRET,
-                    )
-                    if secret in KNOWN_EXAMPLES:
-                        f.filtered = True
-                        f.filter_reason = "well-known published documentation example token (not a live credential)"
-                    _add_line_secret(line_findings, line_secrets, f, secret)
-            # connection strings w/ embedded password
-            for m in CONNSTR.finditer(line):
-                pw = m.group("secret")
-                if is_dummy(pw):
-                    continue
-                _add_line_secret(line_findings, line_secrets, Finding(
-                    engine="secrets", rule_id="db-connection-string-password",
-                    title="Database connection string with embedded password",
-                    severity=Severity.HIGH, confidence=Confidence.HIGH,
-                    file=rel, line=i, category="SECRET",
-                    description=f"A {m.group('scheme')} connection string embeds a password in plaintext.",
-                    snippet=redact_line(line, pw),
-                    fix="Move the credential to an environment variable / secret manager and reference it; rotate the exposed password.",
-                    cwe=CWE_SECRET, owasp=OWASP_SECRET, references=REF_SECRET,
-                ), pw)
+                    _add_line_secret(line_findings, line_secrets, Finding(
+                        engine="secrets", rule_id="db-connection-string-password",
+                        title="Database connection string with embedded password",
+                        severity=Severity.HIGH, confidence=Confidence.HIGH,
+                        file=rel, line=i, category="SECRET",
+                        description=f"A {m.group('scheme')} connection string embeds a password in plaintext.",
+                        snippet=redact_line(seg, pw),
+                        fix="Move the credential to an environment variable / secret manager and reference it; rotate the exposed password.",
+                        cwe=CWE_SECRET, owasp=OWASP_SECRET, references=REF_SECRET,
+                    ), pw)
+
+            if long_line:
+                # The unanchored passes below stay capped. Emit what the
+                # anchored passes found and move on.
+                if line_findings:
+                    findings.extend(line_findings)
+                continue
 
             # generic keyword assignment (+ entropy gate)
             for m in GENERIC.finditer(line):
@@ -500,9 +599,15 @@ def scan(scan_files, read_text) -> list:
                 title="Secret-scanning coverage limited by long line",
                 severity=Severity.INFO, confidence=Confidence.HIGH,
                 file=rel, line=1, category="COVERAGE",
-                description=f"{skipped} line(s) exceeded the 4000-character analysis cap and were skipped by secret scanning.",
-                snippet=f"skipped_lines={skipped}; cap=4000",
-                fix="Split oversized lines before scanning to restore secret-detection coverage.",
+                description=(
+                    f"{skipped} line(s) exceeded the {_LINE_CAP}-character cap. The anchored "
+                    "provider and connection-string rules DID run over them, in overlapping "
+                    "windows. The unanchored passes -- generic keyword assignment, standalone "
+                    "entropy, and base64 unwrapping -- did not, because they produce noise on "
+                    "minified assets rather than signal."
+                ),
+                snippet=f"long_lines={skipped}; cap={_LINE_CAP}; anchored_rules=ran; unanchored_rules=skipped",
+                fix="Split oversized lines before scanning to restore full secret-detection coverage.",
                 cwe=CWE_SECRET, owasp=OWASP_SECRET, references=REF_SECRET,
             ))
     return findings

@@ -25,14 +25,25 @@ def _chain_ids(hits):
     return {c["chain_id"] for c in hits}
 
 
-def test_injection_plus_autorun_composes_into_a_critical_chain():
+def test_injection_plus_autorun_is_reported_but_only_as_co_occurrence():
+    """A planted instruction and an auto-run mechanism genuinely live in
+    different files -- that separation IS the attack shape, so this chain is
+    SAME_TREE and fires.
+
+    🔴 It is capped at MEDIUM, and this assertion is the point of the test. An
+    earlier version rated it CRITICAL. "Both categories appear somewhere in
+    this repository" is close to certain in any real tree, so that rating
+    escalated a coincidence into the report's top line. Co-occurrence earns a
+    prompt to look, never an escalation.
+    """
     hits = chains.correlate([
         _f("aisec", "prompt-injection-override", "PROMPT_INJECTION", "README.md"),
         _f("aisec", "agent-hook-autorun", "DANGEROUS_HOOK", ".claude/settings.json"),
     ])
     assert "chain-injection-to-autorun" in _chain_ids(hits)
     chain = next(c for c in hits if c["chain_id"] == "chain-injection-to-autorun")
-    assert chain["severity"] == "CRITICAL", "a chain may exceed its links' severity -- that IS the finding"
+    assert chain["severity"] == "MEDIUM",         "a cross-file co-occurrence must not outrank its own links"
+    assert chain["proximity"] == chains.SAME_TREE
     assert len(chain["links"]) == 2
 
 
@@ -100,9 +111,85 @@ def test_credential_plus_exfil_keys_on_the_secrets_ENGINE_not_a_rule_name():
     moment a rule is renamed."""
     hits = chains.correlate([
         _f("secrets", "aws-access-key-id", "SECRET", "config/aws.env", severity=Severity.HIGH),
-        _f("aisec", "env-exfil", "EXFIL", "scripts/deploy.sh"),
+        _f("aisec", "env-exfil", "EXFIL", "config/aws.env", line=9),
     ])
     assert "chain-credential-plus-exfil-path" in _chain_ids(hits)
+
+
+def test_a_credential_and_an_exfil_path_in_DIFFERENT_files_form_no_chain():
+    """🔴 THE REGRESSION TEST FOR A DEMONSTRATED FALSE POSITIVE.
+
+    This chain once required only that both links matched SOMEWHERE in the
+    tree. Run against PRAETOR's own repository, it composed the secrets
+    engine's own redaction TEMPLATE STRING (not a credential at all) with this
+    project's teaching example of an INERT comment, and narrated the pair as
+    "A real credential in the tree... Rotate the credential regardless."
+
+    Every word of that was false, and it came out of a well-tested, add-only
+    mechanism working exactly as written -- because nothing asked whether the
+    two links had anything to do with each other. Same-file is the scope that
+    fixed it, and this test is what keeps it.
+    """
+    hits = chains.correlate([
+        _f("secrets", "aws-access-key-id", "SECRET", "config/aws.env", severity=Severity.HIGH),
+        _f("aisec", "env-exfil", "EXFIL", "scripts/deploy.sh"),
+    ])
+    assert "chain-credential-plus-exfil-path" not in _chain_ids(hits),         "two findings in unrelated files are co-occurrence, not composition"
+
+
+def test_a_same_file_chain_names_the_file_it_rests_on():
+    """A SAME_FILE chain's whole claim is co-location, so the report has to say
+    WHICH file -- otherwise the reader cannot check the claim that justifies
+    the severity."""
+    hits = chains.correlate([
+        _f("aisec", "mcp-server-autostart", "DANGEROUS_HOOK", ".mcp.json", 3),
+        _f("aisec", "mcp-server-credential-env", "EXFIL", ".mcp.json", 5, Severity.HIGH),
+    ])
+    chain = next(c for c in hits if c["chain_id"] == "chain-mcp-autostart-with-credentials")
+    assert chain["proximity"] == chains.SAME_FILE
+    assert chain["scope"] == ".mcp.json"
+
+
+def test_one_same_file_chain_is_reported_per_file():
+    """Two separate manifests are two separate problems. Merging them into one
+    chain would imply a relationship across files that this chain type
+    specifically declines to claim."""
+    hits = chains.correlate([
+        _f("aisec", "mcp-server-autostart", "DANGEROUS_HOOK", "a/.mcp.json", 3),
+        _f("aisec", "mcp-server-credential-env", "EXFIL", "a/.mcp.json", 5),
+        _f("aisec", "mcp-server-autostart", "DANGEROUS_HOOK", "b/.mcp.json", 3),
+        _f("aisec", "mcp-server-credential-env", "EXFIL", "b/.mcp.json", 5),
+    ])
+    scopes = sorted(
+        c["scope"] for c in hits
+        if c["chain_id"] == "chain-mcp-autostart-with-credentials"
+    )
+    assert scopes == ["a/.mcp.json", "b/.mcp.json"]
+
+
+def test_a_same_file_chain_does_not_form_across_two_manifests():
+    """The halves are each in a DIFFERENT manifest. Tree-wide matching would
+    have called that one chain; same-file matching must not."""
+    hits = chains.correlate([
+        _f("aisec", "mcp-server-autostart", "DANGEROUS_HOOK", "a/.mcp.json", 3),
+        _f("aisec", "mcp-server-credential-env", "EXFIL", "b/.mcp.json", 5),
+    ])
+    assert "chain-mcp-autostart-with-credentials" not in _chain_ids(hits)
+
+
+def test_chain_links_carry_the_confidence_of_their_findings():
+    """The one section that computes a NEW severity is the last place that may
+    hide its inputs' confidence. Without it a LOW-confidence match anchoring a
+    CRITICAL chain reads identically to a HIGH-confidence one."""
+    hits = chains.correlate([
+        _f("aisec", "mcp-server-autostart-remote", "DANGEROUS_HOOK", ".mcp.json", 3),
+        _f("aisec", "mcp-server-credential-env", "EXFIL", ".mcp.json", 5),
+    ])
+    assert hits, "fixture must produce a chain or this test asserts nothing"
+    for chain in hits:
+        for link in chain["links"]:
+            for finding in link["findings"]:
+                assert finding["confidence"] == "MEDIUM"
 
 
 def test_correlation_never_mutates_or_suppresses_a_finding():

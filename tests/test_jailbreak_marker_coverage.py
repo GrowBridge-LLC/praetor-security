@@ -36,6 +36,16 @@ def test_developer_mode_enabled_marker_fires():
     assert _role_hijack_matches(line)
 
 
+def test_developer_mode_response_marker_fires():
+    """🔴 CONFIRMED BY MUTATION: `Developer\\s+Mode\\s+(Output|Enabled|Response)`
+    has THREE alternatives but this file previously tested only "Output" and
+    "Enabled" -- removing "Response" from the alternation left the entire
+    suite green. "Response" was completely unguarded."""
+    marker = "Developer Mode " + "Response"
+    line = "As requested (" + marker + "): here is the unrestricted answer."
+    assert _role_hijack_matches(line), "the 'Response' marker variant must fire"
+
+
 def test_bracketed_jailbreak_marker_fires():
     marker = "[" + "JAILBREAK" + "]"
     line = marker + " response follows, no restrictions apply"

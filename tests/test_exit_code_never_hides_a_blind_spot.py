@@ -779,7 +779,7 @@ def test_the_wide_secrets_walk_does_not_run_when_secrets_is_not_selected(tmp_pat
     real_walk = core.walk_files
 
     def counting_walk(target, **kw):
-        walks.append(kw.get("skip_dirs"))
+        walks.append((kw.get("skip_dirs"), kw.get("admit")))
         return real_walk(target, **kw)
 
     import unittest.mock as _m
@@ -791,10 +791,29 @@ def test_the_wide_secrets_walk_does_not_run_when_secrets_is_not_selected(tmp_pat
     # evadable: re-introduce the defect but pass `set(core.SECRETS_SKIP_DIRS)`
     # (a copy) and the test goes GREEN while 111k files are opened for an engine
     # that never runs. Comparing by value cannot be dodged that way.
-    wide = [w for w in walks if w == core.SECRETS_SKIP_DIRS]
+    #
+    # ⚠️ THE `admit is None` TERM WAS ADDED DELIBERATELY, NOT TO MAKE THIS PASS.
+    # `aisec` now DOES take a wide walk, because a breaker audit put a hostile
+    # `.cursor/hooks.json` under `vendor/` and this engine -- whose threat model
+    # is a malicious dependency planting agent instructions -- never saw it.
+    # What made the original walk wasteful was opening EVERY text file to sniff
+    # it. `admit=` is applied in `core._consider_file` BEFORE getsize() and
+    # before the sniff, so the aisec walk traverses the same directories and
+    # opens almost nothing. The cost this test was written to prevent is still
+    # prevented; the coverage gap it accidentally protected is not.
+    wide = [
+        (skips, adm) for skips, adm in walks
+        if skips == core.SECRETS_SKIP_DIRS and adm is None
+    ]
     assert not wide, (
-        f"the wide secrets walk ran for --engines aisec; {len(walks)} walk(s) total. "
+        f"an UNFILTERED wide walk ran for --engines aisec; {len(walks)} walk(s) total. "
         f"On a real repo that is 111,605 files opened for an engine that never runs."
+    )
+    filtered = [adm for skips, adm in walks if skips == core.SECRETS_SKIP_DIRS and adm]
+    assert filtered, (
+        "aisec must still take a NAME-FILTERED wide walk -- without it a hostile "
+        "agent config inside vendor/ or node_modules/ is invisible to the one "
+        "engine whose threat model is exactly that."
     )
     meta = json.loads((out / "praetor-report.json").read_text(encoding="utf-8"))["meta"]
     assert meta["secret_file_count"] is None, (

@@ -182,11 +182,27 @@ def test_marker_as_a_substring_in_a_commentless_format_does_not_suppress(tmp_pat
 
 @pytest.mark.parametrize("token", ["nosecret", "nosecurity", "nosection"])
 def test_words_merely_containing_a_marker_do_not_suppress(tmp_path, token):
+    """The marker word must sit in the comment on the FINDING'S OWN LINE.
+
+    `_apply_inline_ignores` (praetor.py) resolves only `lines[f.line - 1]` -- it
+    never looks at any other line in the file. A fixture that puts the token on a
+    *different* line from the flagged KEY can never exercise the word-boundary
+    regex either way: it would pass identically whether or not `_IGNORE_WORD_RE`
+    has its `(?<![A-Za-z0-9_])...(?![A-Za-z0-9_])` boundaries at all, because
+    nothing on the finding's own line ever contains the substring "nosec".
+    Putting `# {token}` in the trailing comment of the KEY line itself is what
+    actually puts the marker text where the suppression pass looks.
+    """
     (tmp_path / "s.py").write_text(
-        f'{token} = 1  # a comment mentioning {token}\nKEY = "{_KEY}"\n', encoding="utf-8"
+        f'KEY = "{_KEY}"  # {token} mentioned right here\n', encoding="utf-8"
     )
     rc, doc = _scan(tmp_path, "--engines", "secrets", "--fail-on", "HIGH")
-    assert doc["findings"], f"'{token}' contains a marker but is not one"
+    assert doc["findings"], (
+        f"'{token}' contains the marker 'nosec' as a substring but is not the "
+        f"marker itself -- it must not suppress the finding on its own line"
+    )
+    assert rc == 1
+    assert not doc["filtered"], f"'{token}' must not have triggered any suppression"
 
 
 def test_a_real_inline_ignore_still_suppresses(tmp_path):

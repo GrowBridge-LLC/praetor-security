@@ -178,7 +178,7 @@ filter happened to be in place.
 | Path | Role |
 |---|---|
 | `scripts/praetor.py` | CLI, engine orchestration, suppression wiring |
-| `scripts/engine_*.py` | the four engines: `sast`, `secrets`, `sca`, `aisec` |
+| `scripts/engine_*.py` | the five engines: `sast`, `secrets`, `sca`, `aisec`, `model` |
 | `scripts/interpret.py` | dedup, rank, false-positive filtering |
 | `scripts/lexctx.py` | lexical context: comment / docstring / code |
 | `scripts/taint.py` | reachability: does a string reach a dangerous sink? |

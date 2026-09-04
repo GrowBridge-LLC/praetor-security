@@ -1,25 +1,32 @@
 # PRAETOR Architecture
 
-PRAETOR is a small orchestrator around four engines plus an interpretation
+PRAETOR is a small orchestrator around five engines plus an interpretation
 layer. This document explains how each part works and why.
 
 ```
                  +------------------ praetor.py (CLI) ------------------+
-                 |  walk_files() enumerates scannable text files once   |
+                 |  walk_files() enumerates scannable text files once,  |
+                 |  and separately -- mode="model" -- model-shaped      |
+                 |  files (.pt/.pkl/.npy/... see engine_model.py)       |
                  +------------------------------------------------------+
-                       |            |             |            |
-                   engine_       engine_       engine_      engine_
-                   secrets       aisec         sast         sca
-                  (built-in)   (built-in)   (Semgrep)   (osv/pip/npm)
-                       \            \             /            /
-                        \            \           /            /
-                         +----------- interpret.py -----------+
-                         |  dedup -> rank -> FP-filter        |
-                         +------------------------------------+
+                       |            |             |            |            |
+                   engine_       engine_       engine_      engine_      engine_
+                   secrets       aisec         sast         sca          model
+                  (built-in)   (built-in)   (Semgrep)   (osv/pip/npm)  (built-in)
+                       \            \             /            /            /
+                        \            \           /            /            /
+                         +----------------- interpret.py -----------------+
+                         |  dedup -> rank -> FP-filter                    |
+                         +-------------------------------------------------+
                                         |
                                    report.py
                                 (text + JSON)
 ```
+
+`engine_model` reads a SEPARATE, binary-safe walk (`core.walk_files(mode="model")` /
+`core.read_bytes`) rather than the shared text walk the other four engines share --
+see `references/DESIGN-model-scanning.md` for why a pickle-opcode byte stream
+cannot go through `core.read_text`'s UTF-8 decode contract.
 
 ## Design principles
 
