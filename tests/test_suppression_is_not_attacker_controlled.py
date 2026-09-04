@@ -13,8 +13,9 @@ introduced by the commit under audit; all three were pre-existing and live.**
 --------------------------------------------------------------------------- #
 1. DEDUP ELECTED A FILTERED FINDING OVER AN UNFILTERED ONE  (attacker-controlled)
 
-All five injection rules share `CWE-77`, so every PROMPT_INJECTION finding on a
-line collapses into a single dedup group. `_sort_key` did not consider
+All injection rules sharing `CWE-77` (six as of this rule table; five when this
+was found) collapse into a single PROMPT_INJECTION dedup group per line.
+`_sort_key` did not consider
 `f.filtered`, so a quoted, defensively-framed exemplar -- correctly suppressed by
 `_apply_injection_exemplar` -- won primary election and DISCARDED the live payload
 next to it. Measured, identical payload:

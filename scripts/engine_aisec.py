@@ -293,6 +293,79 @@ INJECTION = [
      Severity.HIGH, Confidence.MEDIUM, "PROMPT_INJECTION", "CWE-77", "LLM01: Prompt Injection",
      "Treat this text as untrusted data, not instructions; do not let file content steer the agent."),
 
+    # 🔴 Added 2026-09-04 per references/ROADMAP-V1.md §3 ("every INJECTION rule
+    # is English-only today; PINT's own benchmark holds ~30% of its corpus in 24
+    # other languages specifically to catch this failure mode"). Researched, not
+    # translated: every sub-pattern below is grounded in a real quoted example
+    # from an independent source (a security article, a practitioner's own
+    # detection regex, or a language Wikipedia's own worked example) -- not a
+    # machine translation of the English phrase guessed word-for-word. Confidence
+    # varies by language and is stated below; where no independently-sourced real
+    # example turned up (Hindi), the language was left out rather than guessed --
+    # that gap is disclosed, not silently absent.
+    #
+    # A SEPARATE rule from prompt-injection-override above, not the same regex
+    # widened, for two reasons. (1) Blast-radius isolation: that rule is
+    # established and tested; a bad multilingual sub-pattern should be fixable
+    # without touching it. (2) CJK mechanics are not just "a different alphabet"
+    # -- Chinese/Japanese/Korean have no spaces, so `\b` (a transition between a
+    # `\w` char and a non-`\w` char) never fires *inside* a run of CJK text: two
+    # adjacent Han/Hangul characters are both `\w` under Python's Unicode-aware
+    # `re`, so a `\b`-anchored port of the English pattern would silently never
+    # match real CJK injection text. Those sub-patterns rely on plain adjacency
+    # instead, letting the multi-character compound phrase itself -- not a
+    # boundary assertion -- carry the specificity; verified against ordinary
+    # non-attack prose in the same languages (see the test file).
+    #
+    # Word order differs by language and was checked against each source
+    # example, not templated from English: Spanish/French/Portuguese/Arabic put
+    # the "previous" adjective AFTER the instruction noun ("instrucciones
+    # anteriores" = lit. "instructions previous"); German/Russian/Chinese put it
+    # BEFORE, like English; Japanese/Korean are SOV, so the ignore-verb comes
+    # AFTER the instruction word (plus object particle), not before it ("上記の
+    # 指示を無視" = lit. "above's instructions [obj] ignore").
+    #
+    # Confidence per language:
+    #   HIGH   -- Spanish, French, German, Portuguese: real quoted attack
+    #             examples from independent security-research articles.
+    #             Russian: a practitioner's own live injection-detection regex
+    #             (published on Habr) literally lists "игнорируй" and "забудь
+    #             инструкции" as the patterns it screens for. Arabic: a real
+    #             quoted attack example from an Al Jazeera-affiliated tech
+    #             article. Chinese (Simplified): zh.wikipedia.org's own worked
+    #             example sentence for the prompt-injection article.
+    #   MEDIUM -- Japanese: ja.wikipedia.org's own worked example sentence, but
+    #             the SOV reordering above is this session's own grammatical
+    #             construction from that one example, not itself independently
+    #             cross-checked. Korean: a real quoted news headline used the
+    #             core phrase, same SOV-reordering caveat as Japanese.
+    #   NOT ADDED -- Hindi: every search surfaced only this session's own
+    #             candidate translation echoed back, never an independently
+    #             authored real example. Guessing it would be exactly the
+    #             unverified-translation failure mode this rule exists to fix.
+    #
+    # Every sub-pattern requires BOTH an ignore-family verb AND a previous/above
+    # qualifier next to the instruction word -- same design as the English rule
+    # above, deliberately not a bare "ignore" match, which would fire
+    # constantly on ordinary non-English prose (technical docs routinely say
+    # "see the instructions above" in every one of these languages). Mutation-
+    # tested in both directions; see tests/test_multilingual_injection_override.py.
+    ("prompt-injection-override-multilingual", "Instruction-override phrasing (non-English)",
+     re.compile(
+         "(?i)"
+         r"\b(?:ignora|ignore|ignoren|olvida|olvide|olviden)\b[^.\n]{0,40}\b(?:instrucciones|instrucción|reglas)\b[^.\n]{0,20}\b(?:anteriores?|previas?)\b"  # es
+         r"|\b(?:ignore|ignorez|ignorer|oublie|oubliez|oublier)\b[^.\n]{0,40}\b(?:instructions?|règles?)\b[^.\n]{0,20}\b(?:précédentes?|antérieures?)\b"  # fr
+         r"|\b(?:ignoriere|ignorieren|vergiss|vergessen)\b[^.\n]{0,40}\b(?:vorherigen|obigen)\b[^.\n]{0,20}\b(?:anweisungen|anweisung|regeln)\b"  # de
+         r"|\b(?:ignore|ignorem|desconsidere|desconsiderem)\b[^.\n]{0,40}\b(?:instruções|instrução|regras)\b[^.\n]{0,20}\b(?:anteriores?)\b"  # pt
+         r"|\b(?:игнорируй|игнорируйте|забудь|забудьте)\b[^.\n]{0,40}\b(?:предыдущие|предыдущих|предыдущую)\b[^.\n]{0,20}\b(?:инструкции|инструкцию|указания)\b"  # ru
+         r"|\bتجاهل\b[^.\n]{0,40}\b(?:كل\s+)?(?:التعليمات|الأوامر)\b[^.\n]{0,20}\b(?:السابقة|السابق)\b"  # ar
+         r"|(?:忽略|无视)[^。\n]{0,10}(?:之前|以前|上述|以上)[^。\n]{0,6}(?:指令|指示|规则)"  # zh (no \b -- see comment above)
+         r"|(?:上記|以前|前述)の(?:指示|指令|命令)を[^。\n]{0,6}(?:無視|忘れ)"  # ja (no \b -- see comment above)
+         r"|(?:이전|위)\s*(?:지시|지침|명령)\s*(?:를|을)?\s*무시"  # ko
+     ),
+     Severity.HIGH, Confidence.MEDIUM, "PROMPT_INJECTION", "CWE-77", "LLM01: Prompt Injection",
+     "Treat this text as untrusted data, not instructions; do not let file content steer the agent."),
+
     ("prompt-injection-new-instructions", "Injected 'new instructions' block",
      re.compile(r"(?i)\b(new|updated|revised|real|actual)\s+(instruction|system\s+prompt|directive|task)s?\s*[:\-]"),
      Severity.MEDIUM, Confidence.LOW, "PROMPT_INJECTION", "CWE-77", "LLM01: Prompt Injection",

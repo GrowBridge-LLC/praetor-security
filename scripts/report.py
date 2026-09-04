@@ -37,7 +37,12 @@ from core import (Severity, engine_blind_spots, ENGINE_OK, ENGINE_NOT_APPLICABLE
 #: consumer doing exhaustive status matching breaks silently otherwise. 4.0
 #: adds `partial-parse` (core.ENGINE_PARTIAL_PARSE); see README.md's
 #: "schema_version 4.0" section.
-SCHEMA_VERSION = "4.0"
+#: 4.1 adds the top-level `chains` array (attack-chain correlation, see
+#: scripts/chains.py). MINOR, not major, and the distinction is the point: it is
+#: purely additive, no existing key changed meaning, and a consumer reading only
+#: `findings`/`filtered` is unaffected. A status-word change breaks exhaustive
+#: matching; a new sibling array cannot.
+SCHEMA_VERSION = "4.1"
 
 _SEV_ORDER = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO]
 
@@ -207,6 +212,31 @@ def render_text(result: dict, meta: dict, redacted: bool = True) -> str:
             out.append(f"  ({idx}) {f.severity.label}/{f.confidence.label} {f.title} @ {f.file}:{f.line}")
             out.append(f"        reason: {f.filter_reason}")
 
+    chain_hits = result.get("chains") or []
+    if chain_hits:
+        out.append("")
+        out.append("-" * 74)
+        out.append("  ATTACK CHAINS  (findings that COMPOSE -- verify, not proof)")
+        out.append("-" * 74)
+        out.append("  Each chain below is a hypothesis that separate findings form one")
+        out.append("  path. It does not assert the path is reachable. Nothing here")
+        out.append("  suppresses or re-scores any finding above; chains only add.")
+        for idx, c in enumerate(chain_hits, 1):
+            out.append("")
+            out.append(f"[C{idx}] {c['severity']}  {c['title']}")
+            out.append(f"     chain   : {c['chain_id']}")
+            out.append(f"     why     : {c['why_it_composes']}")
+            out.append(f"     verify  : {c['what_to_verify']}")
+            for link in c["links"]:
+                shown, total = link["shown"], link["total"]
+                more = f" (showing {shown} of {total})" if total > shown else ""
+                out.append(f"     link    : {link['link']}{more}")
+                for ref in link["findings"]:
+                    out.append(
+                        f"                - {ref['severity']} {ref['rule_id']} "
+                        f"@ {ref['file']}:{ref['line']}"
+                    )
+
     out.append("")
     out.append("-" * 74)
     out.append("  LIMITS  /  RESIDUAL RISK")
@@ -228,6 +258,12 @@ def render_json(result: dict, meta: dict) -> str:
         },
         "findings": [f.to_dict() for f in result["active"]],
         "filtered": [f.to_dict() for f in result["filtered"]],
+        # Additive: a consumer reading only `findings`/`filtered` is unaffected,
+        # which is why this is a MINOR schema bump (4.0 -> 4.1) rather than the
+        # breaking bump a changed status word needed. `chains` is always present
+        # -- an empty list means no chain matched, which (like an empty findings
+        # list) is NOT a statement that the tree is safe.
+        "chains": result.get("chains") or [],
         "limits": [ln.strip() for ln in LIMITS_TEXT.strip().splitlines() if ln.strip()],
     }
     return json.dumps(doc, indent=2, ensure_ascii=True)

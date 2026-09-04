@@ -9,10 +9,17 @@ Responsibilities:
   * FALSE-POSITIVE FILTERING: low-signal findings are not deleted -- they are
     moved to a separate bucket WITH A RATIONALE so a reviewer can audit the
     suppression. Honest triage, not silent dropping.
+  * ATTACK-CHAIN CORRELATION (scripts/chains.py): findings that COMPOSE into
+    one path -- planted instruction plus auto-run mechanism, auto-started MCP
+    server plus the credential handed to it -- are reported as chains. This
+    runs last, over the active set only, and can ONLY ADD a separate section:
+    it never suppresses, downgrades, or re-buckets a finding, which is what
+    keeps it structurally incapable of producing a false clean.
 """
 
 from __future__ import annotations
 
+import chains
 from core import Finding, Severity, Confidence
 
 # engine priority when severity+confidence tie (higher = surfaced first)
@@ -24,8 +31,9 @@ def _sort_key(f: Finding):
         # 🔴 FILTERED STATUS DOMINATES EVERYTHING. An unfiltered finding must never
         # lose primary election to a suppressed one, whatever their severities.
         #
-        # It could, and that was an ATTACKER-CONTROLLED SUPPRESSION PRIMITIVE. All
-        # five injection rules share CWE-77, so every PROMPT_INJECTION finding on a
+        # It could, and that was an ATTACKER-CONTROLLED SUPPRESSION PRIMITIVE. Six
+        # injection rules share CWE-77 (was five when this was found; the count
+        # grows with the rule table), so every PROMPT_INJECTION finding on a
         # line collapses into one dedup group. A quoted, defensively-framed exemplar
         # is correctly marked `filtered` by _apply_injection_exemplar -- and then won
         # the tie and DISCARDED the live payload beside it. Measured, same payload:
@@ -207,7 +215,7 @@ def apply_fp_filter(findings: list) -> list:
 def interpret(findings: list) -> dict:
     """
     Full pipeline. Returns:
-      {active: [...], filtered: [...], summary: {...}}
+      {active: [...], filtered: [...], chains: [...], summary: {...}}
     """
     merged = dedup(findings)
     merged = apply_fp_filter(merged)
@@ -219,9 +227,17 @@ def interpret(findings: list) -> dict:
     for f in active:
         summary[f.severity.label] += 1
 
+    # Correlation runs LAST, over the active set only, and can only add a
+    # separate section -- see scripts/chains.py's own header for why that
+    # ordering and that restriction are safety properties rather than
+    # implementation detail. Nothing below re-reads `chains` to alter a
+    # finding, a bucket, or a count.
+    chain_hits = chains.correlate(active)
+
     return {
         "active": active,
         "filtered": filtered,
+        "chains": chain_hits,
         "summary": summary,
         "total_active": len(active),
         "total_filtered": len(filtered),
