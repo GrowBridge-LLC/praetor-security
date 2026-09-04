@@ -19,11 +19,12 @@ Responsibilities:
 
 from __future__ import annotations
 
+import capability
 import chains
 from core import Finding, Severity, Confidence
 
 # engine priority when severity+confidence tie (higher = surfaced first)
-_ENGINE_RANK = {"sca": 4, "sast": 3, "secrets": 2, "aisec": 1}
+_ENGINE_RANK = {"sca": 4, "sast": 3, "secrets": 2, "model": 2, "aisec": 1}
 
 
 def _sort_key(f: Finding):
@@ -233,11 +234,15 @@ def interpret(findings: list) -> dict:
     # implementation detail. Nothing below re-reads `chains` to alter a
     # finding, a bucket, or a count.
     chain_hits = chains.correlate(active)
+    # Same ordering and the same add-only restriction as chains, for the same
+    # reasons -- see scripts/capability.py's header.
+    cap_profile = capability.profile(active)
 
     return {
         "active": active,
         "filtered": filtered,
         "chains": chain_hits,
+        "capability_profile": cap_profile,
         "summary": summary,
         "total_active": len(active),
         "total_filtered": len(filtered),

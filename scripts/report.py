@@ -11,6 +11,8 @@ from __future__ import annotations
 import datetime
 import json
 
+import capability
+
 from core import (Severity, engine_blind_spots, ENGINE_OK, ENGINE_NOT_APPLICABLE,
                   ENGINE_DISABLED, ENGINE_UNAVAILABLE, ENGINE_ERROR)
 
@@ -212,6 +214,25 @@ def render_text(result: dict, meta: dict, redacted: bool = True) -> str:
             out.append(f"  ({idx}) {f.severity.label}/{f.confidence.label} {f.title} @ {f.file}:{f.line}")
             out.append(f"        reason: {f.filter_reason}")
 
+    prof = result.get("capability_profile") or {}
+    if prof:
+        out.append("")
+        out.append("-" * 74)
+        out.append("  AGENT CAPABILITY PROFILE  (what opening this repo would authorise)")
+        out.append("-" * 74)
+        out.append("  " + capability.summary_line(prof))
+        out.append("")
+        for key, dim in prof.items():
+            mark = "YES" if dim["status"] == "present" else " no"
+            count = f"  ({dim['evidence_count']} finding(s))" if dim["evidence_count"] else ""
+            out.append(f"  [{mark}] {key.replace('_', ' ')}{count}")
+            if dim["status"] == "present":
+                for ex in dim["examples"]:
+                    out.append(f"          - {ex['rule_id']} @ {ex['file']}:{ex['line']}")
+        out.append("")
+        out.append("  A capability reads PRESENT or no -- never SAFE. 'no' means no rule")
+        out.append("  matched it, which is not the same as the repository not having it.")
+
     chain_hits = result.get("chains") or []
     if chain_hits:
         out.append("")
@@ -264,6 +285,7 @@ def render_json(result: dict, meta: dict) -> str:
         # -- an empty list means no chain matched, which (like an empty findings
         # list) is NOT a statement that the tree is safe.
         "chains": result.get("chains") or [],
+        "capability_profile": result.get("capability_profile") or {},
         "limits": [ln.strip() for ln in LIMITS_TEXT.strip().splitlines() if ln.strip()],
     }
     return json.dumps(doc, indent=2, ensure_ascii=True)
