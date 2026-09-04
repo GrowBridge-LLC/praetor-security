@@ -491,11 +491,35 @@ _SNIPPET_CONTEXT = 120
 #:
 #:     "aws-secret-access-key": 'aws_secret_access_key = "' + "Qr7Tz" + ...
 #:
-#: captured the value `aws_secret_access_key = `. And admitting `/` in the
-#: unquoted alphabet turned the prose `ripsecrets: generated/vendored` into a
-#: credential. Both are shapes no real secret has: a credential does not contain
-#: a space, an equals sign, or a path separator.
-_GENERIC_CODE_FRAGMENT_CHARS = (" ", "	", "=", "/", "\\")
+#: captured the value `aws_secret_access_key = `.
+#:
+#: 🔴 THE SET WAS FIVE CHARACTERS AND THREE OF THEM COST RECALL FOR NOTHING.
+#: `/`, backslash and `=` were added on the reasoning that a credential holds no
+#: path separator. That is false: base64 uses `/` and `=`, and a Windows account
+#: name carries a backslash. Measured, all three real shapes were dropped --
+#:
+#:     a db_password holding base64 that contains a slash      -> missed
+#:     a client_secret holding base64 with `=` padding          -> missed
+#:     a password holding a Windows DOMAIN + backslash + account -> missed
+#:
+#: (Described rather than quoted. Written out, those three lines are themselves
+#: findings in PRAETOR's own self-scan -- this file documenting its own rule is
+#: exactly the "writing about a detector adds noise to that detector" case
+#: CLAUDE.md names. The literal shapes live in
+#: tests/test_decoding_and_generic_gaps.py, assembled from parts.)
+#:
+#: -- while suppressing ZERO false positives. Space alone catches both cases that
+#: motivated the set, and the `ripsecrets: generated/vendored` one is caught even
+#: with this tuple EMPTY: the bare branch's own `(?![\w./(])` lookahead already
+#: excluded it. The justification previously written here for `/` was wrong about
+#: which mechanism was doing the work.
+#:
+#: What remains is what a credential genuinely never contains: whitespace.
+#:
+#: ⚠️ In practice this only narrows the QUOTED branch -- `secret_bare`'s alphabet
+#: cannot contain whitespace at all. Applied to both anyway, so a future widening
+#: of either branch inherits the check rather than needing to remember it.
+_GENERIC_CODE_FRAGMENT_CHARS = (" ", "	")
 
 
 def _generic_value(m) -> str:

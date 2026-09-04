@@ -106,7 +106,13 @@ def test_secret_in_a_comment_is_NEVER_suppressed(monkeypatch):
 
 
 def test_behavioural_pattern_in_a_comment_is_suppressed_with_a_reason(monkeypatch):
-    f = _F("aisec", "REMOTE_CODE", 2)
+    # ⚠️ "EXFIL", not "REMOTE_CODE". The engine emits seven categories and
+    # REMOTE_CODE is not one of them -- this fixture named a category that does
+    # not exist. It passed only because the suppression list was a KEEP list, so
+    # an unrecognised category fell through to being suppressed. Inverting that
+    # list to fail safe turned the invented name into a KEEP, and this test went
+    # red for a reason that had nothing to do with what it asserts.
+    f = _F("aisec", "EXFIL", 2)
     _run([f], monkeypatch)
     assert f.filtered, "an aisec behavioural match on a comment line should be suppressed"
     assert "comment" in f.filter_reason.lower(), (

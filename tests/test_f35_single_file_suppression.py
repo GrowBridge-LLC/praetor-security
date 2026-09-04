@@ -34,6 +34,18 @@ _OVERRIDE = (
 )
 
 
+# ⚠️ EVERY FIXTURE BELOW USES A CATEGORY THE ENGINE ACTUALLY EMITS. They used
+# "REMOTE_CODE" and "INJECTION", neither of which `engine_aisec` produces -- the
+# seven real ones are COVERAGE, DANGEROUS_HOOK, EXFIL, HIDDEN_CONTENT,
+# PROMPT_INJECTION, SAFETY_BYPASS and SUPPLY_CHAIN.
+#
+# The invented names passed only because lexical suppression used a KEEP list,
+# so an unrecognised category fell through to being suppressed. Inverting that
+# list to fail safe (an unlisted category is KEPT) turned every one of these into
+# a keep, and the tests went red for a reason unrelated to what they assert.
+#
+# This file is about file-target versus directory-target parity, not category
+# policy, so it needs a real BEHAVIOURAL category: EXFIL.
 def _finding(*, category, line, rule_id="rule"):
     return SimpleNamespace(
         engine="aisec",
@@ -91,7 +103,10 @@ def _scan_inline_fixture(monkeypatch, target: Path):
                     severity=core.Severity.HIGH,
                     file=relpath,
                     line=1,
-                    category="INJECTION",
+                    # "EXFIL": a real behavioural category. "INJECTION" is not
+                    # one the engine emits, and this test is about file-vs-
+                    # directory target parity, not about category policy.
+                    category="EXFIL",
                 )
             ],
         }
@@ -161,12 +176,12 @@ def test_f35_real_scan_matches_file_and_directory_target_outcome(
         (
             praetor._apply_inline_ignores,
             "run()  # nosec\n",
-            _finding(category="REMOTE_CODE", line=1),
+            _finding(category="EXFIL", line=1),
         ),
         (
             praetor._apply_lexical_context,
             "# diagnostic wording only\n",
-            _finding(category="REMOTE_CODE", line=1),
+            _finding(category="EXFIL", line=1),
         ),
         (
             praetor._apply_injection_exemplar,
@@ -181,7 +196,7 @@ def test_f35_real_scan_matches_file_and_directory_target_outcome(
         (
             praetor._apply_reachability,
             'import re\nPATTERN = re.compile("sample")\n',
-            _finding(category="REMOTE_CODE", line=2),
+            _finding(category="EXFIL", line=2),
         ),
     ],
 )
@@ -206,12 +221,12 @@ def test_f35_each_suppression_pass_matches_file_and_directory_targets(
         (
             praetor._apply_inline_ignores,
             "run()  # ordinary note\n",
-            _finding(category="REMOTE_CODE", line=1),
+            _finding(category="EXFIL", line=1),
         ),
         (
             praetor._apply_lexical_context,
             "run()\n",
-            _finding(category="REMOTE_CODE", line=1),
+            _finding(category="EXFIL", line=1),
         ),
         (
             praetor._apply_injection_exemplar,
@@ -225,7 +240,7 @@ def test_f35_each_suppression_pass_matches_file_and_directory_targets(
         (
             praetor._apply_reachability,
             'import os\nCOMMAND = "sample"\nos.system(COMMAND)\n',
-            _finding(category="REMOTE_CODE", line=2),
+            _finding(category="EXFIL", line=2),
         ),
     ],
 )

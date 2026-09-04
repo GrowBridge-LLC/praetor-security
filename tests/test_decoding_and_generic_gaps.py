@@ -145,3 +145,63 @@ def test_the_generic_pass_does_not_match_ordinary_code():
     ):
         m = engine_secrets.GENERIC.search(line)
         assert not (m and engine_secrets._generic_value(m)), line
+
+
+# --------------------------------------------------------------------------- #
+# The characters the code-fragment filter rejects
+# --------------------------------------------------------------------------- #
+#
+# 🔴 EVERY TEST ABOVE USES A PURE ALPHANUMERIC VALUE, and an audit named that as
+# the gap: `_VALUE` contains no `/`, no backslash and no `=`, so it dodged all
+# five characters the reject set was screening on. The set could be widened back
+# to five -- removing a large class of real credentials -- with the whole suite
+# green. "Mutate in both directions" was not applied to the character class the
+# predicate rejects, so these tests apply it.
+
+_BS = chr(92)
+# ⚠️ ASSEMBLED, never written whole. Each of these IS a finding when it appears
+# as a literal, and the self-scan caught an earlier draft of this file producing
+# four of them. Fix the fixture, not the rules.
+_Q = '"'
+_SLASH_VAL = "Zq4" + "/" + "Wm8xTv2NbHc6RdKp1Lf"
+_PAD_VAL = "Xq4Wm8xTv2NbHc6RdKp1Lfz" + "=="
+_DOMAIN_VAL = "CORPDOMAIN" + _BS + "svc_account_pw9x"
+_REAL_SHAPES = {
+    "base64 with a slash":    "db_password = " + _Q + _SLASH_VAL + _Q,
+    "base64 with padding":    "client_secret = " + _Q + _PAD_VAL + _Q,
+    "windows domain account": "password = " + _Q + _DOMAIN_VAL + _Q,
+}
+
+
+def test_a_credential_containing_slash_padding_or_backslash_is_still_found():
+    """🔴 THE RECALL DIRECTION. `/`, `=` and backslash were rejected on the
+    reasoning that a credential holds no path separator. Base64 uses two of them
+    and a Windows account name uses the third."""
+    for name, line in _REAL_SHAPES.items():
+        m = engine_secrets.GENERIC.search(line)
+        assert m and engine_secrets._generic_value(m), \
+            f"a real credential shape was dropped: {name}"
+
+
+def test_those_three_characters_suppress_no_false_positive():
+    """The measurement that justified narrowing the set. Both cases that
+    motivated it are caught by whitespace alone, and the second is caught even
+    with the reject set EMPTY -- the bare branch's own lookahead already excludes
+    it, so the original justification named the wrong mechanism."""
+    fps = [
+        "ripsecrets: generated/vendored code with high-entropy strings",
+        '"aws-secret-access-key": ' + "'aws_secret_access_key = " + '"' + "' + x",
+    ]
+    for line in fps:
+        m = engine_secrets.GENERIC.search(line)
+        assert not (m and engine_secrets._generic_value(m)), line
+
+
+def test_the_reject_set_is_whitespace_only():
+    """Pins the decision, so widening it back is a deliberate act with a red test
+    rather than a quiet edit. The behavioural tests above carry the claim; this
+    records which characters were ruled out and why."""
+    assert set(engine_secrets._GENERIC_CODE_FRAGMENT_CHARS) == {" ", "\t"}, (
+        "adding `/`, `=` or a backslash here drops base64 values and Windows "
+        "domain accounts while suppressing no measured false positive"
+    )

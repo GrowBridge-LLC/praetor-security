@@ -18,7 +18,10 @@ import praetor
 def _finding(file, line):
     return SimpleNamespace(
         engine="aisec",
-        category="REMOTE_CODE",
+        # "EXFIL", not "REMOTE_CODE": the engine emits no such category, and this
+        # test is about CACHING, not policy -- it needs a finding the suppression
+        # pass will actually consider.
+        category="EXFIL",
         file=file,
         line=line,
         filtered=False,

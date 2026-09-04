@@ -759,6 +759,17 @@ class ScanFile:
     contains_nul: bool = False
 
 
+def _is_inside_git_dir(rel: str) -> bool:
+    """True for a path under `.git/`, which today means `.git/hooks/` only.
+
+    Used to keep git's own files out of the `kept_code_files` census. They are
+    git's, not the target's, and the floor that reads that counter is asking
+    whether the TARGET's source was measured.
+    """
+    parts = (rel or "").replace("\\", "/").split("/")
+    return ".git" in parts[:-1]
+
+
 def _consider_file(ap: str, rel: str, max_bytes: int, excludes: list,
                     stats: Optional[dict], mode: str = "text",
                     admit=None) -> Optional["ScanFile"]:
@@ -864,7 +875,28 @@ def _consider_file(ap: str, rel: str, max_bytes: int, excludes: list,
             if len(stats["binary_examples"]) < 20:
                 stats["binary_examples"].append((rel, size))
         return None
-    if stats is not None and is_code(fn):
+    # 🔴 A GIT HOOK IS NOT THE TARGET'S OWN SOURCE, and counting it as such
+    # disarmed a floor. `is_code()` returns True for every name in
+    # `GIT_HOOK_NAMES`, so once `.git/hooks/` started being walked, a benign
+    # `pre-commit` made `kept_code_files` non-zero -- and the "NO CODE WAS
+    # EXAMINED" floor reads exactly that counter.
+    #
+    # An audit measured it: a tree whose only real code was a remote-execution
+    # pipe (the shape CLAUDE.md uses as its teaching example) in
+    # `dist/`, plus an innocuous `.git/hooks/pre-commit` saying `echo hi`, went
+    # from exit 3 with "NO CODE WAS EXAMINED" to exit 0 with no diagnostic. Both
+    # an attacker shipping a tarball and an ordinary husky install produce that
+    # file, so it is reachable by accident and on purpose.
+    #
+    # This is the SAME defect the shared-stats path had, re-opened through the
+    # primary walk: `CODE_EXTS`' own safety argument ("adding an entry can only
+    # ever REDUCE the floor's coverage") was never re-checked when a whole new
+    # FILE SOURCE was admitted.
+    #
+    # ⚠️ The hook is still SCANNED. It just does not count as evidence that the
+    # target's source code was measured, which is the only question this counter
+    # answers.
+    if stats is not None and is_code(fn) and not _is_inside_git_dir(rel):
         stats["kept_code_files"] += 1
     return ScanFile(ap, rel, size, has_nul)
 
@@ -941,16 +973,34 @@ def walk_files(
         return out
 
     if os.path.isfile(target):
+        # 🔴 THIS BRANCH REPORTED NONE OF THE THREE WHOLE-FILE DROPS, and the
+        # commit that added them said "all four walks now report". The
+        # enumeration was WALKS, and a single-file target is not a walk -- so it
+        # fell outside the sentence that described the fix.
+        #
+        # An audit measured the result: the same file holding a live-shaped AWS
+        # secret key gave `oversize_files=4` and an INFO coverage note as a
+        # DIRECTORY target, and `oversize_files=0`, `file_count=0`, zero findings
+        # and no note at all as a FILE target. Compounded with the dead floor, it
+        # was exit 0 in silence.
         name = os.path.basename(target)
         try:
             size = os.path.getsize(target)
-        except OSError:
+        except OSError as exc:
+            if stats is not None:
+                stats["unstattable_files"] += 1
+                if len(stats["unstattable_examples"]) < 20:
+                    stats["unstattable_examples"].append((name, type(exc).__name__))
             return out
         if mode == "model":
             # Mirrors the directory-walk branch of _consider_file: candidacy is
             # model_candidate(), not scannable(), and the binary sniff never
             # runs -- a positive sniff is expected for a model file, not
             # disqualifying.
+            if model_candidate(name) and size > max_bytes and stats is not None:
+                stats["oversize_files"] += 1
+                if len(stats["oversize_examples"]) < 20:
+                    stats["oversize_examples"].append((name, size))
             if model_candidate(name) and size <= max_bytes:
                 try:
                     rel = os.path.relpath(target, os.getcwd()).replace("\\", "/")
@@ -959,6 +1009,21 @@ def walk_files(
                 out.append(ScanFile(target, rel, size, False))
             return out
         binary, has_nul = _binary_and_nul_in_sniff(target)
+        if scannable(name):
+            # Same three disclosures as the directory walk, for the same reason:
+            # a cap the operator can see is a decision, a cap nobody records is a
+            # blind spot. Order matters -- report the FIRST reason the file was
+            # refused, so the note names the cap the operator can actually change.
+            if size > max_bytes:
+                if stats is not None:
+                    stats["oversize_files"] += 1
+                    if len(stats["oversize_examples"]) < 20:
+                        stats["oversize_examples"].append((name, size))
+            elif binary:
+                if stats is not None:
+                    stats["binary_files"] += 1
+                    if len(stats["binary_examples"]) < 20:
+                        stats["binary_examples"].append((name, size))
         if scannable(name) and size <= max_bytes and not binary:
             # Report a path relative to the CWD, not the bare basename. A
             # single-file scan used to report "x.js" no matter how deep the
@@ -1126,21 +1191,49 @@ def _decode_if_utf16_without_bom(data: bytes):
     """Return decoded text if `data` looks like BOM-less UTF-16, else None.
 
     A BOM is handled by the ordinary decode path; this is only for its absence.
+
+    🔴 THE SHAPE TEST READS THE WHOLE FILE, AND THE FIRST VERSION READ 4 KB.
+    That version took its decision from `data[:4096]` and applied the result to
+    ALL of `data`, which is an attacker-controlled whole-file blinding: prefix a
+    UTF-8 file with about 1200 bytes of `x-then-NUL` and every byte after it decodes
+    as CJK mojibake. An audit demonstrated it -- a file holding a live-shaped AWS
+    secret key went from FOUND to MISSED, with `file_count` intact,
+    `unreadable_files: 0` and no coverage note anywhere.
+
+    That is strictly worse than the miss it was written to fix. The original bug
+    was TOOL-PRODUCED (PowerShell 5.1 writes BOM-less UTF-16LE by default); the
+    regression was ATTACKER-CHOSEN. Deciding on a sample and acting on the whole
+    is the defect, so the sample is gone.
+
+    ⚠️ Cost, accepted: the ratio is now computed over the entire file rather than
+    a 4 KB window. The work is two passes over bytes already in memory, and it is
+    only reached when a NUL is present at all -- which no ordinary source file
+    contains.
     """
-    sniff = data[:4096]
-    if len(sniff) < 16 or b"\x00" not in sniff:
+    # ⚠️ `b"\x00"`, written as an ESCAPE. An earlier edit wrote a real NUL byte
+    # into this source, which then had to be stripped -- leaving `b"" not in
+    # data`. That is always False, so the guard silently degraded to a length
+    # check and the whole-file NUL census ran on every file in every scan. The
+    # module still imported and every test still passed; only reading the bytes
+    # found it.
+    if len(data) < 16 or b"\x00" not in data:
         return None
     # Trim to an even length so the two offset classes are the same size.
-    even = sniff[: len(sniff) - (len(sniff) % 2)]
-    at_odd = sum(1 for i in range(1, len(even), 2) if even[i] == 0)
-    at_even = sum(1 for i in range(0, len(even), 2) if even[i] == 0)
+    even = data[: len(data) - (len(data) % 2)]
     pairs = len(even) // 2
     if pairs == 0:
         return None
-    # ASCII-range UTF-16 puts a NUL in EVERY high byte. Require a strong
-    # majority rather than all of them, so one non-ASCII character does not
-    # disqualify the file -- and require the OTHER offset class to be nearly
-    # free of NULs, which is what separates real UTF-16 from binary noise.
+    at_odd = sum(1 for i in range(1, len(even), 2) if even[i] == 0)
+    at_even = sum(1 for i in range(0, len(even), 2) if even[i] == 0)
+    # ASCII-range UTF-16 puts a NUL in EVERY high byte. Require a strong majority
+    # rather than all of them, so a handful of non-ASCII characters does not
+    # disqualify the file -- and require the OTHER offset class to be nearly free
+    # of NULs, which is what separates real UTF-16 from binary noise.
+    #
+    # ⚠️ BOTH TESTS NOW SPAN THE WHOLE FILE. A prefix cannot carry the decision
+    # for a body that disagrees with it: 1200 bytes of `x-then-NUL` in front of a
+    # 3 KB UTF-8 payload leaves the odd-offset NUL ratio far below the threshold,
+    # so the file correctly stays on the UTF-8 path.
     for null_offsets, other, encoding in ((at_odd, at_even, "utf-16-le"),
                                           (at_even, at_odd, "utf-16-be")):
         if null_offsets >= pairs * 0.9 and other <= pairs * 0.1:
