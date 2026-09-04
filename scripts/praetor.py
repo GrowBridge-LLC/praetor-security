@@ -78,6 +78,43 @@ import taint                    # noqa: E402
 import report                   # noqa: E402
 
 
+#: Counters that describe WHAT A WALK REFUSED, as opposed to the SHAPE of the
+#: primary text scope.
+#:
+#: 🔴 THE DISTINCTION IS LOAD-BEARING AND SHARING THE WHOLE DICT BROKE IT. The
+#: supplementary walks were given `scope_stats` directly so their drops would
+#: stop being silent -- and they then also incremented `kept_code_files`, which
+#: the "NO CODE WAS EXAMINED" floor reads. A tree whose only real code sat in
+#: `dist/` started returning exit 0 because the aisec walk had admitted a
+#: `package.json` at the root, so the floor concluded code had been measured.
+#: Three tests caught it; without them the repair for one false clean would have
+#: created another.
+#:
+#: `kept_code_files`, `skipped_code_files`, `skipped_dirs` and
+#: `excluded_by_pattern` describe the PRIMARY walk's scope and must come from
+#: that walk alone. The drop counters below are additive facts about refusals
+#: and are merged from every walk.
+_DROP_COUNTERS = ("oversize", "binary", "unstattable")
+
+
+def _merge_drop_counters(into: dict, extra: dict) -> None:
+    """Fold a supplementary walk's refusals into the reported scope.
+
+    Counts are REFUSALS, not distinct files: the walks overlap, so one file
+    refused by two of them counts twice. Stated in the report rather than
+    deduplicated -- an over-count of "what I did not read" errs toward
+    disclosure, and making it tidy is how the first version came to report zero.
+    """
+    for key in _DROP_COUNTERS:
+        into[f"{key}_files"] = into.get(f"{key}_files", 0) + extra.get(f"{key}_files", 0)
+        examples = into.setdefault(f"{key}_examples", [])
+        for item in extra.get(f"{key}_examples", []):
+            if len(examples) >= 20:
+                break
+            if item not in examples:
+                examples.append(item)
+
+
 def _emit_nothing_examined(target: str, args) -> None:
     """Explain a scan that opened zero files. Called from BOTH exit paths.
 
@@ -163,6 +200,11 @@ def _find_bundled_rules():
 
 
 RULES_DIR, BUNDLED_SEMGREP = _find_bundled_rules()
+
+#: Engines that find their own files instead of consuming a walk list. They
+#: ignore --max-file-size and --exclude, so an empty walk says nothing about
+#: whether they measured the target. See the `nothing_examined` comment.
+_SELF_DISCOVERING_ENGINES = frozenset({"sast", "sca"})
 
 ALL_ENGINES = ["sast", "secrets", "sca", "aisec", "model"]
 
@@ -360,6 +402,39 @@ def _apply_inline_ignores(findings, target, read_text):
 # own comment for the fuller version of this reasoning.
 _LEXCTX_ENGINES = ("aisec",)
 
+#: 🔴 CATEGORIES A COMMENT CANNOT MAKE INERT. THE ENGINE ALLOWLIST WAS NOT A
+#: FINE ENOUGH SCOPE, AND AN AUDIT PROVED IT ON THIS TOOL'S OWN RULES.
+#:
+#: The suppression's stated reason is "which cannot execute", and for a
+#: BEHAVIOURAL finding that is exactly right -- a `curl … | sh` written in a
+#: comment does not run, which is why this mechanism exists and why CLAUDE.md
+#: uses that very line as its teaching example.
+#:
+#: It is FALSE for an instruction. A prompt injection does not need to execute;
+#: it needs to be READ, and an agent reading a `.py` file reads its comments and
+#: its docstrings. Measured, byte-identical text:
+#:
+#:     notes.txt  -- instruction to exfiltrate ~/.aws  -> HIGH, exit 1
+#:     notes.py   -- the SAME text in two `#` comments -> filtered, exit 0
+#:                   capability profile: carries_agent_instructions = none
+#:
+#: The sharpest instance was `hidden-instruction-html-comment` -- the rule whose
+#: entire subject is an instruction hidden in a comment -- being suppressed on
+#: the grounds that it was in a comment.
+#:
+#: ⇒ This is the identical carve-out CLAUDE.md already documents for `secrets`,
+#: one category across. A secret is dangerous because it EXISTS; an instruction
+#: is dangerous because it is READ; only a behaviour is dangerous because it
+#: RUNS. Lexical context can only ever speak to the third.
+#:
+#: ⚠️ Named as a KEEP list, not a suppress list. A category added tomorrow is
+#: kept unless someone decides otherwise, which is the fail-safe direction.
+_LEXCTX_NEVER_SUPPRESS_CATEGORIES = frozenset({
+    "PROMPT_INJECTION",
+    "SAFETY_BYPASS",
+    "HIDDEN_CONTENT",
+})
+
 _LEXCTX_REASONS = {
     lexctx.COMMENT: "behavioural pattern appears in a code comment, which cannot execute",
     lexctx.DOCSTRING: "behavioural pattern appears in a docstring describing the threat, which cannot execute",
@@ -520,6 +595,10 @@ def _apply_lexical_context(findings, target, read_text):
             continue
         if getattr(f, "filtered", False) or f.engine not in _LEXCTX_ENGINES:
             continue
+        # See _LEXCTX_NEVER_SUPPRESS_CATEGORIES. An instruction is dangerous
+        # because it is READ, and an agent reads comments.
+        if getattr(f, "category", "") in _LEXCTX_NEVER_SUPPRESS_CATEGORIES:
+            continue
         if not f.file or f.line <= 0:
             continue
         ap = _finding_source_path(target, f.file)
@@ -634,22 +713,42 @@ def main(argv=None):
     # ran. The aisec walk passes `admit=`, which `core._consider_file` applies
     # BEFORE getsize() and before the sniff, so it traverses the same
     # directories and opens almost nothing.
+    # 🔴 EVERY WALK PASSES `stats`, AND THE FIRST REPAIR OF THIS DID NOT.
+    # The oversize/binary bookkeeping in core._consider_file is guarded by
+    # `if stats is not None`, and only THIS first walk was instrumented. The
+    # wide secrets walk below is the only one that enters `vendor/`,
+    # `node_modules/` and `dist/` -- so an oversized credential there dropped
+    # exactly as silently as before, and `meta.scope.oversize_files` reported 0
+    # while asserting the cap discloses itself. Two independent audits found it
+    # the same day the disclosure shipped.
+    #
+    # ⇒ `scope_stats` is now shared by all four walks. The counters are additive
+    # and the walks overlap, so a file inside `vendor/` that is refused by both
+    # the text walk and the secrets walk is counted twice. That is stated in the
+    # report rather than deduplicated: an over-count of "what I did not read"
+    # errs toward disclosure, and dropping it to look tidy is how the first
+    # version came to report zero.
+    secrets_walk_stats: dict = {}
     secret_files = (
         core.walk_files(target, skip_dirs=core.SECRETS_SKIP_DIRS,
-                        max_bytes=args.max_file_size, extra_excludes=args.exclude)
+                        max_bytes=args.max_file_size, extra_excludes=args.exclude,
+                        stats=secrets_walk_stats)
         if "secrets" in engines else []
     )
+    _merge_drop_counters(scope_stats, secrets_walk_stats)
+    aisec_walk_stats: dict = {}
     if "aisec" in engines:
         already = {sf.abspath for sf in scan_files}
         aisec_files = scan_files + [
             sf for sf in core.walk_files(
                 target, skip_dirs=core.SECRETS_SKIP_DIRS,
                 max_bytes=args.max_file_size, extra_excludes=args.exclude,
-                admit=engine_aisec.is_agent_config_path)
+                admit=engine_aisec.is_agent_config_path, stats=aisec_walk_stats)
             if sf.abspath not in already
         ]
     else:
         aisec_files = scan_files
+    _merge_drop_counters(scope_stats, aisec_walk_stats)
     # 🔴 A THIRD, DIFFERENTLY-SHAPED WALK FOR MODEL FILES ONLY -- mode="model"
     # on the SAME `core.walk_files`/`_consider_file` used above, not a second
     # implementation (see references/DESIGN-model-scanning.md §1.2). Gated
@@ -665,12 +764,15 @@ def main(argv=None):
     # from candidacy -- see design §1.2. The engine's OWN internal per-format
     # bounds (engine_model.py's MAX_RAW_PICKLE_BYTES_SCANNED etc.) are the
     # real scanning-cost controls, not this admission ceiling.
+    model_walk_stats: dict = {}
     model_files = (
         core.walk_files(target, skip_dirs=scan_skip_dirs,
                         max_bytes=core.DEFAULT_MODEL_MAX_ADMIT_BYTES,
-                        extra_excludes=args.exclude, mode="model")
+                        extra_excludes=args.exclude, mode="model", stats=model_walk_stats)
         if "model" in engines else []
     )
+    _merge_drop_counters(scope_stats, model_walk_stats)
+
     nul_text_files = {
         sf.abspath for sf in (scan_files + secret_files + aisec_files) if sf.contains_nul
     }
@@ -894,24 +996,50 @@ def main(argv=None):
     # would be turned off, which is worse than one that reports. Gating on
     # reduced coverage is the operator's decision, and `--allow-degraded`
     # already exists for it.
-    oversize_n = scope_stats.get("oversize_files", 0)
-    if oversize_n:
-        examples = scope_stats.get("oversize_examples", [])
-        shown = ", ".join(f"{rel} ({size} bytes)" for rel, size in examples[:5])
-        more = f" (+{oversize_n - len(examples)} more not listed)" if oversize_n > len(examples) else ""
+    # 🔴 THERE ARE THREE WAYS THE WALKER DISCARDS A WHOLE FILE, and the first
+    # version of this block disclosed one of them, on one of four walks. Two
+    # independent audits demonstrated the same clean-looking scan over a
+    # live-shaped credential through the two it missed.
+    #
+    # ⚠️ Reported at INFO in the COVERAGE category, exactly like the other
+    # coverage notes -- NOT raised to a gating severity. A repository with a
+    # large asset or a real binary has done nothing wrong, and a cap that failed
+    # builds would be switched off, which is worse than one that reports.
+    # Gating on reduced coverage is the operator's decision; --allow-degraded
+    # and --fail-on INFO already exist for it.
+    for key, rule_id, title, cap_text, remedy in (
+        ("oversize", "file-too-large-skipped",
+         "File(s) skipped: larger than the size cap",
+         f"exceeded --max-file-size ({args.max_file_size} bytes)",
+         "Raise --max-file-size, or scan the oversized files separately, if their content matters."),
+        ("binary", "binary-file-skipped",
+         "File(s) skipped: judged binary by the content sniff",
+         "were judged binary (more than 30% control characters in the first 4 KB)",
+         "If one of these is really text, re-encode it; the ratio that classified it is chosen by the scanned tree."),
+        ("unstattable", "unstattable-file-skipped",
+         "File(s) skipped: could not be measured",
+         "could not be stat()ed",
+         "Check permissions and path length, then re-run."),
+    ):
+        count = scope_stats.get(f"{key}_files", 0)
+        if not count:
+            continue
+        examples = scope_stats.get(f"{key}_examples", [])
+        shown = ", ".join(f"{rel} ({detail})" for rel, detail in examples[:5])
+        more = f" (+{count - len(examples)} more not listed)" if count > len(examples) else ""
         all_findings.append(core.Finding(
-            engine="praetor", rule_id="file-too-large-skipped",
-            title="File(s) skipped: larger than the size cap",
+            engine="praetor", rule_id=rule_id, title=title,
             severity=core.Severity.INFO, confidence=core.Confidence.HIGH,
             file=".", line=1, category="COVERAGE",
             description=(
-                f"{oversize_n} file(s) exceeded --max-file-size "
-                f"({args.max_file_size} bytes) and were NOT scanned by any engine. "
+                f"{count} file record(s) {cap_text} and were NOT scanned by any engine. "
                 "Nothing was examined in them, so no finding from them can appear "
-                "above -- and their absence is not evidence they are clean."
+                "above -- and their absence is not evidence they are clean. "
+                "⚠️ The walks overlap, so one file refused by two of them is counted "
+                "twice; this is a count of REFUSALS, not of distinct files."
             ),
-            snippet=f"oversize_files={oversize_n}; cap={args.max_file_size}; examples: {shown}{more}",
-            fix="Raise --max-file-size, or scan the oversized files separately, if their content matters.",
+            snippet=f"{key}_refusals={count}; examples: {shown}{more}",
+            fix=remedy,
         ))
 
     _apply_inline_ignores(all_findings, target, read_text)
@@ -973,6 +1101,19 @@ def main(argv=None):
                 {"file": rel, "bytes": size}
                 for rel, size in scope_stats.get("oversize_examples", [])
             ],
+            # The other two whole-file drop paths, reported for the same reason.
+            # Counts are REFUSALS across four overlapping walks, not distinct
+            # files -- an over-count errs toward disclosure.
+            "binary_files": scope_stats.get("binary_files", 0),
+            "binary_examples": [
+                {"file": rel, "bytes": size}
+                for rel, size in scope_stats.get("binary_examples", [])
+            ],
+            "unstattable_files": scope_stats.get("unstattable_files", 0),
+            "unstattable_examples": [
+                {"file": rel, "error": why}
+                for rel, why in scope_stats.get("unstattable_examples", [])
+            ],
             "max_file_size": args.max_file_size,
             "default_skips_disabled": bool(args.no_default_skips),
             # Files an engine asked for and could not decode. Reported so the
@@ -1029,7 +1170,26 @@ def main(argv=None):
     # would be false, and it would fail a legitimate scan. Every list an engine
     # actually reads is counted here, so adding a sixth engine with its own walk
     # means adding it to this line, and nothing else enforces that.
-    nothing_examined = not (scan_files or secret_files or aisec_files or model_files)
+    # 🔴 "NOTHING WAS EXAMINED" MUST MEAN NOTHING, AND TWO ENGINES DO NOT USE
+    # THESE LISTS AT ALL. `sast` is handed the target DIRECTORY and semgrep does
+    # its own discovery; `sca` reads manifests it finds itself. Neither honours
+    # --max-file-size or --exclude.
+    #
+    # An audit measured the consequence of leaving them out: a target with a
+    # real `shell=True` and an `eval()` in it, scanned with `--engines sast
+    # --fail-on LOW --max-file-size 1`, returned exit 1 before this block moved
+    # and exit 3 after -- while the report above printed the same two real
+    # findings, and stderr said "0 files were opened, so --fail-on has no basis
+    # to pass." Both codes are non-zero so no gate was disarmed, but 1 means
+    # "act on this finding" and 3 means "the environment was broken", and the
+    # scan had measured the tree perfectly well.
+    #
+    # ⚠️ SAFE BECAUSE A SELF-DISCOVERING ENGINE THAT COULD NOT RUN IS CAUGHT
+    # ELSEWHERE. An unavailable semgrep is a blind spot and `blind` returns 3 on
+    # its own; this term only says that a walk finding no files is not evidence
+    # about a scan those walks never fed.
+    walked_nothing = not (scan_files or secret_files or aisec_files or model_files)
+    nothing_examined = walked_nothing and not (_SELF_DISCOVERING_ENGINES & set(engines))
 
     # 🔴 The gate reads engine STATUS, not just findings. An engine that errored
     # or was unavailable produced zero findings for a reason that has nothing to

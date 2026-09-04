@@ -811,7 +811,14 @@ def _consider_file(ap: str, rel: str, max_bytes: int, excludes: list,
         return None
     try:
         size = os.path.getsize(ap)
-    except OSError:
+    except OSError as exc:
+        # A third silent drop: a file the walker could not even stat. Rare, but
+        # a report that cannot say "I could not look at this" is the same defect
+        # as the two below.
+        if stats is not None:
+            stats["unstattable_files"] += 1
+            if len(stats["unstattable_examples"]) < 20:
+                stats["unstattable_examples"].append((rel, type(exc).__name__))
         return None
     if size > max_bytes:
         # 🔴 THIS DROP USED TO BE COMPLETELY SILENT, and a breaker audit turned
@@ -838,10 +845,43 @@ def _consider_file(ap: str, rel: str, max_bytes: int, excludes: list,
         return ScanFile(ap, rel, size, False)
     binary, has_nul = _binary_and_nul_in_sniff(ap)
     if binary:
+        # 🔴 THE SECOND SILENT WHOLE-FILE DROP, found by the audit that was sent
+        # to check the FIRST one. A file whose first 4 KB is more than 30%
+        # control characters is judged binary and discarded -- with no entry in
+        # skipped_dirs, no oversize count, no unreadable count. The file simply
+        # is not in the report.
+        #
+        # Demonstrated: `# ` + 2500 control bytes + a newline + a live-shaped
+        # AWS key. Exit 0, zero findings, and `file_count` did not include it.
+        # The 30% ratio is chosen by the SCANNED TREE, so this is one more
+        # attacker-controlled scope boundary.
+        #
+        # ⚠️ Still DROPPED, deliberately. Feeding a real binary to the text
+        # engines produces noise, not findings. What changes is that the drop is
+        # now on the record, so a reader can see the scan did not look.
+        if stats is not None:
+            stats["binary_files"] += 1
+            if len(stats["binary_examples"]) < 20:
+                stats["binary_examples"].append((rel, size))
         return None
     if stats is not None and is_code(fn):
         stats["kept_code_files"] += 1
     return ScanFile(ap, rel, size, has_nul)
+
+
+#: `.git/hooks/` is walked even though `.git` is pruned everywhere else.
+#:
+#: 🔴 IT IS THE ONE PLACE INSIDE `.git` THAT GIT EXECUTES. An audit put a
+#: `pre-commit` running a downloaded script through a shell at
+#: `.git/hooks/pre-commit` -- the path git ACTUALLY runs -- and PRAETOR reported
+#: zero findings, exit 0, `executes_on_load: no`. The byte-identical file at
+#: `.githooks/pre-commit`, a location git uses only when `core.hooksPath` points
+#: there, was correctly reported HIGH twice.
+#:
+#: The stated reason for pruning `.git` is its object database and packs. That
+#: is a sound argument about `objects/`, `refs/` and `logs/`. It was never an
+#: argument about `hooks/`, and nobody noticed it was covering one.
+_GIT_HOOKS_ARE_WALKED = True
 
 
 def walk_files(
@@ -889,6 +929,10 @@ def walk_files(
         stats.setdefault("excluded_by_pattern", 0)
         stats.setdefault("oversize_files", 0)
         stats.setdefault("oversize_examples", [])
+        stats.setdefault("binary_files", 0)
+        stats.setdefault("binary_examples", [])
+        stats.setdefault("unstattable_files", 0)
+        stats.setdefault("unstattable_examples", [])
     excludes = [re.compile(p) for p in (extra_excludes or [])]
     target = os.path.abspath(target)
     out: list = []
@@ -953,6 +997,11 @@ def walk_files(
             for d in dirs:
                 if d not in skip_dirs and d != ".git":
                     continue
+                if os.path.basename(root) == ".git":
+                    # Inside `.git` the pruning above already keeps only
+                    # `hooks/`; counting the rest here would double-count what
+                    # the parent level already refused.
+                    continue
                 pruned_root = os.path.join(root, d)
                 for proot, _pdirs, pfiles in os.walk(pruned_root, followlinks=False):
                     for pfn in pfiles:
@@ -963,8 +1012,43 @@ def walk_files(
                         if scannable(pfn) and is_code(pfn):
                             stats["skipped_code_files"] += 1
                     del proot, _pdirs
-        dirs[:] = [d for d in dirs if d not in skip_dirs and d != ".git"]
+        # 🔴 `.git/hooks/` IS THE ONE PLACE INSIDE `.git` THAT GIT EXECUTES, and
+        # pruning `.git` wholesale made it invisible to every engine. An audit
+        # put a `pre-commit` running a downloaded script through a shell at
+        # `.git/hooks/pre-commit` -- the path git ACTUALLY runs -- and PRAETOR
+        # reported zero findings, exit 0, `executes_on_load: no`. The identical
+        # file at `.githooks/pre-commit`, a location git only uses when
+        # `core.hooksPath` points there, was correctly reported HIGH twice.
+        #
+        # The stated reason for pruning `.git` is its object database and packs,
+        # which is a sound argument about `objects/`, `refs/` and `logs/`. It is
+        # not an argument about `hooks/`, and nobody noticed it was covering one.
+        #
+        # ⚠️ Descends into `hooks/` ONLY. Everything else under `.git` stays
+        # pruned, so the cost is a handful of small files per repository.
+        # ⚠️ The prune happens ONE LEVEL ABOVE the directory it removes, so a
+        # check for "am I inside .git" never fires -- `.git` is deleted from
+        # `dirs` before the walk descends. `.git` is therefore KEPT here, and
+        # everything inside it except `hooks/` is pruned on the next iteration.
+        # The first attempt at this got it wrong and found nothing.
+        inside_git = os.path.basename(root) == ".git"
+        if inside_git:
+            dirs[:] = [d for d in dirs if d == "hooks"]
+        else:
+            dirs[:] = [
+                d for d in dirs
+                # `.git` survives the skip list SPECIFICALLY so the next
+                # iteration can keep `hooks/` and prune the rest. It is in
+                # `DEFAULT_SKIP_DIRS`, so testing `d != ".git"` alone left it
+                # pruned and the first attempt at this found nothing.
+                if (d == ".git" and _GIT_HOOKS_ARE_WALKED) or d not in skip_dirs
+            ]
         for fn in files:
+            if inside_git:
+                # Only `.git/hooks/` is in scope. `.git/config`, `HEAD`, `index`
+                # and the packs are not, and admitting them would put the object
+                # database into every scan.
+                continue
             ap = os.path.join(root, fn)
             rel = os.path.relpath(ap, target).replace("\\", "/")
             sf = _consider_file(ap, rel, max_bytes, excludes, stats, mode=mode, admit=admit)
@@ -1013,7 +1097,58 @@ def read_text(path: str, max_bytes: int = DEFAULT_MAX_BYTES) -> str:
     # keep a fallback AND record each decode failure as a per-file fact the report
     # surfaces, so the engine never reports `ok` about a file it could not read.
     # Designed, not built: it needs its own audit, not a fourth same-night patch.
+
+    # 🔴 UTF-16 WITHOUT A BOM DECODED TO GARBAGE AND THE REPORT SAID IT WAS READ.
+    #
+    # Windows PowerShell 5.1's `Out-File` and `Set-Content` write UTF-16LE with
+    # no byte-order mark by default, so this is an ordinary file on the machine
+    # PRAETOR was built on, not an exotic one. Its bytes decode cleanly as UTF-8
+    # -- `A\x00W\x00S\x00` -- so nothing raises, nothing is recorded unreadable,
+    # and every pattern fails because a NUL sits between each pair of letters.
+    #
+    # An audit measured it: `AWS_ACCESS_KEY_ID=<key>` in UTF-16LE gave exit 0,
+    # zero findings, `secrets [ran] 0 raw finding(s)`, and a report line stating
+    # "NUL-bearing text files: 1 (retained for text scanning)". The same text in
+    # UTF-8 gave exit 1, HIGH. With a BOM the scan correctly exited 3 -- so the
+    # safe path depended on a byte the attacker chooses.
+    #
+    # ⚠️ Detected by SHAPE, not by guessing: a NUL at every second offset in the
+    # sniff, which text in any single-byte encoding never produces. On failure it
+    # falls through to the UTF-8 path above, so a misdetection costs nothing that
+    # was not already lost.
+    decoded_utf16 = _decode_if_utf16_without_bom(data)
+    if decoded_utf16 is not None:
+        return decoded_utf16
     return data.decode("utf-8", errors="surrogatepass")
+
+
+def _decode_if_utf16_without_bom(data: bytes):
+    """Return decoded text if `data` looks like BOM-less UTF-16, else None.
+
+    A BOM is handled by the ordinary decode path; this is only for its absence.
+    """
+    sniff = data[:4096]
+    if len(sniff) < 16 or b"\x00" not in sniff:
+        return None
+    # Trim to an even length so the two offset classes are the same size.
+    even = sniff[: len(sniff) - (len(sniff) % 2)]
+    at_odd = sum(1 for i in range(1, len(even), 2) if even[i] == 0)
+    at_even = sum(1 for i in range(0, len(even), 2) if even[i] == 0)
+    pairs = len(even) // 2
+    if pairs == 0:
+        return None
+    # ASCII-range UTF-16 puts a NUL in EVERY high byte. Require a strong
+    # majority rather than all of them, so one non-ASCII character does not
+    # disqualify the file -- and require the OTHER offset class to be nearly
+    # free of NULs, which is what separates real UTF-16 from binary noise.
+    for null_offsets, other, encoding in ((at_odd, at_even, "utf-16-le"),
+                                          (at_even, at_odd, "utf-16-be")):
+        if null_offsets >= pairs * 0.9 and other <= pairs * 0.1:
+            try:
+                return data.decode(encoding, errors="surrogatepass")
+            except (UnicodeDecodeError, LookupError):
+                return None
+    return None
 
 
 def read_bytes(path: str, max_bytes: int) -> bytes:

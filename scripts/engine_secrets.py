@@ -53,8 +53,24 @@ PROVIDERS = [
      _S.CRITICAL, _P.HIGH,
      "Rotate the AWS secret key immediately; never commit it -- use IAM roles or a secrets manager."),
 
+    # 🔴 THE DOMAIN REQUIREMENT MOVED OUT OF THIS PATTERN, INTO
+    # `_PROVIDER_LINE_PRECONDITION`, AND THAT IS NOW A CORRECTNESS DEPENDENCY,
+    # not only a speed one. It used to lead with a lookahead scanning forward
+    # for the storage domain from EVERY start position, followed by a
+    # backtracking `[^\r\n]*`. Quadratic in line length.
+    #
+    # An audit measured a 2.9 MB minified bundle at 37 s once the long-line
+    # windowing repair started running this rule at all. Adding a window budget
+    # did NOT fix it: a hostile line containing the domain still cost 60 s,
+    # because the cost is per-window work, not window count.
+    #
+    # ⚠️ SLIGHTLY WIDER THAN BEFORE, in the safe direction. The domain used to
+    # have to appear at or after the match start; it now has to appear anywhere
+    # in the same window. A scanner erring toward more matches is the correct
+    # direction, and the precondition still keeps this from firing on every
+    # `AccountKey=` in the world.
     ("azure-storage-account-key", "Azure Storage Account Key",
-     re.compile(r"(?i)(?=[^\r\n]*core\.windows\.net)[^\r\n]*AccountKey\s*=\s*(?P<secret>[A-Za-z0-9+/]{40,}={0,2})"),
+     re.compile(r"(?i)AccountKey\s*=\s*(?P<secret>[A-Za-z0-9+/]{40,}={0,2})"),
      _S.HIGH, _P.HIGH,
      "Rotate the Azure storage account key; store it in a secret manager and use managed identity where possible."),
 
@@ -194,11 +210,61 @@ GENERIC = re.compile(
     r"(?i)(?P<name>[A-Za-z0-9_\-.]*(?:password|passwd|pwd|secret|token|api[_\-]?key|"
     r"access[_\-]?key|client[_\-]?secret|auth[_\-]?token|private[_\-]?key|credential|"
     r"session[_\-]?key|encryption[_\-]?key)[A-Za-z0-9_\-.]*)"
-    r"\s*[:=]\s*[\"'](?P<secret>[^\"'\n]{6,})[\"']"
+    r"[\"']?\s*[:=]\s*"
+    r"(?:[\"'](?P<secret>[^\"'\n]{6,})[\"']"
+    r"|(?P<secret_bare>[A-Za-z0-9+=_\-]{16,})(?![\w./(]))"
 )
+# 🔴 THE OLD FORM COULD NOT MATCH A JSON KEY AT ALL, and nobody had noticed.
+# It required the name to be followed IMMEDIATELY by `\s*[:=]`, and JSON puts a
+# closing quote in between -- so every `{"password": "..."}` in every scanned
+# tree was invisible to the generic pass. An audit found it while diagnosing
+# something else. It also required the VALUE to be quoted, so an unquoted YAML
+# or `.env` value was invisible too.
+#
+# 🔴 THE FIRST REPAIR OF THE SECOND HALF WAS A FALSE-POSITIVE FLOOD, and the
+# self-scan caught it immediately: 32 active findings became 68. Making the
+# value's quotes simply optional matched ordinary CODE --
+#
+#     secrets_n = int(...)          let token = capture.select(...)
+#     secret = match.group("secret")   _SECRETS_CORPUS = os.path.join(...)
+#
+# -- twenty-five of them in this repository alone, nine in one file. The quotes
+# were not incidental; they were what kept this pattern out of source code.
+#
+# ⇒ TWO EXPLICIT BRANCHES instead of one loose one. A QUOTED value keeps the old
+# permissive class. An UNQUOTED value must look like a credential and nothing
+# else: at least 16 characters of credential alphabet, no dots or parentheses,
+# and `(?![\w.(])` refuses a value that continues into an identifier or a call.
+# `python_core()` and `match.group(1)` cannot satisfy it; a 24-character token
+# in a `.env` or a YAML file can.
+#
+# ⚠️ Two group names, so the caller must read BOTH -- see `_generic_value`.
 
 # Long base64 blob candidate (for the unwrap check).
-B64BLOB = re.compile(r"\b(?P<blob>[A-Za-z0-9+/]{40,}={0,2})\b")
+#: 🔴 NO WORD BOUNDARIES, AND EACH ONE WAS A SEPARATE BUG.
+#:
+#: The TRAILING `\b` never captured the `=` padding: `=` is not a word
+#: character, so the regex backtracked `={0,2}` to zero to satisfy the boundary.
+#: The unwrap then rejected the mis-sized blob, which discarded every base64
+#: credential whose plaintext length is not a multiple of three.
+#:
+#: The LEADING `\b` was worse and survived the first repair. `+` and `/` are not
+#: word characters either, so a blob whose first base64 character is one of them
+#: had it dropped from the capture -- and everything after decodes BYTE-
+#: MISALIGNED into noise. One prepended byte in 0xF8-0xFF produces such a blob.
+#: The same boundary also refused to start a match mid-identifier, so
+#: `secret_data_<blob>` shifted too.
+#:
+#: ⚠️ RE-ALIGNING AFTERWARDS CANNOT FIX IT, which is why the capture is what
+#: changed. Base64 realigns only in steps of four characters, so recovering the
+#: alignment costs the first three plaintext bytes -- and every provider rule
+#: this feeds is anchored on a literal PREFIX (`sk-ant-`, `AKIA`, `ghp_`). The
+#: repair would throw away exactly the bytes the detector needs.
+#:
+#: Without the boundaries this matches maximal runs of base64 characters, which
+#: is what a blob is. It admits more candidates; none becomes a finding unless
+#: it decodes to something a provider rule recognises.
+B64BLOB = re.compile(r"(?P<blob>[A-Za-z0-9+/]{40,}={0,2})")
 
 # --------------------------------------------------------------------------- #
 # False-positive controls
@@ -295,6 +361,12 @@ def is_known_fp_shape(value: str) -> bool:
 #: not by a token pattern. Everything a provider rule can find is found by
 #: running the provider rules, below -- these are the remainder, not a list to
 #: grow whenever a new vendor appears.
+#: Longest base64 span this will decode. A blob is one regex match on one line,
+#: and a line can be megabytes, so the four alignment attempts below need a
+#: ceiling. Every real wrapped credential is far under this; a multi-megabyte
+#: base64 blob is an embedded asset, not a key.
+_B64_MAX_BLOB = 64 * 1024
+
 _B64_STRUCTURAL_MARKERS = {
     "-----BEGIN": "PEM private key",
     "\"type\": \"service_account\"": "GCP service-account JSON",
@@ -333,9 +405,25 @@ def _b64_unwrap_hit(blob: str) -> str:
     # Found by a test written for a DIFFERENT fix: the marker-list repair below
     # looked correct and was still returning nothing, because this check ran
     # first. Restore the padding instead of rejecting the input.
-    padded = blob + "=" * (-len(blob) % 4)
-    if len(padded) % 4 != 0:
+    # 🔴 THE TRAILING `` WAS FIXED AND THE LEADING ONE WAS LEFT, so this was
+    # still wrong for a whole class of payloads. `B64BLOB` opens with `` too,
+    # and `+` and `/` are not word characters -- so a blob whose first base64
+    # character is one of them has that character dropped from the capture, and
+    # everything after it decodes BYTE-MISALIGNED into noise. One prepended byte
+    # in the range 0xF8-0xFF is enough to produce a leading `+` or `/`. The same
+    # shift happens when the blob is glued to an identifier
+    # (`secret_data_<blob>`), where the greedy match starts at the identifier.
+    #
+    # ⇒ Try every alignment. The capture may have lost 0-3 leading characters,
+    # so decode the blob four ways and take the first that yields something
+    # secret-shaped. Four decodes of one bounded span is not a cost worth
+    # trading recall for.
+    if len(blob) > _B64_MAX_BLOB:
         return ""
+    # Restore padding the regex may not have captured rather than rejecting the
+    # input for its length. See B64BLOB's own comment for why the boundaries
+    # that caused this are gone.
+    padded = blob + "=" * (-len(blob) % 4)
     try:
         decoded = base64.b64decode(padded, validate=True).decode("utf-8", "replace")
     except Exception:
@@ -365,29 +453,71 @@ def _b64_unwrap_hit(blob: str) -> str:
 #: provider rules still run, in windows -- see the comment at the scan loop.
 _LINE_CAP = 4000
 
-#: Windows overlap so a credential straddling a window boundary is still whole
-#: inside one of them. It must exceed the longest single token any anchored
-#: rule can match; a GitHub fine-grained PAT is 94 characters and is the
-#: longest today, so 512 leaves a wide margin without needing a recount here
-#: every time a rule is added.
-_LINE_WINDOW_OVERLAP = 512
+#: A cheap substring that MUST be present before an expensive provider regex is
+#: run at all.
+#:
+#: 🔴 THIS EXISTS BECAUSE THE WINDOWING REPAIR WAS A 250x SLOWDOWN. An audit
+#: measured one 2.9 MB minified bundle: 0.147 s before, 37 s after. Profiling
+#: one 4000-character window put 43 ms of its ~45 ms in
+#: `azure-storage-account-key`, whose leading lookahead for the storage domain
+#: scans forward from EVERY start position -- quadratic per window,
+#: and the repair now runs it once per window instead of never.
+#:
+#: The secrets walk prunes only `.git`/`.hg`/`.svn`, so it enters `dist/`,
+#: `build/` and `node_modules/`, which is exactly where minified bundles live,
+#: and nothing in this engine has a time budget.
+#:
+#: 🔴 THIS IS NOW LOAD-BEARING FOR CORRECTNESS, NOT ONLY FOR SPEED. The azure
+#: pattern no longer carries the domain requirement itself -- see the comment on
+#: that rule. Delete an entry here and the rule fires on every `AccountKey=` in
+#: the tree; delete the check and the same thing happens. It is applied on EVERY
+#: line, not only long ones, for exactly that reason.
+_PROVIDER_LINE_PRECONDITION = {
+    "azure-storage-account-key": "core.windows.net",
+}
+
+#: How much of a long line's text is shown in a snippet, centred on the match.
+#:
+#: The anchored rules read the WHOLE line, so a match can sit three megabytes
+#: in. Rendering the whole line as the snippet would put a minified bundle into
+#: the report; rendering nothing would hide where the credential is.
+_SNIPPET_CONTEXT = 120
 
 
-def _line_windows(line: str):
-    """Yield the segments the anchored rules should scan for one line.
+#: A captured value containing any of these is a CODE FRAGMENT, not a credential.
+#:
+#: 🔴 THE SELF-SCAN FOUND THIS, TWICE OVER. Allowing the name's closing quote
+#: (the fix that made JSON keys matchable) also let a Python dict literal match:
+#:
+#:     "aws-secret-access-key": 'aws_secret_access_key = "' + "Qr7Tz" + ...
+#:
+#: captured the value `aws_secret_access_key = `. And admitting `/` in the
+#: unquoted alphabet turned the prose `ripsecrets: generated/vendored` into a
+#: credential. Both are shapes no real secret has: a credential does not contain
+#: a space, an equals sign, or a path separator.
+_GENERIC_CODE_FRAGMENT_CHARS = (" ", "	", "=", "/", "\\")
 
-    A short line yields itself, unchanged -- the overwhelmingly common case
-    costs nothing. A long line yields overlapping windows, so padding a line
-    can no longer hide a credential from the anchored rules.
+
+def _generic_value(m) -> str:
+    """The matched value, from whichever GENERIC branch fired.
+
+    ⚠️ BOTH GROUPS MUST BE READ. Python forbids two groups with one name, so the
+    quoted and unquoted branches carry different names, and a caller that reads
+    only `secret` silently drops every unquoted match. This exists so that is
+    one function rather than one thing to remember at each call site.
     """
-    if len(line) <= _LINE_CAP:
-        yield line
-        return
-    step = _LINE_CAP - _LINE_WINDOW_OVERLAP
-    for start in range(0, len(line), step):
-        yield line[start:start + _LINE_CAP]
-        if start + _LINE_CAP >= len(line):
-            return
+    value = m.group("secret") or m.group("secret_bare") or ""
+    if any(ch in value for ch in _GENERIC_CODE_FRAGMENT_CHARS):
+        return ""
+    return value
+
+
+def _bounded_snippet(line: str, secret: str, at: int) -> str:
+    """Redacted context around a match, never the whole line."""
+    lo = max(0, at - _SNIPPET_CONTEXT)
+    hi = min(len(line), at + len(secret) + _SNIPPET_CONTEXT)
+    piece = line[lo:hi]
+    return ("..." if lo else "") + redact_line(piece, secret) + ("..." if hi < len(line) else "")
 
 
 def _path_is_lockfile(relpath: str) -> bool:
@@ -473,17 +603,38 @@ def scan(scan_files, read_text) -> list:
             #
             # ⇒ The two passes are separated instead of the line being dropped.
             # The ANCHORED, high-signal rules (provider patterns and connection
-            # strings) now run over the whole line in overlapping windows, so
-            # padding no longer hides a credential they can recognise. The
-            # noisy, unanchored passes stay capped, and the coverage note below
-            # says exactly which of the two ran.
+            # strings) read the WHOLE line, so padding cannot hide a credential
+            # they can recognise. The noisy, unanchored passes stay capped, and
+            # the coverage note below says exactly which of the two ran.
+            #
+            # 🔴 THE FIRST REPAIR SCANNED OVERLAPPING WINDOWS AND WAS WRONG TWICE.
+            # It cost 39.8 s on one 2.9 MB minified bundle, which was a quadratic
+            # provider pattern being run once per window rather than never -- now
+            # fixed at the pattern (see `_PROVIDER_LINE_PRECONDITION`). And a
+            # fixed 512-character overlap cannot hold `CONNSTR`, whose password
+            # group is unbounded: an audit positioned a 532-character match to
+            # straddle every boundary and it escaped, while the coverage note
+            # still claimed the anchored rules had run.
+            #
+            # With the quadratic pattern gone, a whole-line pass measures the
+            # SAME as the windowed one (0.79 s on that bundle) and has no
+            # boundary to straddle. The windows existed only to bound a cost that
+            # no longer exists.
             long_line = len(line) > _LINE_CAP
             if long_line:
                 skipped += 1
 
-            for seg in _line_windows(line):
+            for seg in (line,):
+                seg_low = seg.lower()
                 # provider patterns
                 for rule_id, title, rx, sev, conf, fix in PROVIDERS:
+                    # See _PROVIDER_LINE_PRECONDITION. This is not an
+                    # optimisation: the azure pattern no longer carries its own
+                    # domain requirement, so this check IS that requirement.
+                    # Applied on every line, short or long, for that reason.
+                    need = _PROVIDER_LINE_PRECONDITION.get(rule_id)
+                    if need is not None and need not in seg_low:
+                        continue
                     for m in rx.finditer(seg):
                         secret = m.group("secret")
                         if is_dummy(secret):
@@ -496,7 +647,7 @@ def scan(scan_files, read_text) -> list:
                             severity=sev, confidence=c, file=rel, line=i, category="SECRET",
                             specificity=PROVIDER_SPECIFICITY.get(rule_id, 0),
                             description=f"Hard-coded credential detected: {title}.",
-                            snippet=redact_line(seg, secret),
+                            snippet=_bounded_snippet(seg, secret, m.start("secret")),
                             fix=fix, cwe=CWE_SECRET, owasp=OWASP_SECRET, references=REF_SECRET,
                         )
                         if secret in KNOWN_EXAMPLES:
@@ -514,7 +665,7 @@ def scan(scan_files, read_text) -> list:
                         severity=Severity.HIGH, confidence=Confidence.HIGH,
                         file=rel, line=i, category="SECRET",
                         description=f"A {m.group('scheme')} connection string embeds a password in plaintext.",
-                        snippet=redact_line(seg, pw),
+                        snippet=_bounded_snippet(seg, pw, m.start("secret")),
                         fix="Move the credential to an environment variable / secret manager and reference it; rotate the exposed password.",
                         cwe=CWE_SECRET, owasp=OWASP_SECRET, references=REF_SECRET,
                     ), pw)
@@ -529,7 +680,7 @@ def scan(scan_files, read_text) -> list:
             # generic keyword assignment (+ entropy gate)
             for m in GENERIC.finditer(line):
                 name = m.group("name")
-                value = m.group("secret")
+                value = _generic_value(m)
                 if looks_like_placeholder(value) or is_known_fp_shape(value):
                     continue
                 if any(h in name.lower() for h in FP_NAME_HINTS):
@@ -586,7 +737,11 @@ def scan(scan_files, read_text) -> list:
                             fix="Confirm whether this is a credential; if so, rotate and externalize it.",
                             cwe=CWE_SECRET, owasp=OWASP_SECRET, references=REF_SECRET,
                         ), tok)
-            if line_findings:
+            if line_findings and len(line) <= _LINE_CAP:
+                # Only for ordinary lines. A long line's findings already carry
+                # bounded, individually-redacted context; rebuilding a shared
+                # snippet from a three-megabyte line would put the whole minified
+                # bundle in the report.
                 shared_snippet = line
                 for secret in dict.fromkeys(line_secrets):
                     shared_snippet = redact_line(shared_snippet, secret)
@@ -605,6 +760,7 @@ def scan(scan_files, read_text) -> list:
                     "windows. The unanchored passes -- generic keyword assignment, standalone "
                     "entropy, and base64 unwrapping -- did not, because they produce noise on "
                     "minified assets rather than signal."
+
                 ),
                 snippet=f"long_lines={skipped}; cap={_LINE_CAP}; anchored_rules=ran; unanchored_rules=skipped",
                 fix="Split oversized lines before scanning to restore full secret-detection coverage.",

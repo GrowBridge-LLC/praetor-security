@@ -37,7 +37,7 @@ import re
 import unicodedata
 import urllib.parse
 
-from core import Finding, Severity, Confidence, split_lines, GIT_HOOK_NAMES
+from core import Finding, Severity, Confidence, split_lines, GIT_HOOK_NAMES, TEXT_NAMES
 
 REF_LLM = "https://owasp.org/www-project-top-10-for-large-language-model-applications/"
 REF_TROJAN = "https://trojansource.codes/"
@@ -673,6 +673,53 @@ def _is_agent_hook_config(low_rel: str, base: str) -> bool:
     return any(d in padded or low_rel.startswith(d) for d in AGENT_CONFIG_DIRS)
 
 
+#: Names this engine has NAME-KEYED DETECTORS for, which the three lists
+#: consulted above do not contain.
+#:
+#: 🔴 THE FIRST VERSION OF THIS PREDICATE MISSED ALL OF THEM, and two
+#: independent audits demonstrated it the same day. Measured, each byte-identical
+#: at the tree root versus inside `node_modules/` or `vendor/`:
+#:
+#:   package.json with a curl-pipe postinstall  root: HIGH x2   vendored: NOTHING
+#:   .cursorrules carrying an injection         root: HIGH      vendored: NOTHING
+#:   CLAUDE.md carrying an injection            root: HIGH      vendored: NOTHING
+#:
+#: `npm-lifecycle-exec` fires on `package.json` and this engine's own comment
+#: calls it the most unconditional auto-run primitive in the rule set. A hostile
+#: `.cursorrules` shipped inside `node_modules` is a published supply-chain
+#: technique, and `.cursorrules` is Cursor's OWN spelling while `.cursor/` was
+#: already covered -- so the gap was not even consistent within one vendor.
+#:
+#: ⇒ Sourced from `core.TEXT_NAMES`, the list that decides what the walker
+#: OPENS, rather than hand-written a second time. Two hand-kept lists that must
+#: agree about which files matter is how they came to disagree.
+#:
+#: 🔴 STATED GAP, and it is real: `_scan_mcp` also fires on ANY file whose text
+#: contains `"mcpServers"`, whatever its name. A predicate applied BEFORE the
+#: file is opened cannot see that, and opening every vendored file to look is
+#: exactly the 111,605-file cost this admission filter exists to avoid. A
+#: content-detected manifest under a skipped directory, with a name outside every
+#: list here, remains invisible. `references/LIMITS.md` says so too.
+#:
+#: ⚠️ GENERIC DOCUMENTATION IS EXCLUDED BY NAME, not by accident. Deriving this
+#: set from TEXT_NAMES also pulled in `readme` / `readme.md`, which would run
+#: the prose rules over every README in `node_modules` -- thousands of file
+#: opens for content that is documentation, not an agent-instruction file. The
+#: first draft did exactly that silently. The exclusion is written here so it is
+#: a decision someone can argue with, and `references/LIMITS.md` states it.
+_GENERIC_DOC_NAMES = frozenset({"readme", "readme.md", "credentials", "credentials.txt",
+                                "secrets", "env"})
+
+_EXTRA_ADMIT_NAMES = (
+    frozenset({"package.json"})
+    | {
+        n for n in TEXT_NAMES
+        if (n.endswith("rules") or n.endswith(".md") or n in ("dockerfile", "makefile"))
+        and n not in _GENERIC_DOC_NAMES
+    }
+)
+
+
 def is_agent_config_path(relpath: str) -> bool:
     """PUBLIC. True when a path is an agent hook config, MCP manifest, or git
     hook -- the file shapes this engine recognises by NAME rather than content.
@@ -697,6 +744,7 @@ def is_agent_config_path(relpath: str) -> bool:
         _is_agent_hook_config(low_rel, base)
         or base in MCP_MANIFEST_NAMES
         or _is_git_hook(base)
+        or base in _EXTRA_ADMIT_NAMES
     )
 # ⚠️ GIT_HOOK_NAMES comes from `core` -- the SAME set the walker uses to decide
 # what to open. It used to be a 9-name copy here, survivable only because the

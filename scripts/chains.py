@@ -77,9 +77,21 @@ def _engine(f) -> str:
 # definition reads as the sentence it is meant to be, and so a predicate that
 # turns out to be wrong is fixed in one place for every chain that uses it.
 
+def _is_coverage(f) -> bool:
+    """A finding ABOUT THE SCAN, not about the target.
+
+    Every engine can emit one -- a skipped long line, a file too large, a
+    binary the sniff refused. None of them is evidence of anything in the tree,
+    so none may satisfy a chain link. Applied inside every predicate below
+    rather than filtered once in `correlate()`, so a predicate added later
+    inherits it by using these helpers instead of remembering a rule.
+    """
+    return _cat(f) == "COVERAGE"
+
+
 def _is_planted_instruction(f) -> bool:
     """Content that tries to steer an agent: injection or safety-bypass text."""
-    return _cat(f) in ("PROMPT_INJECTION", "SAFETY_BYPASS")
+    return _cat(f) in ("PROMPT_INJECTION", "SAFETY_BYPASS") and not _is_coverage(f)
 
 
 #: Rules that execute without being asked but are NOT categorised
@@ -106,29 +118,51 @@ _AUTORUN_RULE_IDS = frozenset({
 
 def _is_autorun(f) -> bool:
     """A mechanism that executes without a human asking it to, on load."""
-    return _cat(f) == "DANGEROUS_HOOK" or _rule(f) in _AUTORUN_RULE_IDS
+    return (
+        (_cat(f) == "DANGEROUS_HOOK" or _rule(f) in _AUTORUN_RULE_IDS)
+        and not _is_coverage(f)
+    )
 
 
 def _is_hidden_content(f) -> bool:
     """Content a human reviewer cannot see on screen: invisible Unicode,
     bidi overrides, ANSI escapes, instruction-bearing HTML comments."""
-    return _cat(f) == "HIDDEN_CONTENT"
+    return _cat(f) == "HIDDEN_CONTENT" and not _is_coverage(f)
 
 
 def _is_exfil_path(f) -> bool:
     """A mechanism that moves data out of the machine."""
-    return _cat(f) == "EXFIL"
+    return _cat(f) == "EXFIL" and not _is_coverage(f)
 
 
 def _is_real_credential(f) -> bool:
     """An actual credential in the tree -- the secrets engine's own findings.
 
-    Deliberately keyed on the ENGINE, not on a category or a rule-name
-    substring: `secrets` exists to answer exactly this question, and its
-    membership is the authoritative answer. A category/name-based guess here
-    would drift the moment a rule is renamed.
+    Keyed on the ENGINE, not on a rule-name substring: `secrets` exists to
+    answer exactly this question, and a name-based guess would drift the moment
+    a rule is renamed.
+
+    🔴 BUT ENGINE MEMBERSHIP ALONE WAS NOT THE ANSWER, AND THE DOCSTRING THAT
+    SAID IT WAS IS THE REASON THIS TOOK A SECOND AUDIT TO FIND. The secrets
+    engine also emits `secrets-long-line-skip` -- an INFO COVERAGE note saying
+    "some passes did not run on this line." It carries `engine == "secrets"`, so
+    it satisfied this predicate, and a minified `.mcp.json` produced:
+
+        chain   : chain-credential-plus-exfil-path      [HIGH]
+        basis   : same-file -- .mcp.json
+        verify  : Rotate the credential (it is in the tree, ...)
+        link    : credential present
+                   - INFO/HIGH secrets-long-line-skip @ .mcp.json:1
+
+    There was no credential in that tree. A note reporting REDUCED COVERAGE was
+    rendered as evidence of a leak -- the strongest possible inversion, since the
+    note exists to say the scanner looked LESS hard there.
+
+    ⇒ A COVERAGE finding is a statement ABOUT THE SCAN, never about the target.
+    Excluded here and, deliberately, from every link predicate below, because
+    every engine can emit one.
     """
-    return _engine(f) == "secrets"
+    return _engine(f) == "secrets" and not _is_coverage(f)
 
 
 def _is_mcp_autostart(f) -> bool:
@@ -325,17 +359,63 @@ def _correlate_same_file(chain_id, title, severity, links, why, verify, active):
 
 
 def _links_are_distinct(matched_links) -> bool:
-    """A chain whose links are all satisfied by the SAME single finding is not
-    a chain -- it is one finding counted twice. Predicates legitimately overlap
-    (an MCP autostart finding is also categorised DANGEROUS_HOOK), so require
-    the links to be satisfiable by distinct findings."""
-    distinct = set()
-    for _label, hits in matched_links:
-        distinct.update(_identity(f) for f in hits)
-    return len(distinct) >= len(matched_links)
+    """True when every link can be satisfied by a DIFFERENT finding.
+
+    A chain whose links are all satisfied by the same single finding is not a
+    chain -- it is one finding counted twice. Predicates legitimately overlap
+    (an MCP autostart finding is also categorised DANGEROUS_HOOK), so this must
+    ask whether a one-to-one assignment exists, not merely count.
+
+    🔴 IT USED TO COUNT THE UNION, and that is correct for two links by Hall's
+    theorem and WRONG for three or more. An audit demonstrated a three-link
+    chain firing where two of its links were satisfiable only by the same single
+    finding: the union held three identities, so the count passed, while no
+    assignment existed. No three-link chain is defined today -- but this
+    module's own header advertises that one needs only a table entry, and this
+    check's docstring already records that it was vacuous once.
+
+    Kata-style augmenting-path matching. The link count is single digits, so the
+    cost is irrelevant and the correctness is not.
+    """
+    links = [sorted({_identity(f) for f in hits}) for _label, hits in matched_links]
+    assigned: dict = {}
+
+    def augment(i, seen):
+        for ident in links[i]:
+            if ident in seen:
+                continue
+            seen.add(ident)
+            if ident not in assigned or augment(assigned[ident], seen):
+                assigned[ident] = i
+                return True
+        return False
+
+    return all(augment(i, set()) for i in range(len(links)))
+
+
+#: A SAME_TREE chain may not exceed this, whatever its table entry says.
+#:
+#: 🔴 THE CAP WAS A SENTENCE IN A COMMENT AND NOTHING CHECKED IT. An audit added
+#: a SAME_TREE entry at CRITICAL on a copy of this file; `correlate()` returned
+#: it as CRITICAL and the ENTIRE test suite stayed green, because the only
+#: assertion pinned one existing entry's literal value rather than the
+#: invariant. "Both categories appear somewhere in this repository" is close to
+#: certain in any real tree, so a SAME_TREE chain outranking its own links is
+#: exactly the false escalation the proximity model was added to stop.
+#:
+#: ⇒ Clamped here, where a new table row cannot get around it.
+_SAME_TREE_MAX = Severity.MEDIUM
+
+
+def _capped(severity, proximity):
+    """Return the severity a chain may actually report."""
+    if proximity == SAME_TREE and severity > _SAME_TREE_MAX:
+        return _SAME_TREE_MAX
+    return severity
 
 
 def _render(chain_id, title, severity, proximity, matched_links, why, verify, scope):
+    severity = _capped(severity, proximity)
     return {
         "chain_id": chain_id,
         "title": title,

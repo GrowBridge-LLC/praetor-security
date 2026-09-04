@@ -125,7 +125,47 @@ fi
 # .local/DESIGN-MCP-DIFFERENTIAL-CORPUS-2026-09-04.md §1.3.4 for the full
 # reasoning and the documented fallback if zero-self-scan-delta is ever
 # preferred instead.
-EXPECT_ACTIVE=32
+# 2026-09-04: 32 -> 43 active, 47 -> 36 filtered. 🔴 A PURE RE-BUCKETING, and
+# the arithmetic is the whole argument: 32+47 = 79 and 43+36 = 79. ELEVEN
+# findings moved from `filtered` to `active`. Nothing was newly detected on this
+# tree and nothing was lost.
+#
+# CAUSE: lexical-context suppression stopped applying to PROMPT_INJECTION,
+# SAFETY_BYPASS and HIDDEN_CONTENT. Its stated reason is "which cannot execute",
+# which is right for a BEHAVIOUR and false for an INSTRUCTION -- an injection
+# does not need to run, it needs to be READ, and an agent reading a `.py` file
+# reads its comments and docstrings. An audit measured byte-identical text
+# giving HIGH/exit 1 as `.txt` and filtered/exit 0 as `.py`, with the capability
+# profile then reporting `carries_agent_instructions: none`.
+# See scripts/praetor.py's `_LEXCTX_NEVER_SUPPRESS_CATEGORIES` and
+# tests/test_lexical_context_scope.py.
+#
+# THE ELEVEN, each classified:
+#   scripts/engine_aisec.py:20-21          this engine's own docstring, listing
+#                                          detector family E by name
+#   scripts/interpret.py:42,44             a comment quoting the measured payload
+#                                          from an earlier suppression bypass
+#   tests/test_suppression_is_not_attacker_controlled.py:23-25
+#                                          that test's docstring, quoting its own
+#                                          fixture
+#   references/test-corpus/_generate_corpus.py:196-203
+#                                          the corpus generator's deliberate
+#                                          payload text
+#
+# ⚠️ NOT SUPPRESSED, DELIBERATELY, AND THIS IS THE UNCOMFORTABLE PART. Every one
+# is PRAETOR's own defensive documentation -- the canonical false positive this
+# repo already documents ("a scanner's rules mention the very phrases it hunts").
+# The principled remedy is to widen the injection-exemplar guard, which today
+# covers PROMPT_INJECTION only, to SAFETY_BYPASS and the imperative rules. That
+# is a SUPPRESSION widening, and every suppression widening in this repository's
+# history has needed its own adversarial audit before it was safe. It is named
+# here as owed work rather than done in the same change that created the noise.
+#
+# ⚠️ Do NOT read the filtered count falling as an improvement. It fell because
+# those findings became ACTIVE. If filtered ever falls while active also falls,
+# suppression has started eating real findings -- that is the control this pair
+# of numbers exists to provide, and it is why both are pinned, not just one.
+EXPECT_ACTIVE=43
 # 2026-08-12: 45 -> 53, deliberately, and NOT because false positives improved.
 # The two causes were measured separately by reverting each change on its own:
 #   +3  the dedup fix stopped DISCARDING findings. A filtered finding could win
@@ -143,7 +183,7 @@ EXPECT_ACTIVE=32
 # comment. Reintroducing only that unsafe Markdown mapping returned exactly
 # 12 active / 53 filtered (one finding moved back); file-type-aware syntax keeps
 # the agent-facing heading active. The regression baseline was NOT regenerated.
-EXPECT_FILTERED=47
+EXPECT_FILTERED=36
 # 🔴 SCOPE DECISION, stated next to the code because it is one.
 # The self-scan pin must measure what PRAETOR SHIPS. Gate 5 already defines the
 # shipping set as tracked + untracked-but-not-ignored; this scan walks the tree

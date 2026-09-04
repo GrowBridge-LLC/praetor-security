@@ -225,3 +225,103 @@ def test_interpret_always_emits_a_chains_key_even_when_empty():
     result = interpret([_f("aisec", "prompt-injection-override", "PROMPT_INJECTION", "README.md")])
     assert "chains" in result
     assert result["chains"] == []
+
+
+def test_a_coverage_note_can_never_satisfy_a_chain_link():
+    """🔴 THE MOST INVERTED FALSE CLAIM THIS MODULE HAS PRODUCED.
+
+    The secrets engine emits `secrets-long-line-skip`, an INFO COVERAGE note
+    meaning "some passes did not run on this line." It carries
+    `engine == "secrets"`, so it satisfied the credential link, and a minified
+    `.mcp.json` produced a HIGH chain telling the reader to rotate a credential
+    that did not exist.
+
+    A note whose entire content is "the scanner looked LESS hard here" was
+    rendered as evidence of a leak. A COVERAGE finding is a statement about the
+    SCAN, never about the target.
+    """
+    note = _f("secrets", "secrets-long-line-skip", "COVERAGE", ".mcp.json",
+              severity=Severity.INFO)
+    hits = chains.correlate([
+        note,
+        _f("aisec", "mcp-server-credential-env", "EXFIL", ".mcp.json", 3),
+    ])
+    assert "chain-credential-plus-exfil-path" not in _chain_ids(hits), \
+        "a coverage note is not a credential"
+
+
+def test_no_coverage_note_satisfies_ANY_link_predicate():
+    """The keep direction, applied to the whole class rather than the one
+    instance the audit demonstrated. Every engine can emit a COVERAGE finding,
+    in any category, so each predicate must refuse it -- not just the one that
+    was caught."""
+    for category in ("PROMPT_INJECTION", "SAFETY_BYPASS", "DANGEROUS_HOOK",
+                     "HIDDEN_CONTENT", "EXFIL", "SECRET"):
+        note = _f("aisec", "some-coverage-note", "COVERAGE", "x.json")
+        note.category = "COVERAGE"
+        for predicate in (chains._is_planted_instruction, chains._is_autorun,
+                          chains._is_hidden_content, chains._is_exfil_path,
+                          chains._is_real_credential):
+            assert not predicate(note), \
+                f"{predicate.__name__} accepted a COVERAGE finding"
+
+
+def test_a_same_tree_chain_cannot_outrank_medium_whatever_the_table_says():
+    """🔴 THE CAP WAS A SENTENCE IN A COMMENT AND NOTHING CHECKED IT. An audit
+    added a SAME_TREE entry at CRITICAL on a copy of this file; `correlate()`
+    returned CRITICAL and the whole suite stayed green, because the only
+    assertion pinned one existing entry's literal value rather than the rule.
+    """
+    assert chains._capped(Severity.CRITICAL, chains.SAME_TREE) == Severity.MEDIUM
+    assert chains._capped(Severity.HIGH, chains.SAME_TREE) == Severity.MEDIUM
+    # The cap only ever lowers, and only for SAME_TREE.
+    assert chains._capped(Severity.LOW, chains.SAME_TREE) == Severity.LOW
+    assert chains._capped(Severity.CRITICAL, chains.SAME_FILE) == Severity.CRITICAL
+
+
+def test_the_cap_holds_for_a_table_entry_that_does_not_exist_yet():
+    """Assert the INVARIANT, not today's table. A new SAME_TREE row added at
+    CRITICAL must come out MEDIUM without anyone remembering this rule."""
+    hypothetical = [
+        ("chain-hypothetical", "t", Severity.CRITICAL, chains.SAME_TREE,
+         [("a", chains._is_planted_instruction), ("b", chains._is_autorun)], "w", "v"),
+    ]
+    original = chains.CHAINS
+    try:
+        chains.CHAINS = hypothetical
+        hits = chains.correlate([
+            _f("aisec", "prompt-injection-override", "PROMPT_INJECTION", "README.md"),
+            _f("aisec", "agent-hook-autorun", "DANGEROUS_HOOK", ".claude/settings.json"),
+        ])
+    finally:
+        chains.CHAINS = original
+    assert hits and hits[0]["severity"] == "MEDIUM", \
+        "a SAME_TREE row must be clamped by the code, not by whoever writes the table"
+
+
+def test_distinctness_is_a_matching_not_a_union_count():
+    """🔴 CORRECT FOR TWO LINKS BY ACCIDENT. Counting the union of satisfying
+    findings agrees with a real one-to-one assignment when there are two links,
+    and disagrees at three: a union of three identities passes the count even
+    when two links can only ever be satisfied by the SAME finding.
+
+    No three-link chain exists today. This module's own header advertises that
+    one needs only a table entry, and this check has already been vacuous once.
+    """
+    shared = _f("aisec", "mcp-server-autostart-remote", "DANGEROUS_HOOK", ".mcp.json", 3)
+    other = _f("aisec", "mcp-server-credential-env", "EXFIL", ".mcp.json", 5)
+
+    only_shared = lambda f: f is shared          # noqa: E731
+    either = lambda f: f in (shared, other)      # noqa: E731
+
+    # Links 1 and 2 are satisfiable ONLY by `shared`; link 3 by either. The
+    # union holds two identities for three links, so no assignment exists.
+    assert not chains._links_are_distinct([
+        ("a", [shared]), ("b", [shared]), ("c", [shared, other]),
+    ]), "three links cannot be satisfied by two findings"
+
+    # And the genuine three-way case still passes.
+    third = _f("aisec", "agent-hook-autorun", "DANGEROUS_HOOK", ".claude/settings.json")
+    assert chains._links_are_distinct([
+        ("a", [shared]), ("b", [other]), ("c", [third]),
+    ])

@@ -84,7 +84,11 @@ def test_an_mcp_manifest_inside_a_skipped_directory_is_found(tmp_path):
     only hook configs."""
     _write(tmp_path, "vendor/pkg/.mcp.json", json.dumps({
         "mcpServers": {"x": {"command": "npx", "args": ["-y", "some-server@latest"],
-                             "env": {"API_TOKEN": "abcdefghijklmnop"}}},
+                             # Assembled, so this fixture does not become a
+                             # finding in PRAETOR's own self-scan. The MCP rule
+                             # keys on the ENV VAR NAME, not on the value, so
+                             # the placeholder below still exercises it.
+                             "env": {"API_TOKEN": "x" + "-placeholder"}}},
     }))
     ids = _rule_ids(_run(tmp_path))
     assert any(r.startswith("mcp-server") for r in ids), \
