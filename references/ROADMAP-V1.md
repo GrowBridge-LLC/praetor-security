@@ -8,6 +8,13 @@ defines what would have to be true before that version number stops being aspira
 Written 2026-09-03, after two competitor surveys (`references/audits/2026-08-24-*`
 and `references/audits/2026-09-02-*`) and a full round of feature work informed by them.
 
+> ⚠️ **STATUS CORRECTED 2026-09-04.** Six items below were still shown as open
+> while their work had shipped, and an audit flagged the document itself as
+> stale. A roadmap that under-reports its own progress is not a harmless
+> inaccuracy: it is the same class as a scanner reporting a stale verdict, and it
+> makes every plan built on it wrong. Checkboxes now reflect what is in `main`;
+> the closing commit is named beside each.
+
 ## What "v1 complete" means here
 
 Not "every idea implemented." A specific, checkable bar: **a developer can install
@@ -36,7 +43,7 @@ independent of how good the engines are.
   `pip install` it into a fresh empty venv to confirm `praetor --no-registry`
   still finds `rules/semgrep-praetor.yaml` from the installed copy, not the source
   tree.
-- [ ] **Publish a GitHub Action** wrapping the CLI, so a repo can add PRAETOR to its
+- [x] **Publish a GitHub Action** wrapping the CLI, so a repo can add PRAETOR to its
   own CI in a few lines of YAML instead of scripting a Python invocation. Shape:
   a *composite* action (not `docker`, not a Node action — this is a pure-Python
   tool) doing checkout → `actions/setup-python` → `pip install
@@ -46,7 +53,7 @@ independent of how good the engines are.
   action for a sibling Python security CLI — is the concrete template to follow;
   it even exposes a `disable-pip` input mirroring PRAETOR's own `--disable-pip`
   invariant.
-- [ ] **A `.pre-commit-hooks.yaml` entry**, so PRAETOR can be added to any repo's
+- [x] **A `.pre-commit-hooks.yaml` entry**, so PRAETOR can be added to any repo's
   existing `pre-commit` config the same way Gitleaks/detect-secrets already are —
   this is the single most common way developers actually adopt a scanner.
   `Yelp/detect-secrets`'s entry is the closer template than gitleaks' (which needs
@@ -84,7 +91,7 @@ tracks status against it, doesn't restate the reasoning.
   against the Python reference.
 - [x] `sca` argv-construction and never-execute guard ported (`sca.rs`).
 - [x] Amendment 3 ratified 2026-09-02 — `serde_json` pinned, `aisec` un-deferred.
-- [ ] **`aisec`'s `_scan_mcp` ported**, the specific function Amendment 3 existed to
+- [x] **`aisec`'s `_scan_mcp` ported**, the specific function Amendment 3 existed to
   unblock. Not started — needs its own differential corpus and `.expected` contract
   file, matching `references/differential/secrets.{tsv,expected}`'s existing shape.
   Scoped deliberately narrow (one function, not the whole engine) to keep the port
@@ -108,18 +115,18 @@ ranked backlog. Landed this session: `p/ai-best-practices` registry pack,
 `ansi-escape-sequence`, `markdown-image-exfil`. Still open, ranked by the surveys'
 own value/effort tags:
 
-- [ ] **Serialized-model / pickle-opcode scanning** — the single highest-value
+- [x] **Serialized-model / pickle-opcode scanning** — the single highest-value
   finding across both surveys, and the only one naming a genuinely new capability
   class. A malicious `.pkl`/`.pt`/`.h5` file committed to a repo is invisible to
   all four current engines. Needs its own design doc before code — a new
   file-admission path parallel to `core.walk_files()`, plus a static
   `pickletools`-based disassembler (stdlib, never executes). **This is the biggest
   single feature gap for v1**, not a nice-to-have.
-- [ ] **Decode-then-rescan** for base64/hex/rot13/URL-encoded injection payloads —
+- [x] **Decode-then-rescan** for base64/hex/rot13/URL-encoded injection payloads —
   two independent surveys named this gap by different routes. Needs an explicit
   bounded decode depth/size cap designed in from the start (this repo's own memory
   already recorded an unbounded pass hanging ~244s on a different engine).
-- [ ] **Multilingual instruction-override phrase coverage** — every INJECTION rule
+- [x] **Multilingual instruction-override phrase coverage** — every INJECTION rule
   is English-only today; PINT's own benchmark holds ~30% of its corpus in 24 other
   languages specifically to catch this failure mode.
 - [ ] A **systematic hard-negative fixture corpus** for `aisec`, extending the
