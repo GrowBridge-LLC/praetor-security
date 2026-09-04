@@ -296,3 +296,15 @@ deserialize into a typed struct instead of a generic `serde_json::Value`, the de
 (`serde_derive`, `syn`, `quote`, `proc-macro2`) enters the real compile graph for the first time, and
 that is a new measurement, not an extension of this one — re-run `cargo tree` before assuming the "4
 new crates" figure still holds.
+
+**Progress, 2026-09-04.** `_scan_mcp` is ported (`rust/praetor-core/src/aisec.rs`) and
+differential-tested against a 42-case corpus (`references/differential/mcp.jsonl` /
+`mcp.expected`) — `python == rust == committed contract`, verified. An independent adversarial
+review then found two real, empirically confirmed HIGH-severity parity gaps the corpus didn't
+exercise — `serde_json`'s bounded recursion depth and its rejection of lone UTF-16 surrogates
+both make Rust silently return zero findings on inputs Python correctly flags. Documented, not
+fixed, in `references/audits/2026-09-04-mcp-rust-port-review.md` — closing them needs its own
+design decision (most likely `unbounded_depth` plus a stack-guard crate, itself a new dependency
+needing this same ADR-001 amendment process). **Not wired into the live CLI** — `rust/praetor/src/main.rs`
+still refuses to scan, which is what keeps these two gaps from mattering today. Do not wire this
+port into any live path before they're closed.

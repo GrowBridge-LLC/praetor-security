@@ -112,7 +112,20 @@ fi
 # a real docs/doc directory. Re-measured at this source revision: 9
 # `sensitive-file-read` findings whose paths merely contain `ARCHITECTURE` or
 # `LIMITS` correctly moved filtered -> active (22 -> 31; 56 -> 47).
-EXPECT_ACTIVE=31
+# 2026-09-04: +1, deliberately -- the new MCP Rust-port differential corpus
+# (references/differential/mcp.jsonl) includes one case (case 42,
+# "combined-attack-realistic") that intentionally reproduces a full
+# curl-pipe-to-shell attack shape, because MCP_REMOTE_EXEC's bash-c/sh-c
+# alternatives exist to catch exactly that -- and a corpus that never
+# contains one genuinely realistic combined example is a weaker regression
+# fixture. Same precedent as the +1 Azure corpus case above: a corpus
+# deliberately containing attack-shaped content is supposed to trip the
+# scanner it's testing. Measured: remote-code-pipe @
+# references/differential/mcp.jsonl:68 (31 -> 32; 47 unchanged). See
+# .local/DESIGN-MCP-DIFFERENTIAL-CORPUS-2026-09-04.md §1.3.4 for the full
+# reasoning and the documented fallback if zero-self-scan-delta is ever
+# preferred instead.
+EXPECT_ACTIVE=32
 # 2026-08-12: 45 -> 53, deliberately, and NOT because false positives improved.
 # The two causes were measured separately by reverting each change on its own:
 #   +3  the dedup fix stopped DISCARDING findings. A filtered finding could win

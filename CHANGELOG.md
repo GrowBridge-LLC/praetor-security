@@ -12,6 +12,37 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Added — `_scan_mcp` Rust port + its differential-testing infrastructure (no detection change)
+
+Engineering progress, not a detection change — the live Python `aisec` engine
+is unchanged, and `rust/praetor/src/main.rs` still refuses to scan anything.
+Nothing here affects what a real scan finds today.
+
+Per `references/ADR-001-engine-language.md`'s own stated port order,
+`_scan_mcp` (MCP-manifest server/credential scanning) is now ported to Rust
+(`rust/praetor-core/src/aisec.rs`), with a new 42-case differential corpus
+(`references/differential/mcp.jsonl` / `mcp.expected`) wired into
+`tests/differential/run_differential.py` — `python == rust == committed
+contract`, verified.
+
+An independent adversarial review of the port (built via a 5-step pipeline:
+design → build corpus → port → wire gate → review, capped at 5 subagents)
+found two real, empirically confirmed parity gaps the corpus didn't
+exercise: `serde_json`'s bounded recursion depth and its rejection of lone
+UTF-16 surrogate escapes both make the Rust port silently return zero
+findings on inputs the Python reference correctly flags — a real,
+attacker-reachable evasion primitive specific to whichever implementation is
+deployed. **Documented, not fixed** — see
+`references/audits/2026-09-04-mcp-rust-port-review.md` for the full findings
+and why closing them needs its own design decision, not a rushed patch. The
+port is not wired into anything live, so nothing is exposed by landing this
+with the gap documented rather than silently claiming completeness.
+
+Self-scan drift: +1 active (31 → 32), deliberate — the corpus's one
+combined-attack-realistic case intentionally trips `remote-code-pipe` on
+itself, same precedent as the pre-existing Azure corpus case. See
+`tests/precommit.sh`'s own comment at the `EXPECT_ACTIVE` pin.
+
 ### Added — three new aisec/sast detections, from a competitor-tool survey
 
 `references/audits/2026-09-02-aisec-competitor-survey.md` researched AI-security

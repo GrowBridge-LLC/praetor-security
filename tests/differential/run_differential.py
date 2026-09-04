@@ -43,6 +43,7 @@ exactly the moment it has stopped comparing anything.
 """
 
 import ast
+import json
 import os
 import shutil
 import subprocess
@@ -55,12 +56,15 @@ sys.path.insert(0, os.path.join(_ROOT, "scripts"))
 
 import core  # noqa: E402  -- after the sys.path insert, deliberately
 import engine_secrets  # noqa: E402  -- same reference implementation
+import engine_aisec  # noqa: E402  -- same reference implementation, for _scan_mcp
 
 _CORPUS_DIR = os.path.join(_ROOT, "references", "differential")
 _CORPUS = os.path.join(_CORPUS_DIR, "line-splitting.txt")
 _CONTRACT = os.path.join(_CORPUS_DIR, "line-splitting.expected")
 _SECRETS_CORPUS = os.path.join(_CORPUS_DIR, "secrets.tsv")
 _SECRETS_CONTRACT = os.path.join(_CORPUS_DIR, "secrets.expected")
+_MCP_CORPUS = os.path.join(_CORPUS_DIR, "mcp.jsonl")
+_MCP_CONTRACT = os.path.join(_CORPUS_DIR, "mcp.expected")
 
 _NL = chr(0x0A)
 _CR = chr(0x0D)
@@ -94,6 +98,13 @@ _REQUIRED_SECRET_RULES = {
 _REQUIRED_SECRET_NEGATIVE_PATHS = {
     "config/placeholder.py", "config/revision.py", "package-lock.json",
 }
+
+# Floor recommendation from the design doc, mirroring the secrets corpus's
+# 27-authored/25-floor headroom: 42 authored, 35 floor.
+_MIN_MCP_CASES = 35
+_REQUIRED_MCP_RULES = {"mcp-server-autostart", "mcp-server-autostart-remote",
+                       "mcp-server-credential-env"}
+_REQUIRED_MCP_LABELS = {"multi-server-loop", "line-lookup-name-collision"}
 
 
 # --------------------------------------------------------------------------- #
@@ -187,6 +198,10 @@ def secrets_expected(key):
     return _expected(_SECRETS_CONTRACT, key)
 
 
+def mcp_expected(key):
+    return _expected(_MCP_CONTRACT, key)
+
+
 def corpus_source_lines():
     """The corpus's case lines, still escaped -- for naming a case in a diff."""
     with open(_CORPUS, encoding="utf-8") as fh:
@@ -258,6 +273,39 @@ def python_secrets_signature():
     return " ".join(sorted(identities))
 
 
+def mcp_corpus_cases():
+    """Parse label/path/manifest JSON objects, one per line, from mcp.jsonl."""
+    cases = []
+    labels, paths = set(), set()
+    with open(_MCP_CORPUS, encoding="utf-8") as fh:
+        raw = fh.read()
+    for line_no, raw_line in enumerate(core.split_lines(raw), 1):
+        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
+            continue
+        case = json.loads(raw_line)  # the envelope line itself must be valid JSON
+        label, path, manifest = case["label"], case["path"], case["manifest"]
+        assert label not in labels, f"duplicate mcp corpus label: {label}"
+        assert path not in paths, f"duplicate mcp corpus path: {path}"
+        labels.add(label)
+        paths.add(path)
+        cases.append((label, path, manifest))
+    return cases
+
+
+def python_mcp_signature():
+    """Sorted set of aisec._scan_mcp's finding identities over the corpus.
+
+    Calls `_scan_mcp` directly, not `engine_aisec.scan()` -- matching the
+    port's actual target and deliberately keeping EXFIL/INJECTION entirely
+    out of this signature, since those aren't part of what `_scan_mcp` is.
+    """
+    identities = set()
+    for _label, path, manifest in mcp_corpus_cases():
+        for finding in engine_aisec._scan_mcp(manifest, path):
+            identities.add(f"{finding.engine}|{finding.rule_id}|{finding.file}|{finding.line}")
+    return " ".join(sorted(identities))
+
+
 def python_defined_secret_rules():
     """Rules the reference engine defines, derived from its real source surface.
 
@@ -301,7 +349,7 @@ def _cargo():
 
 
 def rust_signatures():
-    """Run the Rust emitter and return both blocking contracts.
+    """Run the Rust emitter and return all three blocking contracts.
 
     Raises RuntimeError -- never returns a sentinel and never skips. A harness
     that cannot reach the other implementation has failed, not passed.
@@ -328,6 +376,8 @@ def rust_signatures():
         sig = _kv(proc.stdout, "signature")
         secrets_n = int(_kv(proc.stdout, "secrets_cases"))
         secrets_sig = _kv(proc.stdout, "secrets_signature")
+        mcp_n = int(_kv(proc.stdout, "mcp_cases"))
+        mcp_sig = _kv(proc.stdout, "mcp_signature")
     except (AssertionError, ValueError) as exc:
         raise RuntimeError(
             "the Rust emitter ran but its output could not be parsed (%s). An "
@@ -344,7 +394,12 @@ def rust_signatures():
             "the Rust emitter produced an EMPTY secrets signature. A port that "
             "reports nothing must not pass as parity with a missing measurement."
         )
-    return n, sig, secrets_n, secrets_sig
+    if not mcp_sig:
+        raise RuntimeError(
+            "the Rust emitter produced an EMPTY mcp signature. A port that "
+            "reports nothing must not pass as parity with a missing measurement."
+        )
+    return n, sig, secrets_n, secrets_sig, mcp_n, mcp_sig
 
 
 # --------------------------------------------------------------------------- #
@@ -421,12 +476,15 @@ def main():
     sources = corpus_source_lines()
     cases = corpus_cases()
     secret_cases = secrets_corpus_cases()
+    mcp_cases = mcp_corpus_cases()
 
     print("PRAETOR differential gate -- shared contracts, two implementations")
     print(f"  corpus   : {os.path.relpath(_CORPUS, _ROOT)}  ({len(cases)} cases)")
     print(f"  contract : {os.path.relpath(_CONTRACT, _ROOT)}")
     print(f"  secrets  : {os.path.relpath(_SECRETS_CORPUS, _ROOT)}  ({len(secret_cases)} cases)")
     print(f"  contract : {os.path.relpath(_SECRETS_CONTRACT, _ROOT)}")
+    print(f"  mcp      : {os.path.relpath(_MCP_CORPUS, _ROOT)}  ({len(mcp_cases)} cases)")
+    print(f"  contract : {os.path.relpath(_MCP_CONTRACT, _ROOT)}")
 
     # --- the corpus must be capable of detecting the divergence class -------- #
     want_cases = int(expected("cases"))
@@ -481,20 +539,42 @@ def main():
                 f"ports could now agree while preserving the known scope hole."
             )
 
+    mcp_want_cases = int(mcp_expected("cases"))
+    if len(mcp_cases) != mcp_want_cases:
+        failures.append(
+            f"mcp corpus has {len(mcp_cases)} cases, the contract says "
+            f"{mcp_want_cases}; corpus and truth artifact moved independently."
+        )
+    if mcp_want_cases < _MIN_MCP_CASES:
+        failures.append(
+            f"the mcp contract declares only {mcp_want_cases} cases (floor "
+            f"{_MIN_MCP_CASES}); a thinned detector corpus is not parity evidence."
+        )
+    mcp_labels = {label for label, _path, _manifest in mcp_cases}
+    missing_mcp_labels = _REQUIRED_MCP_LABELS - mcp_labels
+    if missing_mcp_labels:
+        failures.append(
+            "mcp corpus lost required labels: " + ", ".join(sorted(missing_mcp_labels))
+        )
+
     # --- the three-way comparison -------------------------------------------- #
     contract = expected("signature")
     secrets_contract = secrets_expected("signature")
+    mcp_contract = mcp_expected("signature")
     parts = python_parts()
     py = " ".join(parts)
     py_secrets = python_secrets_signature()
+    py_mcp = python_mcp_signature()
 
     try:
-        rust_cases, rust, rust_secret_cases, rust_secrets = rust_signatures()
+        (rust_cases, rust, rust_secret_cases, rust_secrets,
+         rust_mcp_cases, rust_mcp) = rust_signatures()
     except RuntimeError as exc:
         print(f"FAIL  the Rust implementation could not be reached\n      {exc}",
               file=sys.stderr)
         failures.append("Rust signature unavailable -- parity UNVERIFIED")
         rust_cases, rust, rust_secret_cases, rust_secrets = None, None, None, None
+        rust_mcp_cases, rust_mcp = None, None
 
     if py != contract:
         _report("scripts/core.py disagrees with the COMMITTED CONTRACT",
@@ -585,6 +665,36 @@ def main():
                         "python", py_secrets, "rust", rust_secrets)
             failures.append("python secrets != rust secrets")
 
+    python_mcp_rules = {
+        identity.split("|", 3)[1] for identity in py_mcp.split()
+    }
+    missing_mcp_rules = _REQUIRED_MCP_RULES - python_mcp_rules
+    if missing_mcp_rules:
+        failures.append(
+            "mcp corpus does not reach required Python rules: "
+            + ", ".join(sorted(missing_mcp_rules))
+        )
+
+    if py_mcp != mcp_contract:
+        _report_set("scripts/engine_aisec.py disagrees with the COMMITTED CONTRACT",
+                    "python", py_mcp, "contract", mcp_contract)
+        failures.append("python mcp != contract")
+
+    if rust_mcp is not None:
+        if rust_mcp_cases != mcp_want_cases:
+            failures.append(
+                f"the Rust emitter reports {rust_mcp_cases} mcp cases, the "
+                f"contract says {mcp_want_cases}; it is not reading this corpus."
+            )
+        if rust_mcp != mcp_contract:
+            _report_set("rust/praetor-core mcp disagrees with the COMMITTED CONTRACT",
+                        "rust", rust_mcp, "contract", mcp_contract)
+            failures.append("rust mcp != contract")
+        if py_mcp != rust_mcp:
+            _report_set("Python and Rust mcp engines disagree WITH EACH OTHER",
+                        "python", py_mcp, "rust", rust_mcp)
+            failures.append("python mcp != rust mcp")
+
     if failures:
         print("", file=sys.stderr)
         print("DIFFERENTIAL CONTRACT BROKEN:", file=sys.stderr)
@@ -601,6 +711,8 @@ def main():
     print(f"  rust     : {rust_cases} cases signed, {len(rust)} chars")
     print(f"  secrets : {secret_want_cases} cases, "
           f"{len(py_secrets.split())} finding identities")
+    print(f"  mcp     : {mcp_want_cases} cases, "
+          f"{len(py_mcp.split())} finding identities")
     print("OK    python == rust == committed contracts")
     return 0
 

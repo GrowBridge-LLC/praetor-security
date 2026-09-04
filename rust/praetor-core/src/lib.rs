@@ -44,6 +44,7 @@
 //! are a pair; the moment that harness stops being green and blocking, they are
 //! a fork.
 
+pub mod aisec;
 pub mod sca;
 pub mod secrets;
 pub mod text;

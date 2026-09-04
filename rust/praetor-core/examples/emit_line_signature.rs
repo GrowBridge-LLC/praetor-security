@@ -15,21 +15,24 @@
 //!
 //!     cargo run -q -p praetor-core --example emit_line_signature
 //!
-//! Output is four lines, in the same `key value` shape as the committed
+//! Output is six lines, in the same `key value` shape as the committed
 //! expectation files, so the runner parses one format rather than two:
 //!
 //!     cases 23
 //!     signature 2:a;b 2:a;b 1:solo ...
 //!     secrets_cases 25
 //!     secrets_signature secrets|rule|path|line ...
+//!     mcp_cases 42
+//!     mcp_signature aisec|rule|path|line ...
 
-use praetor_core::{secrets, text};
+use praetor_core::{aisec, secrets, text};
 
 /// The shared corpus. `include_str!`, so a renamed or deleted corpus is a build
 /// error here — not an emitter that silently prints an empty signature that a
 /// naive comparison would happily match against another empty signature.
 const CORPUS: &str = include_str!("../../../references/differential/line-splitting.txt");
 const SECRETS_CORPUS: &str = include_str!("../../../references/differential/secrets.tsv");
+const MCP_CORPUS: &str = include_str!("../../../references/differential/mcp.jsonl");
 
 fn main() {
     println!("cases {}", text::differential::cases(CORPUS).count());
@@ -41,5 +44,10 @@ fn main() {
     println!(
         "secrets_signature {}",
         secrets::differential::signature(SECRETS_CORPUS)
+    );
+    println!("mcp_cases {}", aisec::differential::cases(MCP_CORPUS).len());
+    println!(
+        "mcp_signature {}",
+        aisec::differential::signature(MCP_CORPUS)
     );
 }
