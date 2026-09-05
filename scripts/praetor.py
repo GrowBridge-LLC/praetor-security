@@ -254,6 +254,18 @@ def parse_args(argv):
                    help="Do not fetch Semgrep registry packs; use only bundled offline rules.")
     p.add_argument("--semgrep-config", action="append", default=[],
                    help="Extra Semgrep --config (repeatable), e.g. p/owasp-top-ten or a local file.")
+    # 🔴 PROVENANCE THE CALLER SUPPLIES OUTRANKS ANYTHING READ FROM THE TARGET.
+    # CI already knows which commit it checked out, from its own environment,
+    # and that source is trustworthy in a way the scanned tree is not. When
+    # neither is given, PRAETOR reads `.git/HEAD` as TEXT -- it never invokes
+    # git, because git would evaluate the target's own config. See
+    # core.git_provenance.
+    p.add_argument("--repo", default=None,
+                   help="Repository identity to record in the report (e.g. owner/name). "
+                        "Recorded verbatim; PRAETOR never contacts it.")
+    p.add_argument("--commit", default=None,
+                   help="Commit SHA this scan is of. Overrides anything read from "
+                        ".git/HEAD. CI should pass its own checked-out SHA.")
     p.add_argument("--max-file-size", type=int, default=core.DEFAULT_MAX_BYTES,
                    help="Skip files larger than this many bytes (default: 3MB).")
     p.add_argument("--exclude", action="append", default=[],
@@ -853,6 +865,7 @@ def main(argv=None):
             "result. If a CI variable expanded to empty here, that is the bug.\n"
         )
         return 2
+    _scan_started = time.monotonic()
     _log(args.quiet, f"praetor {VERSION}: scanning {target}")
 
     # Enumerate scannable text files exactly once (shared by secrets + aisec).
@@ -1275,10 +1288,29 @@ def main(argv=None):
         for f in keep:
             result["summary"][f.severity.label] += 1
 
+    # Provenance: the caller's word first, then the target's own files, then
+    # nothing. Absent keys mean "not known", never "not applicable".
+    _prov = dict(core.git_provenance(target))
+    if args.commit:
+        _prov["commit"] = args.commit
+    if args.repo:
+        _prov["repo"] = args.repo
+    _prov["provenance_source"] = (
+        "caller" if (args.commit or args.repo)
+        else ("target-git-files" if _prov else "none")
+    )
+
     meta = {
         "target": target,
         "timestamp": report.now_iso(),
         "version": VERSION,
+        # For a dashboard plotting findings against commits rather than against
+        # wall-clock. `provenance_source` says WHERE this came from, because a
+        # value read from the scanned tree is target-controlled and a value from
+        # CI is not -- a consumer that treats them alike has lost that
+        # distinction silently.
+        "provenance": _prov,
+        "duration_seconds": round(time.monotonic() - _scan_started, 3),
         "file_count": len(scan_files),
         # 🔴 WHAT THE WALKER REFUSED, reported rather than dropped. A reviewer can
         # now see "2 files read, 78 code files skipped in dist/" instead of a bare

@@ -1166,6 +1166,78 @@ def walk_files(
     return out
 
 
+def git_provenance(target: str) -> dict:
+    """Read the target's commit identity by READING FILES, never by running git.
+
+    A dashboard plotting findings over time needs to know which commit a scan
+    was of. `target` may be any path, including one the caller does not trust.
+
+    🔴 WHY THIS DOES NOT SHELL OUT TO `git`. Invoking git inside a directory makes
+    git read THAT directory's `.git/config`, and git config can name external
+    commands -- `core.fsmonitor`, `core.pager`, `diff.external`,
+    `credential.helper`. Running git in an untrusted tree is therefore a
+    plausible route to executing something the target chose, which is the one
+    thing PRAETOR must never do.
+
+    ⚠️ HONEST ABOUT THE EVIDENCE: I did not reproduce that execution. An attempt
+    to do so failed for an unrelated reason (the fixture was not a valid
+    repository, so git refused before reading any config) and therefore
+    demonstrated nothing. The design is conservative on the STRUCTURE of the
+    risk, not on a measurement -- and reading two small text files costs nothing,
+    so there is no trade being made.
+
+    Returns {} when the target is not a git checkout, which is not an error.
+    """
+    root = target if os.path.isdir(target) else os.path.dirname(os.path.abspath(target))
+    git_dir = os.path.join(root, ".git")
+    if not os.path.isdir(git_dir):
+        return {}
+    out: dict = {}
+    try:
+        with open(os.path.join(git_dir, "HEAD"), "r", encoding="utf-8", errors="replace") as fh:
+            head = fh.read(4096).strip()
+    except OSError:
+        return {}
+
+    if head.startswith("ref: "):
+        ref = head[5:].strip()
+        out["branch"] = ref.rsplit("/", 1)[-1]
+        # Loose ref first; then the packed-refs table. Both are plain text.
+        try:
+            with open(os.path.join(git_dir, *ref.split("/")), "r",
+                      encoding="utf-8", errors="replace") as fh:
+                out["commit"] = fh.read(128).strip()
+        except OSError:
+            try:
+                with open(os.path.join(git_dir, "packed-refs"), "r",
+                          encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        parts = line.split()
+                        if len(parts) == 2 and parts[1] == ref:
+                            out["commit"] = parts[0]
+                            break
+            except OSError:
+                pass
+    elif head:
+        # Detached HEAD: the file holds the SHA directly.
+        out["commit"] = head
+
+    # ⚠️ VALIDATED, not trusted. These strings go into a report a dashboard
+    # renders, and the target wrote them. A 40-character hex SHA is the only
+    # shape accepted; a branch name is truncated and stripped of anything that
+    # is not an ordinary ref character.
+    sha = out.get("commit", "")
+    if not (len(sha) == 40 and all(c in "0123456789abcdef" for c in sha.lower())):
+        out.pop("commit", None)
+    if "branch" in out:
+        clean = "".join(c for c in out["branch"] if c.isalnum() or c in "._-/")[:100]
+        if clean:
+            out["branch"] = clean
+        else:
+            out.pop("branch")
+    return out
+
+
 def read_text(path: str, max_bytes: int = DEFAULT_MAX_BYTES) -> str:
     """
     Read a file as text without ever executing it. Decodes UTF-8 with
