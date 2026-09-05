@@ -44,7 +44,22 @@ from core import (Severity, engine_blind_spots, ENGINE_OK, ENGINE_NOT_APPLICABLE
 #: purely additive, no existing key changed meaning, and a consumer reading only
 #: `findings`/`filtered` is unaffected. A status-word change breaks exhaustive
 #: matching; a new sibling array cannot.
-SCHEMA_VERSION = "4.2"
+#:
+#: 4.3 adds `meta.scope.walked_nothing` -- the whole-scan measurement that says
+#: no file was opened. It is what the exit code's `3` and SARIF's
+#: `executionSuccessful: false` are both computed from, exposed so a consumer
+#: does not have to re-derive a safety question. Additive; a 4.2 consumer
+#: ignores it.
+#:
+#: 🔴 THE KEY SHIPPED BEFORE THIS NUMBER MOVED, AND THAT IS THE DEFECT WORTH
+#: RECORDING. `walked_nothing` was added in commit 3e8bc0f while
+#: `SCHEMA_VERSION` stayed "4.2", so for a few hours two different reports both
+#: claimed to be 4.2 and one of them had a key the other did not. A downstream
+#: consumer had already proposed pinning 4.2 as its ingest contract. Nothing in
+#: the gate catches this: `test_the_schema_version_is_major_minor` checks the
+#: SHAPE of the number, and no test relates a new report key to a bump.
+#: ⇒ **Adding a key to the report means editing this line in the same commit.**
+SCHEMA_VERSION = "4.3"
 
 _SEV_ORDER = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO]
 

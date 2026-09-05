@@ -12,6 +12,35 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Fixed — `schema_version` did not move when a report key was added
+
+`meta.scope.walked_nothing` was added while `SCHEMA_VERSION` stayed `"4.2"`. For
+several hours two different reports both declared themselves 4.2, and one carried
+a key the other did not. `references/VERSIONING.md` is explicit that keys added
+is a MINOR schema bump. **The schema is now `4.3`.**
+
+⚠️ **A downstream consumer had, in that same window, written into its own
+requirements document that it would pin 4.2 as its ingest contract.** The defect
+was found by that consumer's reply contract — which asks for the exact schema
+version with every update — not by anything here.
+
+🔴 **Nothing in the gate could see it.** One test checks the *shape* of the
+version number. Another checks the *tool* version against `pyproject.toml`.
+Neither relates the report's own contents to the number that describes them, and
+646 tests passed over the mismatch.
+
+`tests/test_schema_version_tracks_the_report_keys.py` now pins the key sets of
+every structurally fixed surface — the top level, `meta`, `meta.scope`, each
+engine record, and `Finding.to_dict()`. Adding a key fails until it is recorded,
+and recording it under a new version is the only edit that also moves
+`SCHEMA_VERSION`. Both directions cost a deliberate act.
+
+⚠️ It deliberately does **not** snapshot the whole tree. `capability_profile.*.
+examples[]` appears only when a dimension has evidence, so a full snapshot would
+be fixture-dependent — and a flaky guard gets deleted rather than fixed. What it
+still cannot see is stated in the file: a key whose *value* changes meaning, a
+key added inside `chains` or `summary`, and a status word gaining a new member.
+
 ### Fixed — 🔴 `python -m praetor` executed the code it was scanning
 
 **The invariant that outranks everything in this project was false.** PRAETOR
