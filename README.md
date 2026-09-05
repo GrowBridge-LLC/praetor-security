@@ -123,8 +123,8 @@ python scripts/praetor.py /path/to/target --fail-on HIGH --format json
 | Option | Meaning |
 |--------|---------|
 | `--engines` | Comma list of `sast,secrets,sca,aisec,model` (default: all) |
-| `--format` | `text`, `json`, or `both` (default: text) |
-| `--out DIR` | Write `praetor-report.txt` / `.json` to DIR |
+| `--format` | `text`, `json`, `both`, or `sarif` (default: text) |
+| `--out DIR` | Write `praetor-report.txt` / `.json` / `.sarif` to DIR |
 | `--min-severity` | Hide active findings below this level |
 | `--fail-on` | Exit 1 if any active finding is at/above this level; exit 3 if the scan was not measured |
 | `--allow-degraded` | Accept a degraded scan's blind spot instead of exit 3, with or without `--fail-on` |

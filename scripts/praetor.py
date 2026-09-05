@@ -76,6 +76,7 @@ import interpret                # noqa: E402
 import lexctx                   # noqa: E402
 import taint                    # noqa: E402
 import report                   # noqa: E402
+import sarif                    # noqa: E402
 
 
 #: Counters that describe WHAT A WALK REFUSED, as opposed to the SHAPE of the
@@ -228,7 +229,7 @@ def parse_args(argv):
     p.add_argument("target", nargs="?", default=".", help="File or directory to scan (default: current dir).")
     p.add_argument("--engines", default="all",
                    help="Comma list of engines to run: sast,secrets,sca,aisec,model (default: all).")
-    p.add_argument("--format", choices=["text", "json", "both"], default="text",
+    p.add_argument("--format", choices=["text", "json", "both", "sarif"], default="text",
                    help="Report format (default: text).")
     p.add_argument("--out", default="", help="Directory to write praetor-report.txt / .json.")
     p.add_argument("--min-severity", default="INFO",
@@ -1370,6 +1371,10 @@ def main(argv=None):
     # -- output ---------------------------------------------------------------
     text = report.render_text(result, meta)
     js = report.render_json(result, meta)
+    # `meta` is what render_json embeds; SARIF needs the same facts plus the
+    # schema version, so it is read back out of the rendered document rather
+    # than rebuilt -- two constructions of the same thing drift.
+    sarif_doc = sarif.render_sarif(result, dict(meta, schema_version=report.SCHEMA_VERSION))
 
     if args.out:
         os.makedirs(args.out, exist_ok=True)
@@ -1378,12 +1383,15 @@ def main(argv=None):
         # only a complete prior or complete new report, never a torn write.
         _atomic_write_text(os.path.join(args.out, "praetor-report.txt"), text)
         _atomic_write_text(os.path.join(args.out, "praetor-report.json"), js)
+        _atomic_write_text(os.path.join(args.out, "praetor-report.sarif"), sarif_doc)
         _log(args.quiet, f"  reports written to {args.out}")
 
     if args.format in ("text", "both"):
         print(text)
     if args.format in ("json", "both"):
         print(js)
+    if args.format == "sarif":
+        print(sarif_doc)
 
     # -- exit code ------------------------------------------------------------
     # 🔴 "NOTHING WAS EXAMINED" MUST MEAN NOTHING, NOT NO TEXT FILE. This
