@@ -8,12 +8,33 @@ defines what would have to be true before that version number stops being aspira
 Written 2026-09-03, after two competitor surveys (`references/audits/2026-08-24-*`
 and `references/audits/2026-09-02-*`) and a full round of feature work informed by them.
 
+> 🔴 **CORRECTION TO THE CORRECTION, 2026-09-05.** Two of the six items marked
+> done the previous day were marked done **because the file existed**, not
+> because it worked. Verified:
+>
+> * `action.yml` ran `pip install praetor-security[...]`. PyPI returns **404**
+>   for that name -- it has never been registered and no release has ever been
+>   cut. **Every run of the Action failed at its install step.**
+> * `.pre-commit-hooks.yaml` needs an immutable `rev:` to be referenced. `git tag`
+>   is **empty**. The hook was unusable.
+>
+> Both now read `[~]` -- shipped but INERT until a release exists. The Action has
+> since been repaired to install from the repository so it works without PyPI.
+>
+> ⚠️ This is this repository's own "identified is not enforced" lesson, turned
+> back on its own shipping surface, by the person who had just written the
+> correction below. A checkbox is a claim about BEHAVIOUR. Tick it against a
+> command that ran, never against a file that exists.
+
 > ⚠️ **STATUS CORRECTED 2026-09-04.** Six items below were still shown as open
 > while their work had shipped, and an audit flagged the document itself as
 > stale. A roadmap that under-reports its own progress is not a harmless
 > inaccuracy: it is the same class as a scanner reporting a stale verdict, and it
 > makes every plan built on it wrong. Checkboxes now reflect what is in `main`;
 > the closing commit is named beside each.
+
+**Checkbox states:** `[x]` works, verified by running it · `[~]` shipped but
+inert, blocked on something external · `[ ]` not built.
 
 ## What "v1 complete" means here
 
@@ -43,7 +64,7 @@ independent of how good the engines are.
   `pip install` it into a fresh empty venv to confirm `praetor --no-registry`
   still finds `rules/semgrep-praetor.yaml` from the installed copy, not the source
   tree.
-- [x] **Publish a GitHub Action** wrapping the CLI, so a repo can add PRAETOR to its
+- [~] **Publish a GitHub Action** wrapping the CLI, so a repo can add PRAETOR to its
   own CI in a few lines of YAML instead of scripting a Python invocation. Shape:
   a *composite* action (not `docker`, not a Node action — this is a pure-Python
   tool) doing checkout → `actions/setup-python` → `pip install
@@ -53,7 +74,7 @@ independent of how good the engines are.
   action for a sibling Python security CLI — is the concrete template to follow;
   it even exposes a `disable-pip` input mirroring PRAETOR's own `--disable-pip`
   invariant.
-- [x] **A `.pre-commit-hooks.yaml` entry**, so PRAETOR can be added to any repo's
+- [~] **A `.pre-commit-hooks.yaml` entry**, so PRAETOR can be added to any repo's
   existing `pre-commit` config the same way Gitleaks/detect-secrets already are —
   this is the single most common way developers actually adopt a scanner.
   `Yelp/detect-secrets`'s entry is the closer template than gitleaks' (which needs

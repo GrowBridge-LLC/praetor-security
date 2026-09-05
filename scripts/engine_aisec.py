@@ -287,10 +287,25 @@ def _scan_homoglyphs(text: str, rel: str) -> list:
 # --------------------------------------------------------------------------- #
 # (rule_id, title, regex, severity, confidence, category, cwe, owasp, fix)
 
+# 🔴 PROMPT INJECTION IS CWE-1427, NOT CWE-77. These rows said CWE-77, "Improper
+# Neutralization of Special Elements used in a Command" -- command injection.
+# That is a different weakness with a different remedy, and it is what a
+# downstream consumer would have deduplicated and rolled up on.
+#
+# MITRE added CWE-1427, "Improper Neutralization of Input Used for LLM
+# Prompting", for exactly this class, and it is the entry OWASP LLM01 maps to.
+# The `owasp` field beside each rule has said LLM01 all along, so the two fields
+# were describing different weaknesses in the same tuple.
+#
+# ⚠️ The HIDDEN_CONTENT rules keep CWE-1007 ("Insufficient Visual Distinction of
+# Homoglyphs") and that is correct for them -- invisible Unicode and bidi
+# overrides really are a rendering-distinction weakness, not a prompting one.
+# Only the PROMPT_INJECTION rows were wrong. Checked rule by rule rather than
+# replaced wholesale.
 INJECTION = [
     ("prompt-injection-override", "Instruction-override phrasing",
      re.compile(r"(?i)\b(ignore|disregard|forget)\b[^.\n]{0,40}\b(all\s+)?(previous|prior|above|earlier|the\s+system|your)\b[^.\n]{0,20}\b(instruction|prompt|rule|direction|context)"),
-     Severity.HIGH, Confidence.MEDIUM, "PROMPT_INJECTION", "CWE-77", "LLM01: Prompt Injection",
+     Severity.HIGH, Confidence.MEDIUM, "PROMPT_INJECTION", "CWE-1427", "LLM01: Prompt Injection",
      "Treat this text as untrusted data, not instructions; do not let file content steer the agent."),
 
     # 🔴 Added 2026-09-04 per references/ROADMAP-V1.md §3 ("every INJECTION rule
@@ -363,12 +378,12 @@ INJECTION = [
          r"|(?:上記|以前|前述)の(?:指示|指令|命令)を[^。\n]{0,6}(?:無視|忘れ)"  # ja (no \b -- see comment above)
          r"|(?:이전|위)\s*(?:지시|지침|명령)\s*(?:를|을)?\s*무시"  # ko
      ),
-     Severity.HIGH, Confidence.MEDIUM, "PROMPT_INJECTION", "CWE-77", "LLM01: Prompt Injection",
+     Severity.HIGH, Confidence.MEDIUM, "PROMPT_INJECTION", "CWE-1427", "LLM01: Prompt Injection",
      "Treat this text as untrusted data, not instructions; do not let file content steer the agent."),
 
     ("prompt-injection-new-instructions", "Injected 'new instructions' block",
      re.compile(r"(?i)\b(new|updated|revised|real|actual)\s+(instruction|system\s+prompt|directive|task)s?\s*[:\-]"),
-     Severity.MEDIUM, Confidence.LOW, "PROMPT_INJECTION", "CWE-77", "LLM01: Prompt Injection",
+     Severity.MEDIUM, Confidence.LOW, "PROMPT_INJECTION", "CWE-1427", "LLM01: Prompt Injection",
      "Do not follow instructions embedded in scanned/tool-returned content."),
 
     # 🔴 Added 2026-09-03 per references/audits/2026-09-02-aisec-competitor-survey.md
@@ -390,17 +405,17 @@ INJECTION = [
      re.compile(r"(?i)\b(you\s+are\s+now|from\s+now\s+on\s+you|act\s+as\s+(an?\s+)?(unrestricted|jailbroken|dan|developer\s+mode)|do\s+anything\s+now|pretend\s+you\s+have\s+no\s+(rules|restrictions))\b"
                 r"|\bDeveloper\s+Mode\s+(Output|Enabled|Response)\b"
                 r"|\[\s*JAILBREAK\s*\]"),
-     Severity.HIGH, Confidence.MEDIUM, "PROMPT_INJECTION", "CWE-77", "LLM01: Prompt Injection",
+     Severity.HIGH, Confidence.MEDIUM, "PROMPT_INJECTION", "CWE-1427", "LLM01: Prompt Injection",
      "Reject role-reassignment attempts originating from data/content."),
 
     ("prompt-injection-system-role", "Fake system/assistant role marker in data",
      re.compile(r"(?im)^\s*(?:<\|?(system|assistant)\|?>|\[/?(system|inst)\]|###\s*system\s*:|system\s+prompt\s*:)"),
-     Severity.MEDIUM, Confidence.LOW, "PROMPT_INJECTION", "CWE-77", "LLM01: Prompt Injection",
+     Severity.MEDIUM, Confidence.LOW, "PROMPT_INJECTION", "CWE-1427", "LLM01: Prompt Injection",
      "Strip chat-role delimiters from untrusted content before it reaches a model."),
 
     ("agent-directed-imperative", "Agent-directed imperative in content",
      re.compile(r"(?i)\b(assistant|claude|chatgpt|gpt|copilot|the\s+ai|the\s+agent|the\s+model)\s*,?\s+(please\s+)?(run|execute|curl|wget|send|email|forward|delete|exfiltrate|post|upload|fetch|disable|ignore)\b"),
-     Severity.HIGH, Confidence.MEDIUM, "PROMPT_INJECTION", "CWE-77", "LLM01: Prompt Injection",
+     Severity.HIGH, Confidence.MEDIUM, "PROMPT_INJECTION", "CWE-1427", "LLM01: Prompt Injection",
      "Content that addresses the agent by name and issues commands is a hostile-injection signal."),
 
     ("safety-bypass-instruction", "Instruction to disable safety / auto-approve",
