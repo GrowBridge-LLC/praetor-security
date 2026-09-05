@@ -77,6 +77,7 @@ import lexctx                   # noqa: E402
 import taint                    # noqa: E402
 import report                   # noqa: E402
 import sarif                    # noqa: E402
+import crossfile                # noqa: E402
 
 
 #: Counters that describe WHAT A WALK REFUSED, as opposed to the SHAPE of the
@@ -1249,6 +1250,38 @@ def main(argv=None):
             snippet=f"{key}_refusals={count}; examples: {shown}{more}",
             fix=remedy,
         ))
+
+    # 🔴 CROSS-FILE ANALYSIS, AND IT RUNS BEFORE THE SUPPRESSION PASSES ON
+    # PURPOSE. Its findings are subject to the same filters as any other, and it
+    # must not be able to smuggle a finding past them.
+    #
+    # ADD-ONLY: it constructs findings and touches nothing existing. A cross-file
+    # pass that could suppress would have a whole-repository blast radius.
+    if "aisec" in engines:
+        def _payload_reason(value):
+            """Reuse `aisec`'s OWN exfil table rather than a second rule list.
+
+            Two tables describing "dangerous string" would drift, and the one in
+            this file would be the one nobody remembered to update."""
+            for rule_id, title, rx, *_rest in engine_aisec.EXFIL:
+                if rx.search(value):
+                    return f"matches `{rule_id}` ({title.lower()})"
+            return None
+
+        _cf_findings, _cf_note = crossfile.analyse(
+            aisec_files, read_text, _payload_reason)
+        all_findings.extend(_cf_findings)
+        if _cf_note:
+            all_findings.append(core.Finding(
+                engine="aisec", rule_id="crossfile-cap-reached",
+                title="Cross-file analysis did not cover every file",
+                severity=core.Severity.INFO, confidence=core.Confidence.HIGH,
+                file=".", line=1, category="COVERAGE",
+                description=_cf_note + ". A payload split into a file beyond the "
+                            "cap would not be joined to its use.",
+                snippet=_cf_note,
+                fix="Scan a narrower subtree, or raise crossfile.MAX_FILES.",
+            ))
 
     _apply_inline_ignores(all_findings, target, read_text)
     _apply_lexical_context(all_findings, target, read_text)

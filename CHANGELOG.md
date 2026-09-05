@@ -12,7 +12,58 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
-_Nothing pending._
+### Added — cross-file analysis: the payload no single file reveals
+
+`scripts/crossfile.py`. Every other built-in engine is per-file, so an attacker
+who splits a payload across a module boundary was invisible:
+
+    payload.py   CMD = "<a remote-execution pipe>"
+    runner.py    from payload import CMD; os.system(CMD)
+
+Neither file looks wrong alone. PRAETOR now joins them and reports
+`crossfile-payload-reaches-sink`, naming **both** ends.
+
+🔴 **Import resolution is name arithmetic only, never `importlib`.** Measured on
+this machine before the module was written: `importlib.util.find_spec("pkg.sub")`
+EXECUTES `pkg/__init__.py`. `ast.parse` and `compile` do not. Using the import
+system to resolve a name would have broken PRAETOR's one invariant inside the
+module whose whole job is reading other people's code.
+`test_it_never_consults_the_import_system` asserts it behaviourally.
+
+🔴 **It traces a specific value to a specific sink, and nothing else.**
+Propagating capability over import edges was measured on 2,244 standard-library
+modules: 7.6% of modules flagged for their own contents becomes **89.0%** when
+propagated transitively. Import edges are not use edges — `chains.py`'s SAME_TREE
+lesson at graph scale. A claim covering almost everything conveys almost nothing.
+
+**ADD-ONLY**, like `chains.py`. It may report; it may never suppress.
+
+**Measured:** 5.65 ms/file, projecting ~28s for 5,000 files, with **zero** false
+positives on 720 standard-library modules and on PRAETOR's own source. The first
+version cost 22.8 ms/file — profiling put 3.6 of 8.7 seconds inside `ast.walk`,
+so a file whose raw text names no sink now skips that walk. A 4x speed-up, and
+`test_the_sink_pre_filter_never_loses_a_finding` exists because that is exactly
+the kind of shortcut that silently loses detection.
+
+⚠️ **What it cannot see, stated rather than discovered later:** a payload passed
+as a function parameter through an aliased call; a name built at run time; a
+string assembled in a loop; anything outside Python. Those are the next stages —
+see `references/PLAN-TO-V1.md` §4.
+
+⚠️ **It never says "reachable".** Only that a value defined in one file is passed
+to a dangerous call in another. Whether that code runs is a question static
+analysis cannot answer, and the finding text says so.
+
+### Added — SARIF 2.1.0 output
+
+`--format sarif`, and `--out` writes `praetor-report.sarif`. Reaches GitHub code
+scanning, GitLab, SonarQube, Azure DevOps and DefectDojo.
+
+`partialFingerprints` is the point: without it GitHub opens duplicate alerts on
+every scan. Suppressed findings are emitted **marked suppressed**, not dropped.
+`executionSuccessful` reports `false` when any engine was blind — it says the
+tool ran correctly, not that nothing was found.
+
 
 ## 1.1.0 — the first installable release
 

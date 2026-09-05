@@ -60,7 +60,7 @@ package-dir = { "" = "scripts" }
 # list against `scripts/*.py` and fails when they disagree.
 py-modules = [
     "praetor", "core", "interpret", "report", "lexctx", "taint",
-    "chains", "capability", "sarif",
+    "chains", "capability", "sarif", "crossfile",
     "engine_sast", "engine_secrets", "engine_sca", "engine_aisec", "engine_model",
 ]
 
