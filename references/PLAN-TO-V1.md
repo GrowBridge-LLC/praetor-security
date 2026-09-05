@@ -4,8 +4,12 @@ Every item is sized, ordered, and says what "done" means as something you can
 run. Written after two research passes that measured the competitive position
 rather than assuming it.
 
-**Where we actually are: 4 of 10 roadmap items work. 2 shipped inert. 4 unbuilt.**
+**Where we actually are: 7 of 18 roadmap items work. 2 shipped inert. 9 unbuilt.**
 Percentages against the v1 bar are in §6.
+
+⚠️ Re-derive these counts, never restate them:
+`grep -c '^- \[x\]' references/ROADMAP-V1.md` and the same for `[~]` and `[ ]`.
+This line was wrong for a day because the checklist grew and the summary did not.
 
 ---
 
@@ -121,6 +125,34 @@ which is exactly what `partialFingerprints.primaryLocationLineHash` needs.
 **Done:** `sarif-multitool validate` passes; alerts appear in a test repo's
 Security tab; **a second scan of an unchanged tree opens zero new alerts.**
 
+### Status: built, reviewed, and one third of the acceptance bar is unverified
+
+`scripts/sarif.py` ships. `--format sarif` emits it, `--out` writes
+`praetor-report.sarif`, and `action.yml` hands the path back to the calling
+workflow.
+
+🔴 **An adversarial review of it returned BLOCK with fourteen findings, and the
+worst was a false clean.** It reported `executionSuccessful: true` for a scan of
+an empty directory while PRAETOR's own gate returned 3, "NOTHING WAS EXAMINED" —
+the writer asked whether each engine was healthy and never whether anything had
+been read. All fourteen are fixed and each fix is mutation-proven. **Four of the
+tests written alongside the original code were vacuous**, every one because its
+fixture never produced the thing the test claimed was absent, and two more
+*pinned the defect* rather than catching it.
+
+⚠️ **Two of the three acceptance criteria above are NOT verified, and cannot be
+verified from here:**
+
+| Criterion | State | Why |
+|---|---|---|
+| a second scan of an unchanged tree opens zero new alerts | **verified** by test, on fingerprint stability | `test_a_finding_that_only_MOVED_keeps_its_fingerprint` |
+| `sarif-multitool validate` passes | **not run** | the validator is a .NET tool not installed here |
+| alerts appear in a test repo's Security tab | **not run** | needs a real repository, a real upload, and the owner's account |
+
+Conformance was instead pursued by fixing every validator rule the review named
+— SARIF1001, SARIF1005, and a `$schema` URL confirmed by HTTP to return 200
+where the previous one returned 404. **That is not the same as validating.**
+
 ---
 
 ## 4. Cross-file analysis — staged, each stage shippable
@@ -130,6 +162,19 @@ The owner's ask: see hidden algorithmic things across long code chains.
 **Already landed:** the cross-file *suppression bypass* is closed. A payload split
 across two files is no longer reported "provably inert". That was live, and it is
 independent of everything below.
+
+**The Weekend stage has landed too.** `scripts/crossfile.py` reports
+`crossfile-payload-reaches-sink`, naming both ends. Measured at 5.65 ms per file
+— about 28 seconds for 5,000 files — with **zero** false positives on 720
+standard-library modules and on PRAETOR's own source. Import resolution is string
+arithmetic; a test poisons `find_spec` and `import_module` and asserts the pass
+still works, so a future edit reaching for the "proper" resolution fails loudly
+rather than quietly running someone's payload.
+
+⚠️ It sees **one shape**, not the class: a module-level constant joined to a sink
+in another file. Parameter flow, run-time-built names, loop-assembled strings and
+every non-Python language remain out of reach. Those are the Month and Quarter
+rows below, not oversights.
 
 | Stage | Technique | Newly catches | Still misses | Cost |
 |---|---|---|---|---|
@@ -164,7 +209,7 @@ false positives on both stdlib and PRAETOR while catching the planted attacks.
 |---|---|---|
 | Command-position analysis | month | the right fix for the largest FP class; subsumes several regex heuristics |
 | Self-authored SAST rule packs | quarter | removes the proprietary-registry dependency that blocks hosted use |
-| Scan provenance in SARIF | days | already in JSON |
+| ~~Scan provenance in SARIF~~ | **done** | emitted as `versionControlProvenance`; the shorthand `owner/name` is expanded to an absolute URI and any credential in a clone URL is stripped |
 | OWASP GenAI Solutions Landscape listing | hours | free, self-serve, moderated |
 | Rust port completion | quarter | ⚠️ **deprioritised.** The roadmap's own words: it does not change what PRAETOR can detect. Nothing in the adoption evidence rewards implementation language. |
 
@@ -180,11 +225,11 @@ the repo for a badge) · OWASP Benchmark (Java; rewards pattern-matchers) ·
 
 | Measured against | Complete | What is missing |
 |---|---|---|
-| **Roadmap items that WORK** | **40%** (4/10) | 2 inert, 4 unbuilt |
+| **Roadmap items that WORK** | **39%** (7/18) | 2 inert, 9 unbuilt |
 | **The v1 bar** — *install in under a minute, point at a repo, get an actionable result* | **~85%** | one PyPI registration. The engines, interpretation and reporting are done and tested. |
 | **Competitive parity on the accuracy axis** | **unknown, and that is the finding** | nobody has measured PRAETOR on a public corpus. §2 exists to replace this row with a number. |
 
-⚠️ **The three disagree on purpose.** The v1 bar is nearly met while only 40% of
+⚠️ **The three disagree on purpose.** The v1 bar is nearly met while only 39% of
 the checklist works, because the checklist counts Rust-port items its own text
 says do not change detection. And the third row is the honest one: *we do not
 know how good PRAETOR is*, because nobody has measured it against anything but
