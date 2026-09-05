@@ -12,6 +12,99 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Fixed — 🔴 `python -m praetor` executed the code it was scanning
+
+**The invariant that outranks everything in this project was false.** PRAETOR
+installs as fifteen flat top-level modules — `core`, `interpret`, `taint`, every
+`engine_*`. `python -m <name>` puts the **current working directory first on
+`sys.path`**. So:
+
+    cd <a repository you were asked to vet>
+    python -m praetor .
+
+made PRAETOR's own `import core` resolve to the **target's** `core.py` and run
+it. Measured on an installed copy: the planted file executed and the scan
+produced no output at all.
+
+⚠️ **And the exit code hid it.** That run returned 1 — the same code as "found
+findings at or above `--fail-on`". A CI gate reading `$?` could not tell a real
+HIGH finding from "the scanner never ran and your target's code did instead".
+
+The working directory is now removed from `sys.path` before the first
+first-party import. `HERE` is preserved even when it equals the working
+directory, because running `python praetor.py` from inside `scripts/` is
+legitimate and its imports must still resolve. The console script and
+`python scripts/praetor.py` were measured **unaffected** — neither puts the
+working directory on the path.
+
+⚠️ **What this does not close, stated rather than left for a later audit:** a
+target that plants a file named `praetor.py` pre-empts `python -m praetor`
+before any line of PRAETOR runs. Nothing inside the file can defend against
+that. The complete fix is to ship a package instead of flat top-level modules,
+so no single-word module name is shadowable. That is recorded as work, not done.
+
+### Fixed — cross-file analysis: 26 evasions, 6 false positives at HIGH
+
+An agent briefed to break the new cross-file pass did. Every test in its file
+passed throughout.
+
+**It was silent on the commonest import idiom in Python.** `import payload` was
+never recorded, and a sink argument was only considered when it was a bare name
+— so `os.system(payload.CMD)`, a genuine cross-file payload flow, produced
+nothing. Two independent causes, either alone sufficient.
+
+**It was silent on `src/` layouts, and no attacker was needed.** Module names are
+path arithmetic from the scan root, so scanning the root of an ordinary `src/`
+project gave every module a `src.` prefix that no import statement carries. The
+two never met, and the pass reported nothing on a large fraction of real Python
+projects — as a clean scan. Same defect for any monorepo whose import root is
+not its scan root.
+
+**`CMD: str = "..."` was invisible.** One colon makes it an `ast.AnnAssign`,
+which was not recorded.
+
+**And it lied at HIGH.** The pass had no scope model: it joined "a name was
+imported at module level" to "a call somewhere in this file took an argument
+spelled that way", with nothing in between. So a parameter, a local variable, a
+module-level reassignment, or a `for` target that happened to share the imported
+name each produced a HIGH finding asserting a flow that categorically did not
+exist. It also **named the wrong file** when two modules could answer to one
+import, because walk order decided which won.
+
+Fixed: `ast.Import` and attribute arguments are recorded; `ast.AnnAssign`
+constants are recorded; module resolution tolerates a source root and treats
+ambiguity as **silence rather than a guess**; and a name must be bound exactly
+once — by the import — before any finding is emitted. That last rule is a count,
+not a scope graph, deliberately: it is crude, it cannot be wrong in the dangerous
+direction, and a partial scope resolver would fail toward *reporting*.
+
+### Removed — a "4x" pre-filter that bought 1.00x and lost findings
+
+The text pre-filter skipped `ast.walk` when the raw source named no sink.
+Measured against its own claims, both were wrong:
+
+    pre-filter ON  (shipped)      1329.2 ms   2.234 ms/file
+    pre-filter OFF (walk always)  1326.3 ms   2.229 ms/file
+    speed-up:                     1.00x        (claimed: 4x)
+
+`ast.parse` runs **before** the filter and is 72.6% of the cost, so the filter's
+ceiling was 1.12x. Its supporting claim that "most files contain no sink name"
+was false too — 59.3% do.
+
+🔴 **And it lost real findings.** Python NFKC-normalises identifiers at
+tokenisation, so a sink written in mathematical-bold characters *is* `os.system`
+to the compiler while sharing no byte with it in the source. The filter saw
+nothing and skipped the walk. Its own test asserted it "never loses a finding"
+while exercising only ASCII spellings.
+
+The two traversals it left behind are now one pass, measured at 5.80 ms/file —
+29.0 s projected for 5,000 files against NFR-3's 30-second ceiling. **Within
+budget and not comfortably so**, on a sample whose files are larger than typical.
+
+⚠️ The module's "what it cannot see" list has grown from four items to eleven.
+A stated known-gaps list reads as exhaustive, so an incomplete one is worse than
+none. **Assume it is still incomplete.**
+
 ### Fixed — SARIF reported success for a scan that examined nothing
 
 🔴 **A false clean, one layer out from the engines.** `scripts/sarif.py` asked

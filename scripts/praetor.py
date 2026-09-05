@@ -66,6 +66,59 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
+
+def _drop_the_working_directory_from_the_import_path():
+    """🔴 THE NEVER-EXECUTE INVARIANT, BROKEN THROUGH `python -m praetor`.
+
+    PRAETOR installs as FIFTEEN FLAT TOP-LEVEL MODULES (`core`, `interpret`,
+    `taint`, every `engine_*`). `python -m <name>` puts the CURRENT WORKING
+    DIRECTORY first on `sys.path`. So running
+
+        cd <a repository you were asked to vet>
+        python -m praetor .
+
+    made PRAETOR's own `import core` resolve to **the target's** `core.py` and
+    execute it. Measured, on an installed copy: a planted `core.py` wrote its
+    marker file and the scan produced no output at all.
+
+    ⚠️ AND THE EXIT CODE HID IT. That run returned 1 -- the same code as "found
+    findings at or above --fail-on". A CI gate reading `$?` could not tell a real
+    HIGH finding from "the scanner never ran and your target's code did".
+
+    ⇒ Any `sys.path` entry that is the working directory is removed before the
+    first first-party import. `HERE` is kept even when it happens to equal the
+    working directory, because running `python praetor.py` from inside
+    `scripts/` is a legitimate invocation and its imports must still resolve.
+
+    ⚠️ WHAT THIS DOES NOT CLOSE, stated rather than left to a later audit: a
+    target that plants a file named `praetor.py` pre-empts `python -m praetor`
+    BEFORE any line of this file runs. Nothing inside this file can defend
+    against that, and no ordering of these statements would. The complete fix is
+    to stop installing flat top-level modules and ship a package instead, so no
+    single-word module name is shadowable. That is recorded as work, not done.
+
+    The console script (`praetor ...`) and `python scripts/praetor.py ...` were
+    measured UNAFFECTED: neither puts the working directory on the path.
+    """
+    try:
+        cwd = os.path.realpath(os.getcwd())
+    except OSError:
+        return  # an unreadable CWD cannot shadow anything
+    here = os.path.realpath(HERE)
+    for entry in list(sys.path):
+        if entry in ("", "."):
+            sys.path.remove(entry)
+            continue
+        try:
+            resolved = os.path.realpath(entry)
+        except (OSError, ValueError):
+            continue
+        if resolved == cwd and resolved != here:
+            sys.path.remove(entry)
+
+
+_drop_the_working_directory_from_the_import_path()
+
 import core                      # noqa: E402
 import engine_secrets            # noqa: E402
 import engine_aisec             # noqa: E402

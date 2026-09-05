@@ -416,3 +416,116 @@ def test_file_selection_keeps_ordinary_files_and_nul_observation_reaches_report(
          "nul_text_file_count": 1, "engines": {}},
     )
     assert "NUL-bearing text files: 1" in rendered
+
+
+# --------------------------------------------------------------------------- #
+# The invariant broke through the INVOCATION SURFACE, not through an engine
+# --------------------------------------------------------------------------- #
+
+_SCRIPTS = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
+
+
+def _plant_a_module_shadow(tmp_path, module_name, marker):
+    """A benign stand-in for a hostile module: it records that it ran."""
+    (tmp_path / f"{module_name}.py").write_text(
+        "import pathlib\n"
+        f"pathlib.Path({marker!r}).write_text('ran', encoding='utf-8')\n",
+        encoding="utf-8")
+    (tmp_path / "ordinary.py").write_text("x = 1\n", encoding="utf-8")
+
+
+def _run_dash_m(tmp_path):
+    """`python -m praetor .` FROM INSIDE the target, the way a user would.
+
+    `-m` is reproduced through PYTHONPATH rather than a real install: `-m` puts
+    the working directory first on `sys.path` either way, which is the whole
+    mechanism. Measured to reproduce the break identically to an installed copy.
+    """
+    env = dict(os.environ, PYTHONPATH=_SCRIPTS)
+    return subprocess.run(
+        [_sys_executable(), "-m", "praetor", ".", "--engines", "aisec",
+         "--no-registry", "--format", "json", "--quiet"],
+        cwd=str(tmp_path), env=env, capture_output=True)
+
+
+def _sys_executable():
+    import sys
+    return sys.executable
+
+
+def test_running_as_a_module_does_not_import_the_targets_code(tmp_path):
+    """🔴 THE INVARIANT, BROKEN THROUGH `python -m praetor`.
+
+    PRAETOR installs as FIFTEEN FLAT TOP-LEVEL MODULES -- `core`, `interpret`,
+    `taint`, every `engine_*`. `python -m <name>` puts the working directory
+    first on `sys.path`. So:
+
+        cd <a repository you were asked to vet>
+        python -m praetor .
+
+    made PRAETOR's own `import core` resolve to the TARGET's `core.py` and run
+    it. Measured on an installed copy: the planted file wrote its marker and the
+    scan produced no output at all.
+
+    ⚠️ AND THE EXIT CODE HID IT -- that run returned 1, the same code as "found
+    findings at or above --fail-on". A CI gate reading `$?` could not tell a real
+    HIGH finding from "the scanner never ran and your target's code did". This
+    repository has recorded that shape before under a different cause.
+
+    ⚠️ NOT FOUND BY A TEST. Found by an agent whose brief was to break this
+    module. Every test in this file passed throughout.
+    """
+    marker = "EXECUTED-core-shadow.marker"
+    _plant_a_module_shadow(tmp_path, "core", marker)
+    proc = _run_dash_m(tmp_path)
+    assert not (tmp_path / marker).exists(), (
+        "PRAETOR imported and EXECUTED a module from the tree it was scanning")
+    # The control: without real output this would pass on a scan that never ran.
+    assert proc.stdout, f"the scan produced nothing: {proc.stderr[-400:]!r}"
+    json.loads(proc.stdout.decode("utf-8", "replace"))
+
+
+def test_every_installed_module_name_is_covered_not_just_core(tmp_path):
+    """⚠️ "I HANDLED THE CASE THE AUDITOR DEMONSTRATED" IS THE NARROWEST
+    POSSIBLE SCOPE, and this repository has been caught by exactly that shape
+    before -- a guard written from one finding, filtering the one spelling that
+    finding used. `core` was the demonstrated shadow. Every flat module PRAETOR
+    installs is shadowable the same way, so assert the class."""
+    for name in ("interpret", "taint", "lexctx", "report", "engine_secrets",
+                 "engine_aisec", "chains", "capability", "crossfile", "sarif"):
+        target = tmp_path / name
+        target.mkdir()
+        marker = f"EXECUTED-{name}.marker"
+        _plant_a_module_shadow(target, name, marker)
+        proc = _run_dash_m(target)
+        assert not (target / marker).exists(), f"{name}.py from the target ran"
+        assert proc.stdout, f"{name}: the scan produced nothing"
+
+
+def test_the_console_script_invocation_was_never_affected(tmp_path):
+    """The keep direction, and the reason the fix is narrow. Neither the console
+    script nor `python scripts/praetor.py` puts the working directory on the
+    path, so neither was ever vulnerable -- and the guard must not break them.
+    `HERE` is preserved even when it equals the working directory, because
+    running `python praetor.py` from inside `scripts/` is legitimate."""
+    marker = "EXECUTED-core-shadow.marker"
+    _plant_a_module_shadow(tmp_path, "core", marker)
+    proc = subprocess.run(
+        [_sys_executable(), os.path.join(_SCRIPTS, "praetor.py"), ".",
+         "--engines", "aisec", "--no-registry", "--format", "json", "--quiet"],
+        cwd=str(tmp_path), capture_output=True)
+    assert not (tmp_path / marker).exists()
+    assert proc.stdout
+
+
+def test_running_praetor_py_from_inside_scripts_still_resolves_its_imports():
+    """🔴 THE WAY THIS FIX COULD BREAK PRAETOR ITSELF. The guard removes the
+    working directory from `sys.path` -- and when you run `python praetor.py`
+    from inside `scripts/`, the working directory IS where its imports live.
+    Removing it there would make PRAETOR fail to start."""
+    proc = subprocess.run(
+        [_sys_executable(), "praetor.py", "--version"],
+        cwd=_SCRIPTS, capture_output=True)
+    assert proc.returncode == 0, proc.stderr[-400:]
+    assert proc.stdout.strip(), "no version was printed"

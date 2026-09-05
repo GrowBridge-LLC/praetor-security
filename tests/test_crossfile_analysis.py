@@ -192,31 +192,143 @@ def test_an_enormous_source_file_is_refused():
     assert crossfile.extract_facts("big.py", "x = 1\n" * 500_000) is None
 
 
-def test_the_sink_pre_filter_never_loses_a_finding():
-    """🔴 THE PRE-FILTER IS AN OPTIMISATION AND MUST BE INVISIBLE.
+def test_a_bold_unicode_sink_name_is_still_found():
+    """🔴 THE PRE-FILTER THAT USED TO LIVE HERE LOST THIS FINDING.
 
-    Profiling put 3.6 of 8.7 seconds inside `ast.walk`, so a file whose raw text
-    names no sink now skips that walk. That is a 4x speed-up -- and it is exactly
-    the kind of shortcut that silently loses detection.
+    A cheap text scan skipped `ast.walk` when the raw source named no sink, and
+    its own test asserted it "never loses a finding" -- while exercising only
+    ASCII spellings. Python NFKC-normalises identifiers at tokenisation, so a
+    sink written in MATHEMATICAL BOLD *is* `os.system` to the compiler and
+    shares no byte with it in the source. The filter saw nothing, skipped the
+    walk, and dropped a real cross-file finding.
 
-    The bias is deliberately toward over-matching: substring, not token, so
-    `system` matches `filesystem` and costs a wasted walk. Under-matching would
-    cost a finding.
+    It was deleted rather than patched: measured, it bought **1.00x**, not the
+    4x its docstring claimed, because `ast.parse` runs before it and is 72.6% of
+    the cost. A shortcut that buys nothing and costs detection is not a trade.
     """
-    assert crossfile._might_contain_a_sink("os.system(x)")
-    assert crossfile._might_contain_a_sink("subprocess.check_output(y)")
-    assert crossfile._might_contain_a_sink("eval(z)")
-    # Over-broad on purpose: a wasted walk is the safe failure.
-    assert crossfile._might_contain_a_sink("a filesystem helper")
-    # Genuinely sink-free text skips the walk.
-    assert not crossfile._might_contain_a_sink("x = 1\ny = x + 2\n")
+    bold = "".join(chr(0x1D41A + (ord(c) - ord("a"))) for c in "system")
+    src = "import os\nos." + bold + "(CMD)\n"
+    assert "system" not in src, "the control: no ASCII sink name is present"
+    facts = crossfile.extract_facts("runner.py", src)
+    assert facts is not None
+    assert facts.sink_args == [(2, "system", "CMD")], (
+        "the compiler sees `os.system`; anything reading raw bytes does not")
 
 
-def test_a_file_with_no_sink_still_contributes_its_constants():
-    """The pre-filter skips the WALK, not the file. A payload source usually
-    contains no sink at all -- if the shortcut dropped it, the split-payload case
-    this whole module exists for would stop working."""
-    facts = crossfile.extract_facts("payload.py", f'CMD = "{_PIPE}"\n')
+def test_a_payload_source_file_still_contributes_its_constants():
+    """A payload SOURCE usually contains no sink at all. If anything ever drops
+    such a file, the split-payload case this module exists for stops working."""
+    facts = crossfile.extract_facts("payload.py", 'CMD = "' + _PIPE + '"\n')
     assert facts is not None
     assert "CMD" in facts.constants
     assert facts.sink_args == []
+
+
+# --------------------------------------------------------------------------- #
+# Import forms it was silent on -- found by an agent briefed to break it
+# --------------------------------------------------------------------------- #
+
+def test_import_module_then_attribute_access(tmp_path):
+    """🔴 THE COMMONEST IMPORT IDIOM IN PYTHON, AND IT WAS ENTIRELY SILENT.
+
+    Two independent causes, either alone sufficient: `ast.Import` was never
+    recorded at all, and a sink argument was only considered when it was an
+    `ast.Name`, so `payload.CMD` was never even a candidate.
+    """
+    _write(tmp_path, "payload.py", 'CMD = "' + _PIPE + '"\n')
+    _write(tmp_path, "runner.py",
+           "import os\nimport payload\nos.system(payload.CMD)\n")
+    assert _RULE in _rules(_scan(tmp_path))
+
+
+def test_import_module_under_an_alias(tmp_path):
+    _write(tmp_path, "payload.py", 'CMD = "' + _PIPE + '"\n')
+    _write(tmp_path, "runner.py",
+           "import os\nimport payload as p\nos.system(p.CMD)\n")
+    assert _RULE in _rules(_scan(tmp_path))
+
+
+def test_an_annotated_constant_is_recorded(tmp_path):
+    """`CMD: str = "..."` is an `ast.AnnAssign`, not an `ast.Assign`. One colon
+    of ordinary modern Python made the pass silent on that constant."""
+    _write(tmp_path, "payload.py", 'CMD: str = "' + _PIPE + '"\n')
+    _write(tmp_path, "runner.py",
+           "import os\nfrom payload import CMD\nos.system(CMD)\n")
+    assert _RULE in _rules(_scan(tmp_path))
+
+
+def test_a_src_layout_project_is_not_silently_skipped(tmp_path):
+    """🔴 NO ATTACKER REQUIRED -- THIS IS A DEFAULT PROJECT LAYOUT.
+
+    Module names are path arithmetic from the SCAN ROOT, so scanning the root of
+    a `src/` project gave every module a `src.` prefix that no import statement
+    in that project carries. The two never met, and the pass reported nothing on
+    a large fraction of real Python projects -- as a clean scan.
+    """
+    pkg = tmp_path / "src" / "mypkg"
+    pkg.mkdir(parents=True)
+    _write(pkg, "__init__.py", "")
+    _write(pkg, "payload.py", 'CMD = "' + _PIPE + '"\n')
+    _write(pkg, "runner.py",
+           "import os\nfrom mypkg.payload import CMD\nos.system(CMD)\n")
+    assert _RULE in _rules(_scan(tmp_path))
+
+
+# --------------------------------------------------------------------------- #
+# The scope model -- HIGH-severity claims about flows that did not exist
+# --------------------------------------------------------------------------- #
+
+def test_a_parameter_shadowing_the_import_is_not_a_flow(tmp_path):
+    """🔴 THE WORST OF THE FALSE POSITIVES.
+
+    The finding's own text asserts that a value defined in one file is consumed
+    by a dangerous call in another. Here the call consumes the PARAMETER. The
+    flow is categorically absent, and it was reported at HIGH.
+
+    The pass had no scope model at all: it joined "a name was imported at module
+    level" to "a call somewhere in this file took an argument spelled that way",
+    with nothing in between.
+    """
+    _write(tmp_path, "payload.py", 'CMD = "' + _PIPE + '"\n')
+    _write(tmp_path, "runner.py",
+           "import os\nfrom payload import CMD\n\ndef go(CMD):\n    os.system(CMD)\n")
+    assert _RULE not in _rules(_scan(tmp_path))
+
+
+def test_a_local_variable_shadowing_the_import_is_not_a_flow(tmp_path):
+    _write(tmp_path, "payload.py", 'CMD = "' + _PIPE + '"\n')
+    _write(tmp_path, "runner.py",
+           "import os\nfrom payload import CMD\n\ndef go():\n"
+           "    CMD = 'echo hi'\n    os.system(CMD)\n")
+    assert _RULE not in _rules(_scan(tmp_path))
+
+
+def test_a_module_level_reassignment_after_the_import_is_not_a_flow(tmp_path):
+    _write(tmp_path, "payload.py", 'CMD = "' + _PIPE + '"\n')
+    _write(tmp_path, "runner.py",
+           "import os\nfrom payload import CMD\nCMD = 'echo hi'\nos.system(CMD)\n")
+    assert _RULE not in _rules(_scan(tmp_path))
+
+
+def test_a_loop_target_shadowing_the_import_is_not_a_flow(tmp_path):
+    _write(tmp_path, "payload.py", 'CMD = "' + _PIPE + '"\n')
+    _write(tmp_path, "runner.py",
+           "import os\nfrom payload import CMD\nfor CMD in ['a']:\n    os.system(CMD)\n")
+    assert _RULE not in _rules(_scan(tmp_path))
+
+
+def test_two_modules_could_answer_to_the_name_so_neither_is_named(tmp_path):
+    """🔴 IT NAMED THE WRONG FILE.
+
+    With `payload.py` at the root and `sub/payload.py` beside the importer, walk
+    order decided which one won -- and it picked the root, so the finding pointed
+    at a file with nothing to do with the flow. **Ambiguity is silence, never a
+    guess.** A finding that names the wrong file is worse than no finding: it
+    sends the reader somewhere the problem is not.
+    """
+    (tmp_path / "sub").mkdir()
+    _write(tmp_path, "payload.py", 'CMD = "' + _PIPE + '"\n')
+    _write(tmp_path / "sub", "payload.py", "CMD = 'echo hi'\n")
+    _write(tmp_path / "sub", "runner.py",
+           "import os\nfrom payload import CMD\nos.system(CMD)\n")
+    assert _RULE not in _rules(_scan(tmp_path))
