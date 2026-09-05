@@ -5,8 +5,26 @@
 # code patterns that the public registry packs do not cover. When the network is
 # available, these run ALONGSIDE p/owasp-top-ten and p/security-audit.
 #
-# License: MIT (same as PRAETOR). Rules authored for PRAETOR; where a pattern is
-# a well-known idiom it is expressed independently here.
+# License: MIT. Rules authored for PRAETOR; where a pattern is a well-known idiom
+# it is expressed independently here.
+#
+# !! "(same as PRAETOR)" USED TO FOLLOW THAT WORD AND IS NO LONGER TRUE. PRAETOR
+# relicensed to AGPL-3.0 on 2026-09-04; see LICENSE. This rule pack stays MIT
+# DELIBERATELY, so the rules can be reused -- including by a hosted service --
+# without AGPL section 13 reaching them. Two licences in one repository is a
+# choice, not an oversight, and a stale parenthetical made it read as an
+# oversight while asserting something false about the project's own licence.
+#
+# !!! THIS FILE MUST BE PURE ASCII. NO EMOJI, NO SMART QUOTES, NO DASHES.
+# Semgrep reads its config with the LOCALE codec, not UTF-8. Writing the ordinary
+# house-style warning glyph into this header put six non-ASCII bytes at offset
+# 471 and semgrep died before loading a single rule:
+#
+#     'charmap' codec can't decode byte 0x8f in position 476
+#
+# The whole sast engine went to `error`, which correctly failed the gate -- but
+# the YAML itself parses fine, so `yaml.safe_load` says the file is healthy and
+# only semgrep disagrees. Guarded by tests/test_rule_files_are_ascii.py.
 rules:
   # ----------------------------- Python -----------------------------------
   - id: praetor-py-os-system-concat
@@ -224,7 +242,7 @@ rules:
   # carry NO leading underscore, so `(lambda: 0).gi_frame.f_back.f_globals` walks
   # straight out of the sandbox to builtins.
   #
-  # 🔴 THE FAILURE MODE, stated because a reader WILL over-read a clean result:
+  # !!! THE FAILURE MODE, stated because a reader WILL over-read a clean result:
   # this rule matches ONE RECOGNISABLE SHAPE. It does NOT establish that a sandbox
   # is sound -- soundness is undecidable -- and ABSENCE OF THIS FINDING IS NOT
   # EVIDENCE OF SAFETY. Severity is WARNING, not ERROR, for exactly that reason: a
