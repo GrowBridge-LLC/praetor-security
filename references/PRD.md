@@ -24,23 +24,57 @@ modelling or penetration testing; finding runtime, logic or authorization flaws.
 
 ## 2. The invariants — these outrank every other requirement
 
-### INV-1 · PRAETOR never executes, imports, installs or builds the target ✅
+### INV-1 · PRAETOR never executes, imports, installs or builds the target ✅ ⚠️
 No engine, and no external tool it invokes, may run in a mode that evaluates
-target code.
+target code — and nothing PRAETOR imports may come from the tree it is scanning.
+
+⚠️ **The ⚠️ is not decoration.** One residual is open and named below: a target
+that plants a file called `praetor.py` still pre-empts `python -m praetor`. An
+invariant with a known hole is held for the surfaces that were tested, which is
+a smaller claim than the heading alone makes.
 
 > **Verified by** `tests/test_invariant_never_executes_target.py`, which captures
 > the argv PRAETOR would hand a subprocess without running it, plus
 > `test_it_never_consults_the_import_system` and
 > `test_the_reader_touches_no_subprocess`, which poison the relevant modules and
-> assert the code path survives.
+> assert the code path survives — and, since the second violation,
+> `test_running_as_a_module_does_not_import_the_targets_code` and
+> `test_every_installed_module_name_is_covered_not_just_core`, which plant a
+> module shadow in the scanned tree and assert nothing ran.
+>
+> ⚠️ The second of those exists because "I handled the case the auditor
+> demonstrated" is the narrowest possible scope, and this repository has been
+> caught by that shape before. `core` was the demonstrated shadow; every flat
+> module PRAETOR installs is shadowable the same way.
 
-⚠️ **Violated once.** The SCA path let `pip` resolve requirements, which builds
-source distributions and runs `setup.py` from an attacker-controlled tree.
+⚠️ **Violated twice.**
+1. The SCA path let `pip` resolve requirements, which builds source
+   distributions and runs `setup.py` from an attacker-controlled tree.
+2. 🔴 **`python -m praetor` executed the target's code.** PRAETOR installs as
+   fifteen flat top-level modules, and `-m` puts the working directory first on
+   `sys.path` — so PRAETOR's own `import core` resolved to the **target's**
+   `core.py`. Measured on an installed copy: the planted file ran and the scan
+   produced no output. **The exit code hid it** — that run returned 1, the same
+   code as "found findings at or above `--fail-on`".
+
 ⚠️ **Nearly violated twice more, both caught before shipping:**
 `importlib.util.find_spec` executes the parent package; invoking `git` in a
 target evaluates that target's config, which can name commands.
 
-**Every new engine or backend widens this surface and must add its own test.**
+🔴 **THE SECOND VIOLATION WAS NOT IN AN ENGINE.** Every engine obeyed the
+invariant; the *invocation surface* did not. This requirement had been read for
+months as being about what the engines do, and the word "engine" appears twice in
+the sentence below. **The invariant covers how PRAETOR is started, what it
+imports, and what its subprocesses resolve — not only what an engine reads.**
+
+⚠️ **Residual, stated rather than left to a later audit:** a target that plants a
+file named `praetor.py` pre-empts `python -m praetor` before any of PRAETOR's own
+code runs. Nothing inside the file can defend against that. The complete fix is
+to ship a package rather than flat top-level modules, so no single-word module
+name is shadowable. **Not done.**
+
+**Every new engine or backend widens this surface and must add its own test. So
+does every new way of starting PRAETOR.**
 
 ### INV-2 · A clean scan is `NO FINDING`, never `SAFE` ✅
 No output may state or imply that a scanned target is secure.
@@ -93,11 +127,19 @@ snippet, fingerprint, SARIF — can see them.
 | **DET-8** | Known-vulnerable dependencies with advisory IDs and upgrade path | ✅ |
 | **DET-9** | SAST across ~30 languages | ✅ |
 | **DET-10** | Encoded payloads decoded one level and rescanned | ✅ |
-| **DET-11** | **Cross-file**: a payload defined in one file, used dangerously in another | ✅ |
+| **DET-11** | **Cross-file**: a payload defined in one file, used dangerously in another | ✅ ⚠️ |
 | **DET-12** | Cross-file through a function parameter and an aliased call | 🔨 |
 | **DET-13** | Strings assembled from fragments across a chain | 🔨 |
 | **DET-14** | `.pth` and `.pyc` admission — files that execute at interpreter startup and are parsed by no SAST or SCA tool today | 🔨 |
 | **DET-15** | Command-position analysis: is a token where it would be passed to a program, or is it prose about it? | 🔨 |
+
+⚠️ **DET-11's ✅ carries a warning, and the warning is the honest part.** An
+agent briefed to break it found **26 evasions and 6 false positives at HIGH**,
+with every test in the module's own file passing throughout. All are fixed and
+mutation-proven, but the pass still sees **one shape**: a module-level literal
+string joined to a sink in another file. Its stated known-gaps list grew from
+four items to eleven in the course of that review. **Read a ✅ on a detection
+requirement as "the demonstrated cases work", never as "the class is covered".**
 
 🔴 **DET-11 through DET-15 are the "spatial awareness" thread.** Each must obey
 INV-1 and be **add-only**. Each must state what it still misses.
