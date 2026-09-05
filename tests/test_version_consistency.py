@@ -1,5 +1,6 @@
 """
-Every place the version appears must agree, and the CHANGELOG must describe it.
+The version sources this file NAMES must agree, and the CHANGELOG must describe
+the current version.
 
 🔴 WHY. The tool version lives in TWO files that no code connects:
 `pyproject.toml` (what pip installs) and `scripts/praetor.py` (what
@@ -8,6 +9,18 @@ Every place the version appears must agree, and the CHANGELOG must describe it.
 Nothing asserted they matched. A release cut from a tree where they had drifted
 would install as one version and report itself as another — and the report is the
 artifact a dashboard stores, so the wrong number would be the one that persisted.
+
+⚠️ THIS FILE USED TO OPEN "every place the version appears", WHICH WAS FALSE.
+`references/PRD.md` carries the version too and nothing checked it, so the
+sentence read as a completeness guarantee that no assertion backed. That is this
+repository's own recurring shape: a guard that enumerates, described as though it
+covered a class.
+
+⇒ `_VERSION_MENTIONS` below is the enumeration, and it is checked. **What it
+still cannot reach**, stated rather than left for a later audit to find: a
+version written into prose anywhere else in `references/` or the wiki, a git tag,
+and any published package metadata. Adding a new place to write the version means
+adding it here.
 
 `references/VERSIONING.md` is the policy this file enforces.
 """
@@ -43,6 +56,30 @@ def test_the_two_version_sources_agree():
     )
 
 
+#: Documents that state the tool version in prose, and the pattern that finds it.
+#: Each entry is (path, regex with one capture group).
+_VERSION_MENTIONS = [
+    ("references/PRD.md", re.compile(r"\*\*Version (\d+\.\d+\.\d+)\.?\*\*")),
+]
+
+
+def test_documents_that_state_the_version_agree_with_the_code():
+    """⚠️ A DOCUMENT'S VERSION IS A CLAIM ABOUT WHICH BUILD IT DESCRIBES.
+
+    The PRD opens by naming the version whose requirements it records. Left
+    behind at a bump, it silently describes an older tool -- and a requirements
+    document that describes the wrong build is worse than none, because it is
+    read as authoritative.
+    """
+    for relpath, pattern in _VERSION_MENTIONS:
+        path = _ROOT / relpath
+        assert path.exists(), f"{relpath} is named here but missing from the tree"
+        m = pattern.search(path.read_text(encoding="utf-8"))
+        assert m, f"{relpath} no longer states a version in the expected form"
+        assert m.group(1) == praetor.VERSION, (
+            f"{relpath} says {m.group(1)}, the tool is {praetor.VERSION}")
+
+
 def test_the_version_is_semver():
     """The policy is semantic versioning; a version that cannot be parsed as one
     cannot be compared, sorted or pinned."""
@@ -67,6 +104,19 @@ def test_the_changelog_has_a_section_for_this_version():
     assert heading in text, (
         f"CHANGELOG.md has no '{heading}' section. Every version gets one before "
         "it is tagged -- see references/VERSIONING.md."
+    )
+
+    # 🔴 THE HEADING WAS THE WHOLE CHECK, AND A HEADING IS NOT AN ENTRY.
+    # `## 1.1.0` followed immediately by the next version's heading satisfied
+    # every assertion above while telling a reader nothing at all -- which is
+    # precisely the failure this test claims to prevent. Assert the CONTENT.
+    body = text.split(heading, 1)[1].split("\n## ", 1)[0]
+    substantive = [ln for ln in body.splitlines()
+                   if ln.strip() and not ln.strip().startswith("<!--")]
+    assert len(substantive) >= 2, (
+        f"the '{heading}' section is empty or a stub. A version heading with no "
+        "entries under it is not a changelog -- it is a placeholder that passes "
+        "a test."
     )
 
 

@@ -12,6 +12,95 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Fixed — SARIF reported success for a scan that examined nothing
+
+🔴 **A false clean, one layer out from the engines.** `scripts/sarif.py` asked
+only the per-engine question — "did each engine report a trusted status?" — and
+never the whole-scan one. Measured on an empty directory scanned with four
+engines:
+
+    SARIF    executionSuccessful: true,  results: 0
+    PRAETOR  rc=3, "NOTHING WAS EXAMINED -- 0 files were opened"
+
+Every engine was individually fine and none of them looked at anything. A
+consumer reading `true` with zero results treats the run as an authoritative
+clean bill, and GitHub may close existing alerts as fixed on exactly that signal.
+
+The whole-scan measurement is now computed **once**, in the CLI that already
+needed it for the exit code, and read from `meta.scope.walked_nothing`. A second
+consumer deriving its own answer to a safety question is how the two came to
+disagree. `core.GATE_TRUSTED_STATUSES` is now imported rather than copied.
+
+⚠️ **The test written for this was vacuous.** It hoped semgrep would be missing,
+computed `blind` from the report, and asserted `executionSuccessful is not
+blind`. On a machine where semgrep is installed that reads `True is not False`
+and passes without reaching the branch. Three more tests in the same file were
+found inert by mutation testing, each because its fixture never produced the
+thing the test claimed was absent.
+
+### Fixed — a scan defeated by one malformed character
+
+`json.dumps(..., ensure_ascii=False)` produces a string a UTF-8 stream cannot
+carry when the data holds an unpaired surrogate. `core.read_text` decodes with
+`errors="surrogatepass"` **on purpose**, so a smuggled code point survives for
+detection — and then reached the SARIF writer. `report.py` had already used
+`ensure_ascii=True`; nothing compared the two.
+
+### Fixed — three ways a SARIF file disclosed more than it should
+
+A SARIF file is uploaded to a third party, so everything in it is published.
+
+- **The host path and account name.** `meta.engines[].detail` is built from tool
+  output and exception text. The `sast` engine reports its rules file by absolute
+  path, which on a checkout under a home directory names the operating-system
+  account of whoever ran the scan. Absolute paths are now reduced to their final
+  component; non-path tokens are left alone.
+- **A credential in a file NAME.** Snippets are redacted at the `Finding`
+  boundary. A path is not, because inside PRAETOR a path is a locator rather than
+  content — a distinction that stops being true at the moment it is published.
+- **A token in `--repo`.** CI hands over the clone URL, and
+  `https://x-access-token:<token>@github.com/o/n` is the standard shape inside a
+  GitHub Actions checkout. Userinfo is now stripped.
+
+### Fixed — SARIF a validator would reject, losing every result
+
+An invalid file does not lose one finding, it loses the whole upload.
+
+- `$schema` pointed at a URL that **404s**. Its test asserted `.endswith(...)`,
+  which the dead address also satisfies. Both are now the full string, verified
+  to return 200.
+- `repositoryUri` emitted `owner/name`, which is not a URI (SARIF1005) — and the
+  test **pinned the defect** by asserting that value. The shorthand is expanded;
+  when no absolute URI can be built the block is omitted, because absent beats
+  invalid.
+- A rule's `name` repeated its `id` (SARIF1001). Removed.
+
+### Added — coverage notes reach SARIF's own notification channel
+
+A coverage note is a whole-scan fact, so it carries `file="."`. A consumer that
+requires a result to resolve to a real file may drop it — deleting precisely the
+finding that says the scan was incomplete. They are now emitted as
+`toolExecutionNotifications` **as well as** results, never instead: a
+notification is not an alert in most consumers.
+
+### Added — the GitHub Action hands back the SARIF file
+
+`--out` already wrote `praetor-report.sarif`; `action.yml` declared
+`report-json` and stopped. The one artifact that puts PRAETOR in a repository's
+Security tab existed inside the runner and was unreachable from the workflow
+that produced it. ⚠️ The upload step needs `if: always()` — this action exits
+with PRAETOR's own code, so a run that **found** something fails the step and a
+plain upload is skipped.
+
+### Fixed — two guards that passed on an empty answer
+
+- The CHANGELOG check tested only that a `## <version>` heading existed. A
+  heading with nothing under it satisfied every assertion while telling a reader
+  nothing, which is the failure that check claims to prevent.
+- `tests/test_version_consistency.py` opened with "every place the version
+  appears", and `references/PRD.md` states the version with nothing checking it.
+  The enumeration is now explicit, checked, and says what it still cannot reach.
+
 ### Added — cross-file analysis: the payload no single file reveals
 
 `scripts/crossfile.py`. Every other built-in engine is per-file, so an attacker

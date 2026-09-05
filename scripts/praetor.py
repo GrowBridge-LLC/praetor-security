@@ -982,6 +982,17 @@ def main(argv=None):
     )
     _merge_drop_counters(scope_stats, model_walk_stats)
 
+    # 🔴 THE WHOLE-SCAN MEASUREMENT, COMPUTED ONCE AND RECORDED.
+    # `core.engines_that_measured`'s docstring states in capitals that a
+    # per-engine trust check answers only half the question. SARIF's first
+    # version re-derived the per-engine half in its own file and never asked the
+    # other, so it reported `executionSuccessful: true` for a scan where
+    # PRAETOR's own gate said "NOTHING WAS EXAMINED" and returned 3.
+    #
+    # One computation, read by everyone. A second consumer re-deriving a safety
+    # question is how the two came to disagree.
+    _walked_nothing = not (scan_files or secret_files or aisec_files or model_files)
+
     nul_text_files = {
         sf.abspath for sf in (scan_files + secret_files + aisec_files) if sf.contains_nul
     }
@@ -1376,6 +1387,8 @@ def main(argv=None):
                 for rel, why in scope_stats.get("unstattable_examples", [])
             ],
             "max_file_size": args.max_file_size,
+            # Read by the SARIF emitter so it cannot disagree with the gate.
+            "walked_nothing": _walked_nothing,
             "default_skips_disabled": bool(args.no_default_skips),
             # Files an engine asked for and could not decode. Reported so the
             # skip is never silent; see the unreadable floor below.
@@ -1456,7 +1469,7 @@ def main(argv=None):
     # ELSEWHERE. An unavailable semgrep is a blind spot and `blind` returns 3 on
     # its own; this term only says that a walk finding no files is not evidence
     # about a scan those walks never fed.
-    walked_nothing = not (scan_files or secret_files or aisec_files or model_files)
+    walked_nothing = _walked_nothing
     # 🔴 A FINDING, NOT A MEMBERSHIP TEST. The first version of this line read
     # `not (_SELF_DISCOVERING_ENGINES & set(engines))`, and `ALL_ENGINES` contains
     # both of them -- so the intersection was non-empty in EVERY DEFAULT SCAN and

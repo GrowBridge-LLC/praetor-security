@@ -25,11 +25,25 @@ field consumers may APPLY would be an overclaim with a blast radius.
 from __future__ import annotations
 
 import json
+import re
+
+import core
 
 SARIF_VERSION = "2.1.0"
+
+#: The published schema location.
+#:
+#: ⚠️ THE OBVIOUS URL 404s. `.../sarif-spec/master/Schemata/...` is the address
+#: most examples still carry, and the repository renamed its default branch and
+#: moved the directory. A `$schema` that does not resolve makes every validating
+#: consumer either reject the file or silently skip validation.
+#:
+#: The first test written for this asserted `.endswith("sarif-schema-2.1.0.json")`
+#: -- which the dead URL also satisfies. **Assert the whole string.** A test that
+#: checks the last component of a URL is not checking the URL.
 SARIF_SCHEMA = (
-    "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/"
-    "Schemata/sarif-schema-2.1.0.json"
+    "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/"
+    "sarif-2.1/schema/sarif-schema-2.1.0.json"
 )
 
 #: PRAETOR severity -> SARIF level.
@@ -58,11 +72,96 @@ _LEVEL = {
 _RANK = {"CRITICAL": 100.0, "HIGH": 80.0, "MEDIUM": 50.0, "LOW": 20.0, "INFO": 5.0}
 
 
+#: Anything that looks like an absolute filesystem path.
+#:
+#: 🔴 A SARIF FILE IS UPLOADED TO A THIRD PARTY. `meta.engines[].detail` is built
+#: from tool output and exception text, and both carry absolute paths -- which on
+#: this machine means `C:\\Users\\Admin\\...`, disclosing the operating-system
+#: account name of whoever ran the scan into an artifact that may end up in a
+#: public repository's Security tab.
+_ABS_PATH = re.compile(
+    r"(?:[A-Za-z]:[\\/]|(?<![\w.])/)(?:[^\s\"'<>|]*[\\/])*[^\s\"'<>|]*"
+)
+
+#: Credentials that reach SARIF through a route the snippet redactor never sees.
+#:
+#: ⚠️ A SECRET CAN BE IN THE FILE NAME. `secrets/AKIA<...>.env` is a real shape --
+#: a key checked in as a filename. Snippets are redacted at the `Finding`
+#: boundary; the `file` field is not, because inside PRAETOR it is a path, not
+#: content. Crossing into SARIF changes that: the path is published.
+_UNSAFE_URI_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _scrub_paths(text):
+    """Replace absolute paths with their final component.
+
+    Returns the value unchanged when it is not a string, so it can be mapped
+    over an arbitrary metadata structure without knowing its shape.
+    """
+    if not isinstance(text, str):
+        return text
+
+    def keep_the_tail(m):
+        raw = m.group(0)
+        tail = raw.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+        return tail or "<path>"
+
+    return _ABS_PATH.sub(keep_the_tail, text)
+
+
+def _scrub_structure(value):
+    """`_scrub_paths` applied through dicts and lists, values only."""
+    if isinstance(value, dict):
+        return {k: _scrub_structure(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub_structure(v) for v in value]
+    return _scrub_paths(value)
+
+
+def _safe_uri(path: str) -> str:
+    """A finding's file path, made safe to publish.
+
+    Redacts a provider-recognised credential appearing in the path itself and
+    strips control characters, which are invalid in a SARIF URI and are a
+    terminal-spoofing vector in any consumer that echoes the value.
+    """
+    uri = (path or "").replace("\\", "/")
+    uri = core.redact_finding_snippet(uri)
+    return _UNSAFE_URI_CHARS.sub("", uri)
+
+
+def _repository_uri(repo: str) -> str:
+    """An absolute URI for `versionControlProvenance`, or "" if none can be made.
+
+    ⚠️ `owner/name` IS NOT A URI, and emitting it raises SARIF1005 in GitHub's
+    own validator. PRAETOR accepts `--repo owner/name` because that is what CI
+    variables hold, so the shorthand is expanded here rather than rejected.
+
+    🔴 USERINFO IS STRIPPED. A CI system that passes a clone URL can pass
+    `https://x-access-token:<a token>@github.com/owner/name` -- which would
+    publish a live credential inside the provenance block of an uploaded file.
+    """
+    if not repo:
+        return ""
+    text = str(repo).strip()
+    if "://" not in text:
+        if re.fullmatch(r"[\w.-]+/[\w.-]+", text):
+            return f"https://github.com/{text}"
+        return ""
+    scheme, _, rest = text.partition("://")
+    authority, slash, tail = rest.partition("/")
+    if "@" in authority:
+        authority = authority.rsplit("@", 1)[1]  # drop user:password
+    return f"{scheme}://{authority}{slash}{tail}"
+
+
 def _rule_descriptor(finding: dict) -> dict:
     """One SARIF reportingDescriptor, built from a finding that used the rule."""
     rule = {
         "id": finding["rule_id"],
-        "name": finding["rule_id"],
+        # ⚠️ NO `name` FIELD. SARIF1001 fires when `name` equals `id`, and
+        # PRAETOR's rule ids are already the human-readable name. A duplicate
+        # that trips a validator is worse than an absent optional field.
         "shortDescription": {"text": finding.get("title") or finding["rule_id"]},
         "fullDescription": {"text": finding.get("description") or finding.get("title") or ""},
         "defaultConfiguration": {
@@ -115,7 +214,8 @@ def _result(finding: dict) -> dict:
                     # SARIF wants a URI-style relative path. PRAETOR already
                     # normalises to forward slashes, but a Windows-produced
                     # report can still carry backslashes from a caller.
-                    "uri": (finding.get("file") or "").replace("\\", "/"),
+                    # Redacted, because a credential can be in the NAME.
+                    "uri": _safe_uri(finding.get("file")),
                     "uriBaseId": "%SRCROOT%",
                 },
                 "region": {"startLine": line},
@@ -175,6 +275,28 @@ def render_sarif(result: dict, meta: dict) -> str:
         "rules": list(rules.values()),
     }
 
+    # 🔴 COVERAGE NOTES GO IN TWO PLACES, DELIBERATELY.
+    #
+    # A coverage note is a whole-scan fact -- "12 files were too large to read"
+    # -- so it carries `file="."`, a directory. A consumer that requires a
+    # result to resolve to a real file may drop it. That would delete exactly
+    # the finding this project cares most about: the one saying the scan was
+    # incomplete. A false clean, arriving through the presentation layer.
+    #
+    # `toolExecutionNotifications` is SARIF's own channel for "the tool could
+    # not process this", and it needs no file location at all. Emitting there
+    # as well costs a few lines and removes the single point of failure.
+    #
+    # ⚠️ NOT INSTEAD OF the result. A notification is not an alert in most
+    # consumers, so dropping the result would hide the note from anyone reading
+    # the alert list. Both, or neither is reliable.
+    notifications = [{
+        "level": "warning",
+        "message": {"text": f["title"] + " -- " + (f.get("description") or "")},
+        "descriptor": {"id": f["rule_id"]},
+        "properties": {"praetorCategory": "COVERAGE"},
+    } for f in all_findings if f.get("category") == "COVERAGE"]
+
     invocation = {
         # 🔴 `executionSuccessful` IS NOT "no findings". It says the TOOL ran
         # correctly. A scan that could not measure the tree must report false
@@ -183,6 +305,8 @@ def render_sarif(result: dict, meta: dict) -> str:
         "executionSuccessful": not _scan_was_degraded(meta),
         "endTimeUtc": meta.get("timestamp"),
     }
+    if notifications:
+        invocation["toolExecutionNotifications"] = notifications
     if meta.get("duration_seconds") is not None:
         invocation["properties"] = {"durationSeconds": meta["duration_seconds"]}
 
@@ -192,40 +316,72 @@ def render_sarif(result: dict, meta: dict) -> str:
         "invocations": [invocation],
         "properties": {
             # Everything a consumer needs to judge whether the zero means
-            # anything, carried through rather than lost in translation.
+            # anything, carried through rather than lost in translation --
+            # with host paths scrubbed, because this file gets uploaded.
             "praetorSchemaVersion": meta.get("schema_version"),
-            "engines": meta.get("engines"),
-            "scope": meta.get("scope"),
-            "provenance": meta.get("provenance"),
+            "engines": _scrub_structure(meta.get("engines")),
+            "scope": _scrub_structure(meta.get("scope")),
+            "provenance": _scrub_structure(meta.get("provenance")),
         },
     }
 
     prov = meta.get("provenance") or {}
-    if prov.get("commit"):
+    repo_uri = _repository_uri(prov.get("repo") or "")
+    if prov.get("commit") and repo_uri:
+        # ⚠️ EMITTED ONLY WITH AN ABSOLUTE URI. SARIF requires one, and an empty
+        # or shorthand value fails GitHub's validator (SARIF1005) -- which
+        # rejects the whole upload, so a malformed block loses every result.
         run["versionControlProvenance"] = [{
-            "repositoryUri": prov.get("repo") or "",
+            "repositoryUri": repo_uri,
             "revisionId": prov["commit"],
             "branch": prov.get("branch") or "",
         }]
 
     return json.dumps(
         {"$schema": SARIF_SCHEMA, "version": SARIF_VERSION, "runs": [run]},
-        indent=2, ensure_ascii=False,
+        indent=2,
+        # 🔴 `ensure_ascii=False` CRASHES ON A LONE SURROGATE, and a scanner
+        # reads attacker-controlled bytes for a living. A file holding an
+        # unpaired surrogate made the whole run exit 2 with no report at all --
+        # a scan defeated by one malformed character. `report.py` had this
+        # right; SARIF did not.
+        ensure_ascii=True,
     )
 
 
 def _scan_was_degraded(meta: dict) -> bool:
-    """True when any engine could not measure what it was asked to.
+    """True when the scan cannot be treated as authoritative.
 
-    Mirrors `core.GATE_TRUSTED_STATUSES`: anything outside that set -- including
-    a status word this function has never heard of -- is a blind spot. Failing
-    toward `executionSuccessful: false` is the safe direction, because a
-    consumer reading `true` will treat the run as authoritative.
+    🔴 TWO QUESTIONS, AND THE FIRST VERSION ASKED ONLY ONE. It checked each
+    engine's status and stopped there. `core.engines_that_measured`'s docstring
+    states in capitals why that is half an answer: a per-engine check cannot see
+    the EMPTY SET. Measured, an empty directory scanned with four engines:
+
+        SARIF   executionSuccessful: true,  results: 0
+        PRAETOR rc=3, "NOTHING WAS EXAMINED -- 0 files were opened"
+
+    Every engine was individually trustworthy and none of them looked at
+    anything. A consumer reading `true` with zero results treats the run as an
+    authoritative clean bill -- and GitHub may close existing alerts as fixed on
+    exactly that signal.
+
+    ⇒ The whole-scan half is now READ FROM `meta`, not re-derived here. The CLI
+    already computes it for the exit code; a second consumer computing its own
+    version of a safety question is how these two came to disagree.
+
+    ⚠️ `GATE_TRUSTED_STATUSES` is imported rather than copied, for the same
+    reason. The hardcoded set here claimed to "mirror" it, and nothing asserted
+    the mirror -- so tightening `core` would have left this silently permissive.
     """
+    scope = meta.get("scope") or {}
+    if scope.get("walked_nothing"):
+        return True
+
     engines = meta.get("engines") or {}
-    trusted = {"ok", "not-applicable", "disabled"}
+    if not engines:
+        return True  # nothing ran at all
     for info in engines.values():
         status = (info or {}).get("status")
-        if status not in trusted:
+        if status not in core.GATE_TRUSTED_STATUSES:
             return True
     return False

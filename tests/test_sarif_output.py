@@ -52,7 +52,14 @@ def _run(doc):
 def test_it_is_sarif_2_1_0_with_a_schema(tmp_path):
     doc = _scan(_seed(tmp_path))
     assert doc["version"] == "2.1.0"
-    assert doc["$schema"].endswith("sarif-schema-2.1.0.json")
+    # 🔴 ASSERT THE WHOLE URL. The first version checked `.endswith(...)`, and
+    # the URL it was checking 404s -- `.../sarif-spec/master/Schemata/...`, a
+    # branch and directory that no longer exist. The dead address ends in the
+    # same filename, so the test passed on a link that resolves to nothing.
+    assert doc["$schema"] == (
+        "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/"
+        "sarif-2.1/schema/sarif-schema-2.1.0.json"
+    )
     assert len(doc["runs"]) == 1
 
 
@@ -131,18 +138,56 @@ def test_a_suppressed_finding_is_emitted_as_suppressed_not_dropped(tmp_path):
         "a suppression with no stated justification is not triage"
 
 
-def test_execution_successful_is_false_when_an_engine_was_blind(tmp_path):
-    """🔴 `executionSuccessful` IS NOT "no findings" -- it says the TOOL ran
-    correctly. A consumer reading `true` treats the run as authoritative, so a
-    scan that could not measure the tree must report `false`, or this is the
-    same false-clean the project exists to prevent, one layer out."""
-    _seed(tmp_path)
-    # `sast` without a semgrep runtime reports `unavailable`, which is a blind spot.
-    doc = _scan(tmp_path, "--engines", "sast,secrets")
-    engines = _run(doc)["properties"]["engines"]
-    blind = any(v.get("status") not in ("ok", "not-applicable", "disabled")
-                for v in engines.values())
-    assert _run(doc)["invocations"][0]["executionSuccessful"] is not blind
+def test_execution_successful_is_false_when_nothing_was_examined(tmp_path):
+    """🔴 THE FALSE CLEAN THIS FILE EXISTS TO PREVENT, and the first version of
+    this test could not see it.
+
+    That version scanned with `sast` hoping semgrep would be missing, computed
+    `blind` from the report itself, and asserted `executionSuccessful is not
+    blind`. On a machine where semgrep IS installed -- this one -- `blind` is
+    False, so the assertion read `True is not False` and passed without ever
+    reaching the branch it was written for. It also RE-IMPLEMENTED the trusted
+    status set, so it agreed with the code by construction.
+
+    Measured, before the fix: an empty directory produced
+    `executionSuccessful: true` with zero results, while PRAETOR's own gate
+    returned 3, "NOTHING WAS EXAMINED". A consumer reading true-with-no-results
+    treats the run as an authoritative clean bill.
+
+    ⇒ Assert the VALUE, on an input whose correct answer is known without
+    consulting the output.
+    """
+    empty = tmp_path / "nothing"
+    empty.mkdir()
+    doc = _scan(empty, "--engines", "secrets,aisec")
+    run = _run(doc)
+    assert run["results"] == []
+    assert run["invocations"][0]["executionSuccessful"] is False, (
+        "a scan that examined nothing must not report success -- "
+        "PRAETOR's own exit code calls this 3")
+
+
+def test_execution_successful_is_true_for_a_scan_that_did_measure(tmp_path):
+    """⚠️ THE KEEP DIRECTION. A degradation check that fails toward `false` for
+    everything is as useless as one that never fires -- a consumer learns to
+    ignore the field. Narrowing the predicate and disabling it look identical
+    from outside, so both directions are asserted."""
+    doc = _scan(_seed(tmp_path), "--engines", "secrets")
+    assert _run(doc)["invocations"][0]["executionSuccessful"] is True
+
+
+def test_it_does_not_re_implement_the_trusted_status_set():
+    """The first version hardcoded `{"ok","not-applicable","disabled"}` beside a
+    comment claiming it mirrored `core.GATE_TRUSTED_STATUSES`, and nothing
+    asserted the mirror. Tightening `core` would have left SARIF permissive and
+    silent about it."""
+    import inspect
+
+    import sarif
+
+    src = inspect.getsource(sarif._scan_was_degraded)
+    assert "GATE_TRUSTED_STATUSES" in src
+    assert '"not-applicable"' not in src, "the set must be imported, not copied"
 
 
 def test_engine_status_and_scope_survive_the_translation(tmp_path):
@@ -174,4 +219,160 @@ def test_provenance_reaches_version_control_provenance(tmp_path):
     doc = _scan(tmp_path, "--commit", "a" * 40, "--repo", "owner/name")
     vcp = _run(doc)["versionControlProvenance"][0]
     assert vcp["revisionId"] == "a" * 40
-    assert vcp["repositoryUri"] == "owner/name"
+    # 🔴 THIS LINE USED TO PIN THE DEFECT. It asserted `== "owner/name"`, which
+    # is not a URI: GitHub's validator raises SARIF1005 and rejects the upload,
+    # losing every result in the file. A test can specify the bug.
+    assert vcp["repositoryUri"] == "https://github.com/owner/name"
+
+
+def test_a_credential_in_a_clone_url_never_reaches_the_output(tmp_path):
+    """🔴 CI HANDS PRAETOR THE CLONE URL, AND IT CAN CARRY A TOKEN.
+    `https://x-access-token:<token>@github.com/o/n` is the standard shape inside
+    a GitHub Actions checkout. Publishing it inside an uploaded artifact would
+    turn a provenance field into a credential leak."""
+    _seed(tmp_path)
+    token = "ghp_" + "N0TAR3ALT0KEN" * 2
+    doc = _scan(tmp_path, "--commit", "b" * 40,
+                "--repo", f"https://x-access-token:{token}@github.com/o/n")
+    raw = json.dumps(doc)
+    assert token not in raw
+    assert _run(doc)["versionControlProvenance"][0]["repositoryUri"] == \
+        "https://github.com/o/n"
+
+
+def test_no_provenance_block_is_emitted_without_an_absolute_uri(tmp_path):
+    """⚠️ A MALFORMED BLOCK LOSES THE WHOLE UPLOAD, so absent beats invalid.
+    Omitting an optional block costs a link to the commit; emitting an invalid
+    one costs every result in the file."""
+    _seed(tmp_path)
+    doc = _scan(tmp_path, "--commit", "c" * 40, "--repo", "not a repo at all")
+    assert "versionControlProvenance" not in _run(doc)
+
+
+# --------------------------------------------------------------------------- #
+# Disclosure -- a SARIF file is UPLOADED. Everything in it becomes published.
+# --------------------------------------------------------------------------- #
+
+def test_a_credential_in_a_FILE_NAME_is_redacted(tmp_path):
+    """🔴 THE ROUTE THE SNIPPET REDACTOR NEVER SEES.
+
+    Snippets are redacted at the `Finding` boundary. A file PATH is not, because
+    inside PRAETOR a path is a locator rather than content. Crossing into SARIF
+    changes that: the path is published to a third party. A key committed as a
+    filename is a real shape, and it reached the output in clear.
+
+    ⚠️ THE FIRST VERSION OF THIS TEST WAS VACUOUS, and the mutation test is what
+    said so. It named the key file `<key>.py` but filled it with `x = 1`, so
+    that file produced NO finding -- and a path only reaches SARIF as the
+    location OF a finding. A second, ordinary file supplied the results that the
+    "positive control" checked for, so the assertion passed with the redaction
+    deleted. **A control has to exercise the same route as the claim.**
+    """
+    (tmp_path / f"{_KEY}.py").write_text(f'K = "{_KEY}"\n', encoding="utf-8")
+    doc = _scan(tmp_path)
+    uris = [r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+            for r in _run(doc)["results"]]
+    # The control: a finding must exist ON THE KEY-NAMED FILE, or the path under
+    # test never enters the document and the assertion below proves nothing.
+    assert uris, "no finding was reported for the key-named file"
+    assert _KEY not in json.dumps(doc)
+
+
+def test_the_host_path_and_account_name_never_reach_the_output():
+    """⚠️ `meta.engines[].detail` IS BUILT FROM TOOL OUTPUT AND EXCEPTION TEXT,
+    and both carry absolute paths. On this machine that discloses the operating
+    system account name of whoever ran the scan, inside an artifact that may end
+    up in a public repository's Security tab.
+
+    ⚠️ ASSERTED AS A UNIT, ON THE MEASURED SHAPE. The first version scanned with
+    `secrets,aisec` -- neither of which puts a path in its detail -- so deleting
+    the scrubber left it green. Driving it through a real `sast` run would tie
+    the test to whether a semgrep runtime exists on the machine, which is the
+    same coupling that made the sibling `executionSuccessful` test vacuous. The
+    input below is copied from a real report.
+    """
+    sys.path.insert(0, os.path.dirname(_PRAETOR))
+    import sarif  # noqa: E402
+
+    win = "C:" + chr(92) + "Users" + chr(92) + "alice" + chr(92) + "rules.yaml"
+    measured = {
+        "sast": {"status": "ok",
+                 "detail": f"rules=['{win}', 'p/owasp-top-ten']; scan errors=0"},
+        "secrets": {"status": "error",
+                    "detail": "PermissionError: /home/bob/secret/vault.py"},
+    }
+    out = json.dumps(sarif._scrub_structure(measured))
+    assert "alice" not in out and "bob" not in out
+    assert "rules.yaml" in out, "the useful part must survive"
+    assert "vault.py" in out
+    assert "p/owasp-top-ten" in out, "a non-path token must not be mangled"
+
+
+def test_an_unpaired_surrogate_does_not_kill_the_scan(tmp_path):
+    """🔴 ONE MALFORMED CHARACTER USED TO DEFEAT THE WHOLE RUN.
+
+    A file holding a lone surrogate made PRAETOR exit 2 with no report at all --
+    from input a scanner reads for a living. `report.py` already used
+    `ensure_ascii=True`; SARIF did not, and nothing compared them.
+
+    ⚠️ THE SURROGATE MUST SHARE A LINE WITH THE FINDING. `core.read_text`
+    decodes with `errors="surrogatepass"` ON PURPOSE, so a smuggled code point
+    survives for detection -- but it only reaches SARIF inside the SNIPPET of a
+    reported finding. The first version of this test put the surrogate in a file
+    that produced no finding, so nothing carried it into the output, and the
+    mutation test found the assertion inert.
+
+    ⚠️ IT IS THE ENCODE THAT FAILS, NOT `json.dumps`. `dumps(ensure_ascii=False)`
+    returns a `str` holding the surrogate quite happily; writing that `str` to a
+    UTF-8 stream is what raises. A reproducer that only calls `dumps` sees
+    nothing wrong.
+    """
+    line = 'K = "' + _KEY + '"  # '
+    (tmp_path / "bad.py").write_bytes(line.encode("utf-8") + b"\xed\xa0\x80\n")
+    # ⚠️ BYTES, NOT `text=True`. The property under test is that what PRAETOR
+    # WROTE is valid UTF-8; decoding with `errors="replace"` would repair the
+    # very corruption being measured. (An earlier draft asserted instead that
+    # the PARSED document re-encodes with `ensure_ascii=False` -- which fails by
+    # construction, because the surrogate is still in the data and that is the
+    # whole reason the escape exists. It failed on correct code.)
+    proc = subprocess.run(
+        [sys.executable, _PRAETOR, str(tmp_path), "--engines", "secrets",
+         "--no-registry", "--format", "sarif", "--quiet"],
+        capture_output=True)
+    assert proc.returncode != 2, (
+        "the scan crashed: " + proc.stderr.decode("utf-8", "replace")[-600:])
+    doc = json.loads(proc.stdout.decode("utf-8"))  # strict: no error handler
+    # The control: without a finding from THAT file, nothing carries the
+    # surrogate into the document and the assertion above is inert.
+    assert _run(doc)["results"], "the control finding must exist"
+
+
+# --------------------------------------------------------------------------- #
+# Validator conformance -- an invalid file loses EVERY result, not one
+# --------------------------------------------------------------------------- #
+
+def test_a_rule_does_not_repeat_its_id_as_its_name(tmp_path):
+    """SARIF1001. `name` is optional and PRAETOR's ids are already readable, so
+    a duplicate buys nothing and trips a validator."""
+    rule = _run(_scan(_seed(tmp_path)))["tool"]["driver"]["rules"][0]
+    assert "name" not in rule
+
+
+def test_a_coverage_note_also_reaches_the_notification_channel(tmp_path):
+    """🔴 THE COVERAGE NOTE IS THE ONE FINDING THAT MUST NEVER VANISH.
+
+    It is a whole-scan fact, so it carries `file="."` -- a directory. A consumer
+    that requires a result to resolve to a real file may drop it, deleting
+    precisely the finding that says the scan was incomplete. That is a false
+    clean arriving through the presentation layer.
+
+    `toolExecutionNotifications` is SARIF's own channel for "the tool could not
+    process this" and needs no location, so the note survives either way.
+    ⚠️ BOTH, never instead: a notification is not an alert in most consumers.
+    """
+    (tmp_path / "huge.py").write_text("x = 1\n" * 40000, encoding="utf-8")
+    doc = _scan(tmp_path, "--max-file-size", "1000")
+    run = _run(doc)
+    notes = run["invocations"][0].get("toolExecutionNotifications") or []
+    assert any(n["descriptor"]["id"] == "file-too-large-skipped" for n in notes)
+    assert any(r["ruleId"] == "file-too-large-skipped" for r in run["results"])

@@ -17,7 +17,10 @@ inputs:
     required: false
     default: "all"
   format:
-    description: Report format (text, json, or both).
+    description: >-
+      Report format: text, json, sarif, or both. Any value that writes files
+      produces all three under the output directory, so "sarif" also leaves the
+      text summary that this action posts to the job summary.
     required: false
     default: "both"
   fail-on:
@@ -70,6 +73,21 @@ outputs:
   report-json:
     description: Path to the JSON report, when format includes json/both.
     value: ${{ steps.scan.outputs.report-json }}
+  report-sarif:
+    description: >-
+      Path to the SARIF 2.1.0 report, for github/codeql-action/upload-sarif.
+      ⚠️ THE UPLOAD STEP NEEDS `if: always()`. This action exits with PRAETOR's
+      own code, so a run that FOUND something fails the step — and a plain
+      `needs`-ordered upload is then skipped, losing exactly the results worth
+      uploading. Example:
+
+        - uses: GrowBridge-LLC/praetor-security@<tag>
+          id: praetor
+          with: {format: sarif}
+        - uses: github/codeql-action/upload-sarif@v3
+          if: always()
+          with: {sarif_file: '${{ steps.praetor.outputs.report-sarif }}'}
+    value: ${{ steps.scan.outputs.report-sarif }}
 
 runs:
   using: composite
@@ -138,6 +156,11 @@ runs:
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
         if [ -f "${GITHUB_WORKSPACE}/praetor-report/praetor-report.json" ]; then
           echo "report-json=${GITHUB_WORKSPACE}/praetor-report/praetor-report.json" >> "$GITHUB_OUTPUT"
+        fi
+        # SARIF is what puts PRAETOR in a repository's Security tab. Without
+        # this line the file was written and then never named to the caller.
+        if [ -f "${GITHUB_WORKSPACE}/praetor-report/praetor-report.sarif" ]; then
+          echo "report-sarif=${GITHUB_WORKSPACE}/praetor-report/praetor-report.sarif" >> "$GITHUB_OUTPUT"
         fi
         if [ -f "${GITHUB_WORKSPACE}/praetor-report/praetor-report.txt" ]; then
           {
