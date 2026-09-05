@@ -174,6 +174,37 @@ some findings or none. If your integration reads the report and decides anything
 the exit code or the finding count alone. (`--fail-on` closes this specific gap for you automatically,
 by turning any blind spot into exit `3` — but only if you pass it.)
 
+### schema_version 4.2 — a cross-scan identity for every finding
+
+Every finding gains a **`fingerprint`**: a stable identity that survives the
+finding MOVING within its file. Additive; a 4.1 consumer ignores it.
+
+🔴 **`fingerprint` and `dedup_key` answer different questions and are not
+interchangeable.**
+
+| Field | Question it answers | Includes the line? |
+|---|---|---|
+| `dedup_key` | are these the same finding **in this scan**? | **yes**, deliberately |
+| `fingerprint` | is this the same finding as one in a **previous scan**? | **no**, deliberately |
+
+If you are building anything that compares two scans — a dashboard, a CI job
+that gates only on newly-introduced findings, a triage record that must stay
+attached to its finding — **key on `fingerprint`.** Keying on `dedup_key`, or on
+`file:line`, reports a wall of false "new findings" on any commit that adds an
+import above them.
+
+The basis is `(rule_id, file, normalised snippet)`. It deliberately ignores
+severity and confidence, so a rule re-rating does not orphan an existing triage
+record: the issue did not change, the tool's opinion of it did.
+
+⚠️ **Two identical lines in one file share a fingerprint.** Without a line number
+there is nothing to tell them apart. Group by fingerprint and count. SARIF's own
+`partialFingerprints` has the same property for the same reason.
+
+⚠️ The snippet is redacted at the `Finding` boundary before the fingerprint is
+computed, so a fingerprint can be stored and transmitted without carrying a
+credential. `tests/test_finding_fingerprint.py` asserts that.
+
 ### schema_version 4.1 — two additive report sections
 
 MINOR, not major, and the distinction is the point: nothing was renamed, removed

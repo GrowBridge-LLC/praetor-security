@@ -69,6 +69,10 @@ def dedup(findings: list) -> list:
     for f in findings:
         if not f.dedup_key:
             f.compute_dedup_key()
+        # Computed for EVERY finding, including ones about to be merged away, so
+        # a consumer comparing two scans never meets a finding without one.
+        if not f.fingerprint:
+            f.compute_fingerprint()
     groups: dict = {}
     for f in findings:
         groups.setdefault(f.dedup_key, []).append(f)

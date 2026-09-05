@@ -344,6 +344,22 @@ class Finding:
     filter_reason: str = ""
     # a stable per-finding key used to merge duplicates across engines
     dedup_key: str = ""
+    # 🔴 A SECOND IDENTITY, AND THE TWO ARE NOT INTERCHANGEABLE.
+    #
+    # `dedup_key` answers "are these the same finding IN THIS SCAN?" and includes
+    # the LINE, which is correct: two hits on different lines of one file are two
+    # findings.
+    #
+    # `fingerprint` answers "is this the same finding as one in a PREVIOUS scan?"
+    # and must NOT include the line, because inserting a line at the top of a
+    # file moves every finding below it. Measured on this very dataclass: the
+    # identical finding at line 10 and line 11 produced two different
+    # `dedup_key`s. A dashboard keyed on that reports a wall of false "new
+    # findings" on any commit that adds an import.
+    #
+    # This is the same class as the KB-anchor defect this repository hit the same
+    # week: a prepend invalidates every anchor below it.
+    fingerprint: str = ""
 
     def __post_init__(self):
         # Redact provider-shaped credentials at the shared Finding boundary so
@@ -377,6 +393,34 @@ class Finding:
             basis = f"{norm_file}|{self.line}|{disc}"
         self.dedup_key = hashlib.sha256(basis.encode("utf-8", "replace")).hexdigest()[:16]
         return self.dedup_key
+
+    def compute_fingerprint(self) -> str:
+        """Identity that survives the finding MOVING within its file.
+
+        Consumed by anything that compares one scan to another: a dashboard
+        answering "is this finding new, or the one we saw last week?", a CI job
+        gating only on newly-introduced findings, a triage record that must stay
+        attached to its finding.
+
+        DELIBERATELY EXCLUDES THE LINE NUMBER. That is the whole point -- see the
+        note on the `fingerprint` field. It also excludes severity and confidence,
+        which a rule change can move without the underlying issue changing.
+
+        The basis is (rule, file, normalised snippet). The snippet is already
+        REDACTED by the time it gets here, so a fingerprint can be stored and
+        transmitted without carrying a credential -- `__post_init__` redacts at
+        the Finding boundary, before this can run.
+
+        ⚠️ TWO IDENTICAL LINES IN ONE FILE SHARE A FINGERPRINT. That is accepted,
+        not overlooked: without a line there is nothing to tell them apart, and a
+        consumer that needs to should group by fingerprint and count. SARIF's own
+        `partialFingerprints` has the same property for the same reason.
+        """
+        norm_file = self.file.replace("\\", "/").lower()
+        norm_snip = re.sub(r"\s+", " ", (self.snippet or "")).strip().lower()[:200]
+        basis = f"{self.rule_id}|{norm_file}|{norm_snip}"
+        self.fingerprint = hashlib.sha256(basis.encode("utf-8", "replace")).hexdigest()[:16]
+        return self.fingerprint
 
     def to_dict(self) -> dict:
         d = asdict(self)
