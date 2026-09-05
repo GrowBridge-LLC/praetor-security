@@ -12,6 +12,58 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Fixed — 🔴 INV-1 was STILL false: the guard ran after seven imports
+
+The fix that closed `python -m praetor` executing the target's `core.py` was
+placed **below** `import argparse, os, re, sys, tempfile, time, traceback`.
+Under `-m`, the target directory is `sys.path[0]` for every one of those.
+Measured with a planted `tempfile.py` in the scanned tree:
+
+    rc=0   marker written   stdout=6113 bytes of valid JSON
+
+🔴 **Worse than the break it was fixing**, which returned 1 and printed nothing
+— the commit message called that "the exit code hid it". This one returns a
+clean bill of health while running the target's code.
+
+⚠️ **And the guard's own docstring said "no ordering of these statements would"
+help. That was false.** Re-ordering closes all five. The over-broad disclaimer
+is what stopped anyone looking — a stated known-gaps list reads as exhaustive,
+so an incomplete one is worse than none. This repository's own rule, violated in
+the commit that cited it.
+
+Only `os` and `sys` may now be imported above the guard: `sys` is built in and
+`os` is loaded at interpreter start, so neither is shadowable. All seven names
+re-tested; none executes. `test_a_shadowed_STDLIB_module_in_the_target_does_not_run`
+covers the class, and the sibling test now reads the module list from
+`pyproject.toml` instead of a hand-typed ten of fifteen.
+
+### Fixed — SARIF reported success where the CLI exits 3, one route over
+
+`_scan_was_degraded` checked `walked_nothing` and per-engine status, but never
+`core.engines_that_measured` — **the function its own docstring cites as its
+authority**. Quoting the right source is not the same as consulting it.
+
+Measured, one `.py` file and no dependency manifest, `--engines sca`:
+
+    CLI    rc=3  "NOTHING WAS MEASURED -- no engine examined this target"
+    SARIF  executionSuccessful: true,  results: 0
+
+A file was walked, so `walked_nothing` is False; `not-applicable` is a trusted
+status. Both earlier checks pass while the CLI in the same process exits 3 —
+byte for byte the disagreement that function was written to close.
+
+### Fixed — an invented number that shipped into three artifacts
+
+The cross-file known-gaps list grew from four items to **eight**, not eleven.
+The wrong figure reached this changelog, `references/PRD.md` and commit
+`41f11d1`'s message. The commit message is history and still says eleven.
+
+⚠️ **`NFR-3` is not earned and is NOT fixed here.** The published cross-file
+cost of 5.80 ms/file → 29.0 s per 5,000 files did not reproduce; an independent
+measurement gave 6.92–7.79 ms/file → 34.6–38.9 s, over the 30-second ceiling.
+Re-measure before trusting that ✅.
+
+
 ### Fixed — `schema_version` did not move when a report key was added
 
 `meta.scope.walked_nothing` was added while `SCHEMA_VERSION` stayed `"4.2"`. For
@@ -130,7 +182,7 @@ The two traversals it left behind are now one pass, measured at 5.80 ms/file —
 29.0 s projected for 5,000 files against NFR-3's 30-second ceiling. **Within
 budget and not comfortably so**, on a sample whose files are larger than typical.
 
-⚠️ The module's "what it cannot see" list has grown from four items to eleven.
+⚠️ The module's "what it cannot see" list has grown from four items to eight.
 A stated known-gaps list reads as exhaustive, so an incomplete one is worse than
 none. **Assume it is still incomplete.**
 

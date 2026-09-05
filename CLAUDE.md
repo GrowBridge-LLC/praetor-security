@@ -8,10 +8,15 @@ reports "nothing found" while something is there.
 
 **PRAETOR NEVER EXECUTES, IMPORTS, INSTALLS OR BUILDS THE CODE IT SCANS.**
 
-This has been false once. The SCA path invoked `pip-audit` in a mode that let pip
-*resolve* the target's requirements — which builds source distributions and runs
-`setup.py` / PEP 517 backends from an attacker-controlled tree. Arbitrary code
-execution, in a tool whose entire promise is that it only reads.
+This has been false **twice**: the SCA path let `pip` resolve (and so build) an
+attacker's requirements; and `python -m praetor .` inside a target executed the
+target's `core.py`, because `-m` puts the working directory first on `sys.path`.
+
+🔴 **THE SECOND ONE WAS NOT IN AN ENGINE, AND THE RULE BELOW SAYS "ENGINE"
+TWICE.** It covers **how PRAETOR is started**, what it imports, and what its
+subprocesses resolve — not only what an engine reads. List the ways the program
+can be *started*, not just used. ⇒ `references/PRD.md` INV-1: measurements, the
+exit code that hid it, and the one residual still open.
 
 The fix is `--disable-pip` in `scripts/engine_sca.py`. It is one flag on one line,
 and it is the whole guarantee.

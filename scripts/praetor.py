@@ -53,13 +53,22 @@ Exit codes:
 
 from __future__ import annotations
 
-import argparse
+# 🔴 ONLY `sys` AND `os` MAY BE IMPORTED ABOVE THE GUARD, AND THE ORDER OF THIS
+# BLOCK IS A SECURITY PROPERTY, NOT STYLE. Under `python -m praetor`, the target
+# directory is `sys.path[0]` for every import that runs before the guard. `sys`
+# is built in and `os` is already in `sys.modules` at interpreter start, so
+# neither can be shadowed by a file in the scanned tree. Nothing else qualifies.
+#
+# ⚠️ THIS WAS GOT WRONG ONCE, IN THE COMMIT THAT ADDED THE GUARD. The guard sat
+# below `argparse, re, tempfile, time, traceback`, so a target containing any of
+# those names had its code executed. Measured, with a planted `tempfile.py`:
+#
+#     rc=0  marker written  stdout=6113 bytes of valid JSON
+#
+# **Worse than the break it was fixing**, which at least returned 1 and printed
+# nothing. This one returns a clean bill of health while running the target.
 import os
-import re
 import sys
-import tempfile
-import time
-import traceback
 
 # make sibling engine modules importable no matter the CWD
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -93,9 +102,17 @@ def _drop_the_working_directory_from_the_import_path():
     ⚠️ WHAT THIS DOES NOT CLOSE, stated rather than left to a later audit: a
     target that plants a file named `praetor.py` pre-empts `python -m praetor`
     BEFORE any line of this file runs. Nothing inside this file can defend
-    against that, and no ordering of these statements would. The complete fix is
-    to stop installing flat top-level modules and ship a package instead, so no
-    single-word module name is shadowable. That is recorded as work, not done.
+    against that one. The complete fix is to stop installing flat top-level
+    modules and ship a package instead, so no single-word module name is
+    shadowable. That is recorded as work, not done.
+
+    🔴 THIS PARAGRAPH USED TO ADD "and no ordering of these statements would",
+    AND THAT WAS FALSE. The guard was placed below `argparse, re, tempfile,
+    time, traceback`, so those five names were still importable from the target.
+    Re-ordering closed all five. **The over-broad claim is what hid them**: a
+    stated known-gaps list reads as exhaustive, so an incomplete one is worse
+    than none -- this repository's own rule, violated in the commit that cited
+    it.
 
     The console script (`praetor ...`) and `python scripts/praetor.py ...` were
     measured UNAFFECTED: neither puts the working directory on the path.
@@ -118,6 +135,12 @@ def _drop_the_working_directory_from_the_import_path():
 
 
 _drop_the_working_directory_from_the_import_path()
+
+import argparse            # noqa: E402  -- after the guard, deliberately
+import re                  # noqa: E402
+import tempfile            # noqa: E402
+import time                # noqa: E402
+import traceback           # noqa: E402
 
 import core                      # noqa: E402
 import engine_secrets            # noqa: E402

@@ -17,6 +17,8 @@ Every new SCA backend widens this surface. Add a test here when you add one.
 """
 
 import os
+import pathlib
+import re
 import subprocess
 import contextlib
 import io
@@ -486,20 +488,72 @@ def test_running_as_a_module_does_not_import_the_targets_code(tmp_path):
     json.loads(proc.stdout.decode("utf-8", "replace"))
 
 
+def _installed_module_names():
+    """The flat top-level modules PRAETOR installs, read from pyproject.
+
+    🔴 READ, NOT LISTED. The first version of this test hand-typed ten names
+    while `pyproject.toml` declared fifteen, so `engine_sast`, `engine_sca` and
+    `engine_model` were never covered -- by a test whose own docstring said it
+    asserted "the class". An enumeration described as a class is the exact shape
+    this file warns about two lines below.
+    """
+    text = (pathlib.Path(_SCRIPTS).parent / "pyproject.toml").read_text(encoding="utf-8")
+    block = text.split("py-modules", 1)[1].split("]", 1)[0]
+    return re.findall(r'"([A-Za-z_][A-Za-z0-9_]*)"', block)
+
+
 def test_every_installed_module_name_is_covered_not_just_core(tmp_path):
     """⚠️ "I HANDLED THE CASE THE AUDITOR DEMONSTRATED" IS THE NARROWEST
     POSSIBLE SCOPE, and this repository has been caught by exactly that shape
     before -- a guard written from one finding, filtering the one spelling that
     finding used. `core` was the demonstrated shadow. Every flat module PRAETOR
     installs is shadowable the same way, so assert the class."""
-    for name in ("interpret", "taint", "lexctx", "report", "engine_secrets",
-                 "engine_aisec", "chains", "capability", "crossfile", "sarif"):
+    names = _installed_module_names()
+    assert len(names) >= 15, f"expected every installed module, got {names}"
+    for name in names:
+        if name == "praetor":
+            continue  # shadowing the entry point pre-empts `-m` itself; see below
         target = tmp_path / name
         target.mkdir()
         marker = f"EXECUTED-{name}.marker"
         _plant_a_module_shadow(target, name, marker)
         proc = _run_dash_m(target)
         assert not (target / marker).exists(), f"{name}.py from the target ran"
+        assert proc.stdout, f"{name}: the scan produced nothing"
+
+
+#: Modules PRAETOR imports from the standard library before it can defend itself.
+#: `sys` is built in and `os` is loaded at interpreter start, so neither is
+#: shadowable; the rest are ordinary files on `sys.path` and were the live hole.
+_STDLIB_IMPORTS = ("argparse", "re", "tempfile", "time", "traceback", "os", "sys")
+
+
+def test_a_shadowed_STDLIB_module_in_the_target_does_not_run(tmp_path):
+    """🔴 THE HOLE THE FIRST FIX LEFT, AND IT WAS WORSE THAN THE ORIGINAL BREAK.
+
+    The guard was placed BELOW `import argparse, os, re, sys, tempfile, time,
+    traceback`. Under `python -m praetor` the target directory is `sys.path[0]`
+    for every one of those, so a planted `tempfile.py` in the scanned tree ran.
+    Measured before the reorder:
+
+        planted tempfile.py -> rc=0, marker written, 6113 bytes of valid JSON
+
+    **rc=0 is a clean bill of health.** The break this replaced returned 1 and
+    printed nothing, which the commit message called "the exit code hid it".
+    This one hid it better.
+
+    ⚠️ The commit that introduced the guard also asserted "no ordering of these
+    statements would" help. That was false -- reordering closes all five. The
+    over-broad disclaimer is what kept anyone from looking.
+    """
+    for name in _STDLIB_IMPORTS:
+        target = tmp_path / f"std_{name}"
+        target.mkdir()
+        marker = f"EXECUTED-{name}.marker"
+        _plant_a_module_shadow(target, name, marker)
+        proc = _run_dash_m(target)
+        assert not (target / marker).exists(), (
+            f"the target's {name}.py ran -- an import above the guard")
         assert proc.stdout, f"{name}: the scan produced nothing"
 
 

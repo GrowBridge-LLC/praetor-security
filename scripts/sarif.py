@@ -380,6 +380,31 @@ def _scan_was_degraded(meta: dict) -> bool:
     engines = meta.get("engines") or {}
     if not engines:
         return True  # nothing ran at all
+
+    # 🔴 THE THIRD QUESTION, AND THE FIX FOR THE SECOND ONE MISSED IT.
+    #
+    # `walked_nothing` answers "was any file opened". Per-engine status answers
+    # "is each engine healthy". Neither answers **"did any engine actually
+    # measure this target"** -- and the CLI has a SEPARATE `return 3` for that,
+    # keyed on `core.engines_that_measured`. Measured, a directory holding one
+    # `.py` file and no dependency manifest:
+    #
+    #     praetor . --engines sca --fail-on INFO   ->  rc=3
+    #       "NOTHING WAS MEASURED -- no engine examined this target"
+    #     the same scan as SARIF                   ->  executionSuccessful: true
+    #
+    # `walked_nothing` is False (a file was walked) and `not-applicable` is a
+    # TRUSTED status, so both earlier checks pass while the CLI in the same
+    # process exits 3. Byte for byte the two-line disagreement this function's
+    # own docstring prints as the defect it was written to close -- one
+    # degradation route over.
+    #
+    # ⚠️ This function's docstring already CITED `engines_that_measured` as its
+    # authority and then did not call it. Quoting the right source is not the
+    # same as consulting it.
+    if not core.engines_that_measured(engines):
+        return True
+
     for info in engines.values():
         status = (info or {}).get("status")
         if status not in core.GATE_TRUSTED_STATUSES:

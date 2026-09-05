@@ -138,7 +138,7 @@ agent briefed to break it found **26 evasions and 6 false positives at HIGH**,
 with every test in the module's own file passing throughout. All are fixed and
 mutation-proven, but the pass still sees **one shape**: a module-level literal
 string joined to a sink in another file. Its stated known-gaps list grew from
-four items to eleven in the course of that review. **Read a ✅ on a detection
+four items to eight in the course of that review. **Read a ✅ on a detection
 requirement as "the demonstrated cases work", never as "the class is covered".**
 
 🔴 **DET-11 through DET-15 are the "spatial awareness" thread.** Each must obey

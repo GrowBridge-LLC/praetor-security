@@ -376,3 +376,25 @@ def test_a_coverage_note_also_reaches_the_notification_channel(tmp_path):
     notes = run["invocations"][0].get("toolExecutionNotifications") or []
     assert any(n["descriptor"]["id"] == "file-too-large-skipped" for n in notes)
     assert any(r["ruleId"] == "file-too-large-skipped" for r in run["results"])
+
+
+def test_execution_successful_is_false_when_no_engine_measured(tmp_path):
+    """🔴 THE THIRD DEGRADATION ROUTE, MISSED BY THE FIX FOR THE SECOND.
+
+    `walked_nothing` answers "was a file opened". Per-engine status answers "is
+    each engine healthy". Neither answers "did any engine actually MEASURE this
+    target" -- and the CLI has its own `return 3` for that, keyed on
+    `core.engines_that_measured`.
+
+    A directory with one `.py` file and no dependency manifest, scanned with
+    `sca` alone: a file IS walked, `not-applicable` IS a trusted status, and the
+    CLI still exits 3 saying NOTHING WAS MEASURED. Before this test, SARIF
+    reported `executionSuccessful: true` for exactly that scan -- the same
+    two-line disagreement `_scan_was_degraded`'s docstring prints as the defect
+    it was written to close.
+    """
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    doc = _scan(tmp_path, "--engines", "sca")
+    run = _run(doc)
+    assert run["invocations"][0]["executionSuccessful"] is False, (
+        "no engine measured this target, yet SARIF reported success")
