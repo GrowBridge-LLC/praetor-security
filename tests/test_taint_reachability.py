@@ -38,6 +38,32 @@ def test_reachability_CANNOT_distinguish_an_unused_credential_from_a_pattern():
     Documents WHY the secrets carve-out exists. If this ever starts failing,
     reachability has changed behaviour and the carve-out reasoning must be
     re-derived -- do NOT simply delete the carve-out.
+
+    🔴 IT DID FAIL, ON 2026-09-05, AND THE REASONING IS RE-DERIVED HERE RATHER
+    THAN THE CARVE-OUT BEING DROPPED -- which is exactly what the paragraph above
+    instructs, and it is the reason that instruction was written.
+
+    WHAT CHANGED: `_bound_at_module_scope` was added to close a suppression
+    bypass. A module-scope binding is importable, so this file alone cannot show
+    it unused, and it is no longer reported "provably inert". The fixture below
+    is module-scope, so its verdict flipped from True to False.
+
+    WHY THE CARVE-OUT SURVIVES ANYWAY, and it is now the STRONGER argument:
+
+      1. The same credential ONE INDENT IN is still "provably inert" --
+         `test_a_function_local_credential_is_still_called_inert` measures it.
+         A key written inside a loader function is disclosed exactly as much as
+         one at module scope.
+
+      2. The durable reason never depended on the analysis at all. A secret is
+         dangerous because it EXISTS. No reachability result, however precise,
+         can make a written-down credential safe -- which is why CLAUDE.md states
+         the carve-out as a SCOPE decision and not as an analysis gap to be
+         closed.
+
+    ⇒ The original justification ("reachability cannot tell a credential from a
+    pattern") is now only half true, and the half that remains is enough. The
+    carve-out is not resting on it either way.
     """
     # praetor:ignore -- the fixture MUST look like a credential assignment; that is
     # the scenario under test. Assembling the token from parts defeats value-based
@@ -46,11 +72,28 @@ def test_reachability_CANNOT_distinguish_an_unused_credential_from_a_pattern():
     secret_src = 'API_KEYS = ["' + _KEYPFX + "a" * 24 + '"]\n'  # praetor:ignore
     regex_src = 'import re\nPAT = re.compile("some-pattern")\n'
 
-    assert taint.is_provably_inert(secret_src, 1) is True
+    # Module-scope now: NOT provably inert, because it is importable.
+    assert taint.is_provably_inert(secret_src, 1) is False
     assert taint.is_provably_inert(regex_src, 2) is True, (
-        "both are 'inert' -- which is the point: reachability alone cannot protect "
-        "a credential, so the secrets engine must be excluded by scope"
+        "a module-scope regex pattern is still inert; the credential beside it is "
+        "no longer -- see this test's docstring for why the carve-out survives"
     )
+
+
+def test_a_function_local_credential_is_still_called_inert():
+    """🔴 THE MEASUREMENT THAT KEEPS THE CARVE-OUT. One indent in, the same
+    credential is still reported "provably inert" -- and a key written inside a
+    loader function is disclosed exactly as much as one at module scope.
+
+    If `secrets` were ever admitted to `_REACHABILITY_ENGINES`, this shape is
+    what would be silently suppressed."""
+    _NL = chr(10)
+    local_src = (
+        "def load():" + _NL
+        + '    key = "' + _KEYPFX + "a" * 24 + '"' + _NL  # praetor:ignore
+        + "    return key" + _NL
+    )
+    assert taint.is_provably_inert(local_src, 2) is True
 
 
 class _F:

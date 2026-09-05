@@ -61,7 +61,10 @@ exactly the conditions an attacker creates.
 
 ⚠️ LIMITS, stated rather than discovered later:
   * Python only. Other languages -> False (kept).
-  * INTRA-FILE only. A name exported and used elsewhere is treated as reachable.
+  * INTRA-FILE only, and a MODULE-SCOPE binding is therefore never provably
+    inert. Anything can `from mod import NAME`, so this file alone cannot show
+    the name is unused. 🔴 THIS LINE USED TO CLAIM THAT BEHAVIOUR WITHOUT THE
+    CODE HAVING IT -- see `_bound_at_module_scope`.
   * One assignment hop. Deeper chains -> False (kept).
   * No attribute/alias tracking (`s = os.system; s(x)`) -> the call is unrecognised,
     so the literal is not proven inert -> kept. Conservative in the safe direction.
@@ -170,6 +173,53 @@ def _name_escapes(tree: ast.AST, name: str) -> bool:
     return False
 
 
+def _bound_at_module_scope(node, parents) -> bool:
+    """True when the literal's binding sits at MODULE scope, i.e. is importable.
+
+    🔴 THIS CLOSES A SUPPRESSION BYPASS AN ATTACKER TRIGGERS WITH A ONE-LINE
+    REFACTOR. `_name_escapes` only asks whether the name flows into a call
+    WITHIN THIS FILE. A module-level constant that is never used locally
+    therefore entered no call, and the pass reported it "provably inert" --
+    with a stated reason that was false. Measured end to end:
+
+        # both.py   -- one file
+        CMD = "<a remote-execution pipe>"; os.system(CMD)      -> ACTIVE, HIGH
+
+        # payload.py + runner.py   -- the SAME code, split
+        payload.py: CMD = "<the same pipe>"                    -> FILTERED
+        runner.py:  from payload import CMD; os.system(CMD)
+          reason: "provably never reaches a dangerous sink"
+
+    The string reaches `os.system` one import hop away. Moving a line into a
+    second file converted a HIGH finding into a suppressed one -- a classifier
+    failing toward suppression under exactly the conditions an attacker creates,
+    which is the failure this whole module's header warns about.
+
+    ⚠️ AND THE MODULE DOCSTRING ALREADY CLAIMED THIS WAS HANDLED: "a name
+    exported and used elsewhere is treated as reachable." It was not. That is
+    this repository's most-recorded pattern -- a comment asserting a safety
+    property the code does not have -- and it is why the bypass survived review.
+
+    ⚠️ COST, MEASURED AND ACCEPTED: PRAETOR's own self-scan moves 43/36 to 50/29.
+    Seven findings move from filtered to ACTIVE; 43+36 and 50+29 are both 79, so
+    nothing is newly detected and nothing is lost. They are module-level rule
+    definitions in PRAETOR's own engines, which genuinely ARE importable. The
+    precision to say "importable, but nothing in this scan imports it" needs a
+    cross-file view; until that exists, unproven means KEEP.
+    """
+    cur = node
+    while cur in parents:
+        cur = parents[cur]
+        # A function, lambda or class body binds locally: not importable as a
+        # module attribute, so intra-file reasoning is still sound there.
+        if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef,
+                            ast.Lambda, ast.ClassDef)):
+            return False
+        if isinstance(cur, ast.Module):
+            return True
+    return False
+
+
 def is_provably_inert(source: str, lineno: int) -> bool:
     """
     True ONLY if every string literal on `lineno` provably never reaches a sink.
@@ -212,6 +262,9 @@ def is_provably_inert(source: str, lineno: int) -> bool:
         if not names:
             return False  # bare literal in an unrecognised position -> keep
         if any(_name_escapes(tree, nm) for nm in names):
+            return False
+        # Importable => not provably inert from this file alone.
+        if _bound_at_module_scope(node, parents):
             return False
 
     return True

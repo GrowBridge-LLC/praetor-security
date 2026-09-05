@@ -165,7 +165,38 @@ fi
 # those findings became ACTIVE. If filtered ever falls while active also falls,
 # suppression has started eating real findings -- that is the control this pair
 # of numbers exists to provide, and it is why both are pinned, not just one.
-EXPECT_ACTIVE=43
+# 2026-09-05: 43 -> 50 active, 36 -> 29 filtered. 🔴 A PURE RE-BUCKETING AGAIN,
+# and the arithmetic is the whole argument: 43+36 = 79 and 50+29 = 79. SEVEN
+# findings moved from `filtered` to `active`. Nothing was newly detected on this
+# tree and nothing was lost.
+#
+# CAUSE: `taint._bound_at_module_scope` closed a suppression bypass an attacker
+# triggered with a one-line refactor. Reachability asked only whether a name
+# flowed into a call WITHIN ITS OWN FILE, so a module-level constant never used
+# locally was reported "provably inert". Measured end to end:
+#
+#   one file : CMD = "<a remote-execution pipe>"; os.system(CMD)  -> ACTIVE HIGH
+#   two files: payload.py holds the constant, runner.py imports
+#              and passes it to os.system                         -> FILTERED,
+#              reason "provably never reaches a dangerous sink"
+#
+# The string reached the sink one import hop away. A module-scope binding is
+# importable, so this file alone cannot show it unused; unproven means KEEP.
+#
+# ⚠️ AND taint.py's OWN DOCSTRING ALREADY CLAIMED THIS WAS HANDLED -- "a name
+# exported and used elsewhere is treated as reachable." It was not. That is this
+# repository's most-recorded pattern, a comment asserting a safety property the
+# code lacks, and it is why the bypass survived review.
+#
+# THE SEVEN are module-level rule definitions and corpus constants in PRAETOR's
+# own engines and fixtures, which genuinely ARE importable. The precision to say
+# "importable, but nothing in this scan imports it" needs a cross-file view; that
+# is tracked as staged work, not approximated here.
+#
+# ⚠️ The filtered count FELL and that is not an improvement -- those findings
+# became ACTIVE. Active falling while filtered also falls is the failure this
+# pinned PAIR exists to catch.
+EXPECT_ACTIVE=50
 # 2026-08-12: 45 -> 53, deliberately, and NOT because false positives improved.
 # The two causes were measured separately by reverting each change on its own:
 #   +3  the dedup fix stopped DISCARDING findings. A filtered finding could win
@@ -183,7 +214,7 @@ EXPECT_ACTIVE=43
 # comment. Reintroducing only that unsafe Markdown mapping returned exactly
 # 12 active / 53 filtered (one finding moved back); file-type-aware syntax keeps
 # the agent-facing heading active. The regression baseline was NOT regenerated.
-EXPECT_FILTERED=36
+EXPECT_FILTERED=29
 # 🔴 SCOPE DECISION, stated next to the code because it is one.
 # The self-scan pin must measure what PRAETOR SHIPS. Gate 5 already defines the
 # shipping set as tracked + untracked-but-not-ignored; this scan walks the tree
