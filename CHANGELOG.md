@@ -12,6 +12,64 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+_Nothing pending._
+
+## 1.1.0 — the first installable release
+
+🔴 **READ THIS FIRST IF YOUR CI JUST TURNED RED.** This release fixes several
+false negatives, and a fixed false negative makes a previously-passing scan fail.
+The finding was always there; PRAETOR was wrong to miss it. Specifically:
+
+* A payload **split across two files** is no longer suppressed. Moving a line
+  into a second module used to convert a HIGH finding into a filtered one.
+* A file the walker **refuses** — too large, judged binary, unreadable — now
+  discloses itself instead of vanishing from the report.
+* A hostile **agent config inside `vendor/` or `node_modules/`** is now reached,
+  as is `.git/hooks/`.
+* An **instruction in a comment** is no longer suppressed. A prompt injection
+  does not need to execute; it needs to be read.
+* A credential in **BOM-less UTF-16**, on a **very long line**, or **base64-
+  wrapped** under any provider is now found.
+
+Under `references/VERSIONING.md` those are PATCH-class corrections. The release
+is MINOR because it also adds an engine and two report sections.
+
+⚠️ **`1.0.0` was never published** — it was a designation in `pyproject.toml`
+with no tag and nothing on PyPI. This is the first version you can install, and
+it is numbered `1.1.0` rather than re-using `1.0.0` so that no version number
+ever refers to two different code states.
+
+### Added
+
+* **`model`, a fifth engine** — pickle-opcode disassembly via
+  `pickletools.genops()`, never `pickle.load`. 15 file extensions.
+* **Attack-chain correlation** — findings that COMPOSE, with a `basis` stating
+  whether the evidence is same-file or mere co-occurrence.
+* **The agent capability profile** — six dimensions answering "what would opening
+  this repository authorise?", reported as `present`/`none`, never `safe`.
+* **`schema_version` 4.2** — `chains`, `capability_profile`, and a cross-scan
+  `fingerprint` for every finding.
+* **Scan provenance** — `meta.provenance` carries commit, branch and repo, read
+  from `.git/HEAD` as text and never by invoking git.
+* **Distribution** — a GitHub Action, a pre-commit hook entry, and an OIDC
+  trusted-publishing workflow.
+* **Decode-then-rescan** and **multilingual instruction-override coverage**
+  across nine languages.
+
+### Changed
+
+* **Licence: AGPL-3.0**, from MIT. Not retroactive — see `LICENSE-MIT-HISTORICAL.txt`.
+* Prompt-injection findings now map to **CWE-1427**, not CWE-77.
+* Lexical-context suppression is scoped by category: it can no longer quiet an
+  instruction, only a behaviour.
+
+### The detail
+
+Everything below this line is the development history that produced this release,
+newest first. It was written as the work happened rather than summarised
+afterwards, so it records what broke and what was measured, not just what landed.
+
+
 ### Changed — licence is now AGPL-3.0 (was MIT)
 
 `LICENSE` is the verbatim GNU Affero General Public License, version 3.

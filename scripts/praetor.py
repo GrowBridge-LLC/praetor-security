@@ -165,7 +165,7 @@ def _atomic_write_text(path: str, content: str) -> None:
             pass
         raise
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 def _find_bundled_rules():
     """
     Locate the bundled offline Semgrep rules, which live in different places
