@@ -174,6 +174,23 @@ some findings or none. If your integration reads the report and decides anything
 the exit code or the finding count alone. (`--fail-on` closes this specific gap for you automatically,
 by turning any blind spot into exit `3` — but only if you pass it.)
 
+### schema_version 4.3 — the whole-scan measurement, exposed
+
+`meta.scope.walked_nothing` — **`true` when no file was opened at all.** It is
+what exit code `3` and SARIF's `executionSuccessful: false` are both computed
+from, published so a consumer does not have to re-derive a safety question.
+Additive; a 4.2 consumer ignores it.
+
+🔴 **A zero finding count means nothing when this is `true`.** Read it alongside
+`meta.engines[<name>].status` before treating any clean result as a result.
+
+⚠️ **This key shipped before the version moved, and that is worth knowing if you
+pinned 4.2.** For a few hours two different reports both declared themselves 4.2
+and one carried a key the other did not. Nothing in the test suite related the
+report's contents to the number describing them; 646 tests passed over the
+mismatch. `tests/test_schema_version_tracks_the_report_keys.py` now pins the key
+set of every fixed surface per version, so it cannot recur silently.
+
 ### schema_version 4.2 — a cross-scan identity for every finding
 
 Every finding gains a **`fingerprint`**: a stable identity that survives the
