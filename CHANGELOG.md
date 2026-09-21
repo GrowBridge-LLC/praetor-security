@@ -10,6 +10,25 @@ Because PRAETOR is a security scanner, entries say what a change means for
 **detection** — a bug here is not a broken feature, it is a scanner reporting
 "nothing found" while something is there.
 
+## 1.1.1 — correct PyPI installation documentation
+
+### Fixed — the published package said it was not published
+
+The first `1.1.0` package successfully reached PyPI, but its rendered README
+still said the project was unavailable there and directed users to install from
+source. The install section now gives the verified
+`python -m pip install praetor-security` command and retains source installation
+as the development alternative. Detection, report schema and exit behavior are
+unchanged.
+
+### Changed — the Action pins the matching package release
+
+The composite GitHub Action now installs exact package version `1.1.1` by
+default instead of the moving `main` branch. A caller that deliberately wants a
+source ref must set `praetor-version` to an empty string and set `praetor-ref` to
+the desired tag or commit. A version-consistency test prevents a future release
+from silently leaving the Action pinned to an older package.
+
 ## 1.1.0 — the first installable release
 
 ### Fixed — SAST eligibility was broader than the pinned rules

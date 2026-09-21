@@ -44,9 +44,15 @@ always run. If a SAST or SCA backend is missing, that engine reports
 
 ## Install
 
-⚠️ **PRAETOR is NOT on PyPI.** `pip install praetor-security` does not work and never has —
-the name is unregistered. (Do not reach for `pip install praetor` either: that name belongs
-to an unrelated project.) Install from source:
+Install the current release from PyPI:
+
+```bash
+python -m pip install praetor-security
+praetor --version
+```
+
+The distribution name is `praetor-security`; the `praetor` name on PyPI belongs
+to an unrelated project. To install the development version from source instead:
 
 ```bash
 git clone https://github.com/GrowBridge-LLC/praetor-security

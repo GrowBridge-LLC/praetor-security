@@ -191,7 +191,7 @@ dashboard can show a trend line against commits rather than against wall-clock.
 | GitHub Action (`action.yml`, composite) | ✅ |
 | pre-commit hook (`.pre-commit-hooks.yaml`) | ✅ |
 | Publish workflow (`publish.yml`, OIDC trusted publishing, no stored token) | ✅ |
-| **PyPI release** | 🔨 **blocked on the owner's login** — pending-publisher registration |
+| **PyPI release** | ✅ `praetor-security` 1.1.0 published via OIDC trusted publishing |
 | Editor/IDE integration | 🔬 |
 
 ---

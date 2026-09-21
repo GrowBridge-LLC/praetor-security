@@ -92,9 +92,9 @@ the truth; its corpus is the only place truth enters.
 - Python remains the reference implementation until parity, and remains the only
   implementation a user can run. Installation from source must keep working
   throughout.
-  📌 Nothing is published to PyPI; the packaging metadata exists but no release has
-  been made. Any statement here about an install channel means installing from the
-  repository.
+  📌 The Python reference implementation is published on PyPI as
+  `praetor-security`; version 1.1.0 was clean-install verified. Source installation
+  from the repository remains supported for development.
 - The JSON contract (`schema_version`) is the interface both implementations
   satisfy; it is what the differential harness compares.
 - **Toolchain (verified 2026-08-10):** `rustc` / `cargo` 1.97.1, host

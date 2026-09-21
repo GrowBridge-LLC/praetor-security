@@ -61,26 +61,26 @@ rather than inventing one.
 
 ## 1. Ship a release — hours, and it unblocks three dead channels
 
-🔴 **THE HIGHEST-LEVERAGE ITEM IS NOT A BUILD.** Two shipped artefacts are inert
-for one reason: nothing to point at.
+🔴 **THE HIGHEST-LEVERAGE ITEM WAS NOT A BUILD.** The release channel now exists;
+the Action and pre-commit hook still need clean consumer verification.
 
-- The Action installed a package PyPI 404s on. *(Repaired to install from the
-  repository, so it works today.)*
-- The pre-commit hook needs an immutable `rev:`. `git tag` is empty.
+- The Action originally installed a package PyPI returned 404 for. It now
+  defaults to the exact package release matching the Action tag.
+- The pre-commit hook now has immutable tag `v1.1.0`; clean consumer proof remains.
 
 | Step | Who | Blocking |
 |---|---|---|
-| Register the PyPI pending publisher for `praetor-security` | **owner** | needs your login |
-| Tag `v1.0.0` and push | either | needs the above |
-| Verify `pip install praetor-security` in a clean venv | agent | |
+| Register the PyPI trusted publisher for `praetor-security` | **owner** | ✅ complete |
+| Tag `v1.1.0` and push | either | ✅ complete |
+| Verify `pip install praetor-security` in a clean venv | agent | ✅ complete |
 | Verify the Action green in a throwaway repo | agent | |
-| Verify `.pre-commit-config.yaml` at `rev: v1.0.0` runs | agent | |
+| Verify `.pre-commit-config.yaml` at `rev: v1.1.1` runs | agent | |
 | List on GitHub Marketplace | owner | self-serve, no review |
 
-⚠️ `praetor` on PyPI already belongs to an unrelated project. The name is a live
-risk until registered.
+⚠️ `praetor` on PyPI belongs to an unrelated project. The correct distribution
+name is `praetor-security`.
 
-**Done:** three commands run green from a clean machine.
+**Remaining:** prove the Action and pre-commit hook from clean consumer repos.
 
 ---
 
@@ -225,11 +225,11 @@ the repo for a badge) · OWASP Benchmark (Java; rewards pattern-matchers) ·
 
 | Measured against | Complete | What is missing |
 |---|---|---|
-| **Roadmap items that WORK** | **39%** (7/18) | 2 inert, 9 unbuilt |
-| **The v1 bar** — *install in under a minute, point at a repo, get an actionable result* | **~85%** | one PyPI registration. The engines, interpretation and reporting are done and tested. |
+| **Roadmap items that WORK** | **50%** (9/18) | 2 unverified, 7 unbuilt |
+| **The v1 bar** — *install in under a minute, point at a repo, get an actionable result* | **~95%** | PyPI is live; clean Action and pre-commit consumer proofs remain. |
 | **Competitive parity on the accuracy axis** | **unknown, and that is the finding** | nobody has measured PRAETOR on a public corpus. §2 exists to replace this row with a number. |
 
-⚠️ **The three disagree on purpose.** The v1 bar is nearly met while only 39% of
+⚠️ **The three disagree on purpose.** The v1 bar is nearly met while only 50% of
 the checklist works, because the checklist counts Rust-port items its own text
 says do not change detection. And the third row is the honest one: *we do not
 know how good PRAETOR is*, because nobody has measured it against anything but
