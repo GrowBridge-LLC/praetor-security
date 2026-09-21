@@ -32,15 +32,15 @@ dangerous auto-run hooks.
 
 | Engine | Finds | Backend | Requires |
 |--------|-------|---------|----------|
-| **sast** | OWASP Top 10, injection, unsafe deserialization, weak crypto, XSS, SSRF, disabled TLS, across ~30 languages | [Semgrep](https://semgrep.dev) (OSS) + bundled offline rules | `semgrep` (native / WSL / Docker) |
+| **sast** | Bundled pinned coverage for Python, JavaScript and TypeScript `.ts`/`.tsx`; optional registry packs may add findings in other languages but do not establish pinned coverage | [Semgrep](https://semgrep.dev) (OSS) + bundled offline rules | `semgrep` (native / WSL / Docker) |
 | **secrets** | Hardcoded API keys & tokens (AWS, GCP, GitHub, Slack, Stripe, OpenAI, Anthropic, Google, Twilio, SendGrid, npm, JWT), PEM private keys, DB connection-string passwords, base64-wrapped secrets, high-entropy strings | built-in (stdlib) | nothing |
 | **sca** | Known-vulnerable dependencies with CVE/GHSA IDs, severity, and upgrade path | [osv-scanner](https://github.com/google/osv-scanner) -> [pip-audit](https://github.com/pypa/pip-audit) -> `npm audit` | one of those (optional) |
 | **aisec** | Prompt-injection payloads, invisible-Unicode / [Trojan Source](https://trojansource.codes/) smuggling, data exfiltration, dangerous auto-run hooks (Claude Code, Cursor, Windsurf, Cline / git / npm lifecycle), safety-bypass instructions | built-in (stdlib) | nothing |
 | **model** | Dangerous globals (`os.system`, `subprocess.*`, `builtins.eval`, pickle gadget-chain components, ...) referenced inside `.pt`/`.pth`/`.ckpt`/`.pkl`/`.pickle`/`.npy`/`.npz`/`.h5`/`.hdf5`/`.keras`/`.bin`/`.joblib`/`.dill` files, via pickle-**opcode disassembly** (`pickletools.genops()` -- never `pickle.load`); a bounded heuristic for Keras `Lambda`-layer RCE in HDF5; `.safetensors` recognized as safe-by-design | built-in (stdlib) | nothing |
 
 The `secrets`, `aisec`, and `model` engines are pure Python standard library and
-always run. `sast` and `sca` degrade gracefully: if their backend is missing, that
-engine reports itself **skipped** and the scan continues.
+always run. If a SAST or SCA backend is missing, that engine reports
+`unavailable` / `[BLIND]`; an explicit `--fail-on` gate refuses that scan.
 
 ## Install
 
@@ -81,7 +81,7 @@ coverage:
 #
 # ⚠️ WINDOWS: a native `pip install semgrep` installs a launcher that exits 1
 # with no output -- semgrep-core is not built for native Windows. Use WSL or
-# Docker (see below). PRAETOR reports this honestly as [error] or [skipped]
+# Docker (see below). PRAETOR reports this honestly as [error] or [BLIND]
 # rather than as a clean scan, but the sast engine WILL be unavailable until
 # you provide one of those runtimes.
 pipx install semgrep            # or:  pip install semgrep
@@ -159,12 +159,14 @@ apply-gate, or another agent to consume.
 ### The engine-status contract — read this before trusting exit 0
 
 `report["meta"]["engines"]` is an object keyed by engine name (`sast`, `secrets`, `sca`, `aisec`, `model`).
-Each value has a `status` field, one of: `ok`, `not-applicable`, `disabled`, `unavailable`, `error`,
-`partial-parse` (SAST only, `schema_version` 4.0+). Only `ok` means the engine actually ran and
-looked. `unavailable`, `error`, and `partial-parse` are all blind spots — the engine did not produce
-a trustworthy answer for that scan. **A consumer matching on this list by name must treat any
-unrecognised word — including `partial-parse` if your integration predates 4.0 — as a blind spot,
-never as a pass.**
+Each value has a `status` field, one of: `ok`, `not-applicable`, `no-coverage`,
+`disabled`, `unavailable`, `error`, `partial-parse`. `no-coverage` means PRAETOR
+identified a language for which this release has no pinned SAST rules. It is a
+named gap, never PASS and never silent; its detail is one or more deterministic
+phrases such as `SAST: NO COVERAGE (shell)`. `unavailable`, `error`, and
+`partial-parse` are blind spots — the engine did not produce a trustworthy
+answer for that scan. **A consumer matching on this list by name must treat any
+unrecognised word as a blind spot, never as a pass.**
 
 🔴 **Without `--fail-on`, a blind engine still exits `0`.** This is the deliberate report-only
 carve-out described above, and it means **a consumer that checks only the process exit code cannot
@@ -173,6 +175,31 @@ some findings or none. If your integration reads the report and decides anything
 `meta["engines"][name]["status"]` for every engine you care about — do not infer engine health from
 the exit code or the finding count alone. (`--fail-on` closes this specific gap for you automatically,
 by turning any blind spot into exit `3` — but only if you pass it.)
+
+### schema_version 5.0 — SAST names languages without pinned coverage
+
+`meta.engines.sast.status` can now be `no-coverage`. SAST eligibility is the set
+of languages declared by the bundled pinned rules, not a separately maintained
+extension allowlist. In this release those rules cover Python, JavaScript and
+TypeScript `.ts`/`.tsx`; `.cts`/`.mts` remain a named `typescript-module` gap
+because the pinned Semgrep runtime does not open them. A shell-only change produces:
+
+```text
+[GAP]      sast     SAST: NO COVERAGE (shell)
+```
+
+This is a deliberate, trustworthy statement about the pinned ruleset, so it
+does not become exit `3`; it is not an `ok`/PASS result either. On a mixed
+Python/shell target, Python is scanned and the text report uses `[ran+GAP]` with
+the shell phrase appended to the engine detail. SARIF carries each gap as a
+warning tool-execution notification.
+
+Registry packs and `--semgrep-config` may add findings, but they never enlarge
+the pinned eligibility set or erase this gap. A missing, unreadable or malformed
+bundled ruleset is an engine error and fails closed. Consumers that exhaustively
+match status words must add `no-coverage`; that wire change is why this is schema
+major 5. The pinned-shell-rules follow-up is
+[issue #2](https://github.com/GrowBridge-LLC/praetor-security/issues/2).
 
 ### schema_version 4.3 — the whole-scan measurement, exposed
 

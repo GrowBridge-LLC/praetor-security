@@ -569,7 +569,9 @@ def test_count_code_files_counts_code_and_not_prose():
     class F:
         def __init__(self, r): self.relpath = r
     files = [F("a.py"), F("b.ts"), F("c.md"), F("d.txt"), F("e.go"), F("LICENSE")]
-    assert engine_sast.count_code_files(files) == 3
+    # Go is code, but this release's pinned rules do not cover Go. Eligibility
+    # is derived from the rules, not from a separate broad extension list.
+    assert engine_sast.count_code_files(files) == 2
     assert engine_sast.count_code_files([]) == 0
 
 

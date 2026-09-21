@@ -3,7 +3,7 @@ name: praetor
 description: >-
   Multi-engine STATIC security analysis of a codebase, file, repo, skill, or
   plugin. Fuses four engines into one prioritized, deduplicated report: SAST via
-  Semgrep (OWASP Top 10, injection, auth flaws across many languages), secret
+  Semgrep (pinned Python, JavaScript and TypeScript .ts/.tsx coverage), secret
   detection (provider patterns + entropy + base64 unwrap), dependency/SCA (known-
   vulnerable packages via osv-scanner/pip-audit/npm audit), and an AI-security
   engine (prompt-injection payloads, invisible-Unicode/Trojan-Source smuggling,
@@ -37,7 +37,7 @@ files, and never executes, imports, installs, or evaluates the code it scans.
 
 | Engine | What it finds | Backend |
 |--------|---------------|---------|
-| **sast** | OWASP Top 10, injection, auth, unsafe deserialization, weak crypto, XSS, many languages | Semgrep (OSS) + bundled offline rules |
+| **sast** | Pinned Python, JavaScript and TypeScript `.ts`/`.tsx` coverage; other recognized languages are named gaps | Semgrep (OSS) + bundled offline rules |
 | **secrets** | Hardcoded API keys/tokens, PEM private keys, DB connection-string passwords, base64-wrapped secrets, high-entropy strings | built-in (stdlib) |
 | **sca** | Known-vulnerable dependencies with CVE/GHSA IDs + upgrade path | osv-scanner -> pip-audit -> npm audit |
 | **aisec** | Prompt injection, invisible-Unicode / Trojan-Source smuggling, data exfiltration, dangerous auto-run hooks, safety-bypass instructions | built-in (stdlib) |
@@ -119,13 +119,13 @@ blind spot is knowingly accepted.
   with no output because semgrep-core is not built for native Windows -- use
   WSL or Docker there, see `README.md`). If it is not present natively, PRAETOR
   can run it via WSL or Docker (`--semgrep-runtime`). If no Semgrep runtime
-  exists, `sast` reports itself **skipped** and the other
-  engines still run.
+  exists, `sast` reports `unavailable` / `[BLIND]`; the other engines still
+  run, and an explicit `--fail-on` gate refuses the scan.
 - **osv-scanner** (preferred) powers `sca` (`winget install Google.OSVScanner`,
   `brew install osv-scanner`, or a release binary). PRAETOR falls back to
   `pip-audit` (Python) or `npm audit` (Node) if osv-scanner is absent.
-- Missing engines never abort the scan - the report states honestly which ran and
-  which were skipped.
+- Missing engines never abort report generation - the report names them
+  `unavailable` / `[BLIND]`, and `--fail-on` exits 3.
 
 ## Safety of this skill itself
 

@@ -43,8 +43,8 @@ cannot go through `core.read_text`'s UTF-8 decode contract.
    that is itself hard to audit, or that pulls a large dependency tree, is a
    liability.
 3. **Graceful degradation over hard requirements.** Missing external tools
-   (Semgrep, osv-scanner) never abort a scan; the affected engine reports itself
-   skipped and the report says so.
+   (Semgrep, osv-scanner) never abort report generation; the affected engine is
+   `unavailable` / `[BLIND]`, and an explicit gate refuses the scan.
 4. **Honest triage.** Likely false positives are surfaced with a reason, not
    deleted. A clean result is reported as "nothing matched," never "safe."
 

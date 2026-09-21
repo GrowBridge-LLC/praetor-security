@@ -125,7 +125,7 @@ snippet, fingerprint, SARIF — can see them.
 | **DET-6** | MCP manifests: autostart, unpinned source, credentials handed over — by name **and** by content | ✅ |
 | **DET-7** | Serialized models: pickle opcodes disassembled, never loaded | ✅ |
 | **DET-8** | Known-vulnerable dependencies with advisory IDs and upgrade path | ✅ |
-| **DET-9** | SAST across ~30 languages | ✅ |
+| **DET-9** | SAST eligibility is derived from the bundled pinned rules. This release pins Python, JavaScript and TypeScript `.ts`/`.tsx`; Semgrep does not open `.cts`/`.mts`, so they remain a named `typescript-module` gap. Every detected language without effective pinned coverage is reported as `SAST: NO COVERAGE (<language>)`, never PASS or silence. Optional registry/custom rules may add findings but do not establish pinned coverage. | ✅ ⚠️ |
 | **DET-10** | Encoded payloads decoded one level and rescanned | ✅ |
 | **DET-11** | **Cross-file**: a payload defined in one file, used dangerously in another | ✅ ⚠️ |
 | **DET-12** | Cross-file through a function parameter and an aliased call | 🔨 |

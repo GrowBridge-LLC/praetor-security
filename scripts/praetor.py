@@ -1203,33 +1203,66 @@ def main(argv=None):
 
     # -- sast (semgrep) -------------------------------------------------------
     if "sast" in engines:
-        _log(args.quiet, "  [sast] running semgrep (this may download rule packs on first run)...")
         try:
-            res = engine_sast.run(
-                target, BUNDLED_SEMGREP,
-                use_registry=not args.no_registry,
-                extra_configs=args.semgrep_config,
-                prefer=args.semgrep_runtime, wsl_distro=args.wsl_distro,
-                excludes=args.exclude,
-                # PRAETOR's own count of code here, so the engine can compare it
-                # against what semgrep says it opened. Two independent counts
-                # disagreeing is the only signal that survives semgrep changing
-                # how it decides scope -- see the scope guard in engine_sast.
-                enumerated_code_files=engine_sast.count_code_files(scan_files),
-                # The SAME skip set the walker used. Passing it rather than
-                # letting the engine re-read the constant is what keeps the two
-                # components agreeing about scope under --no-default-skips.
-                skip_dirs=scan_skip_dirs,
-                # 0 means "not given"; the engine's own default (or the env var)
-                # then applies. Passing it explicitly would freeze the default at
-                # import time and defeat PRAETOR_SEMGREP_TIMEOUT.
-                **({"timeout": args.semgrep_timeout} if args.semgrep_timeout > 0 else {}),
-            )
-            all_findings.extend(res["findings"])
-            engine_meta["sast"] = {"status": res["status"],
-                                   "detail": f"{res['detail']} ({len(res['findings'])} finding(s)) via {res['runtime']}"}
+            coverage = engine_sast.language_coverage(scan_files, BUNDLED_SEMGREP)
         except Exception as e:  # noqa
-            engine_meta["sast"] = {"status": "error", "detail": f"{e}"}
+            coverage = None
+            engine_meta["sast"] = {"status": "error", "detail": str(e)}
+        gaps = (engine_sast.no_coverage_detail(coverage["uncovered"])
+                if coverage else "")
+        only_uncovered = bool(
+            coverage and coverage["detected"] and not coverage["covered"]
+        )
+        optional_requested = not args.no_registry or bool(args.semgrep_config)
+        if only_uncovered and not optional_requested:
+            engine_meta["sast"] = {
+                "status": core.ENGINE_NO_COVERAGE,
+                "detail": gaps,
+            }
+        elif coverage:
+            _log(args.quiet, "  [sast] running semgrep (this may download rule packs on first run)...")
+            try:
+                res = engine_sast.run(
+                    target, BUNDLED_SEMGREP,
+                    use_registry=not args.no_registry,
+                    extra_configs=args.semgrep_config,
+                    prefer=args.semgrep_runtime, wsl_distro=args.wsl_distro,
+                    excludes=args.exclude,
+                    # Only bundled pinned rules establish eligibility. Registry
+                    # and operator-supplied rules may add findings, but cannot
+                    # turn their languages into a silent coverage claim.
+                    enumerated_code_files=coverage["eligible_files"],
+                    # The SAME skip set the walker used. Passing it rather than
+                    # letting the engine re-read the constant is what keeps the two
+                    # components agreeing about scope under --no-default-skips.
+                    skip_dirs=scan_skip_dirs,
+                    # 0 means "not given"; the engine's own default (or the env var)
+                    # then applies. Passing it explicitly would freeze the default at
+                    # import time and defeat PRAETOR_SEMGREP_TIMEOUT.
+                    **({"timeout": args.semgrep_timeout}
+                       if args.semgrep_timeout > 0 else {}),
+                )
+                all_findings.extend(res["findings"])
+                detail = (
+                    f"{res['detail']} ({len(res['findings'])} finding(s)) "
+                    f"via {res['runtime']}"
+                )
+                if gaps:
+                    detail = f"{detail}; {gaps}"
+                if only_uncovered and res["status"] == core.ENGINE_OK:
+                    engine_meta["sast"] = {
+                        "status": core.ENGINE_NO_COVERAGE,
+                        "detail": gaps,
+                    }
+                else:
+                    engine_meta["sast"] = {
+                        "status": res["status"], "detail": detail,
+                    }
+            except Exception as e:  # noqa
+                detail = f"{e}"
+                if gaps:
+                    detail = f"{detail}; {gaps}"
+                engine_meta["sast"] = {"status": "error", "detail": detail}
     else:
         engine_meta["sast"] = {"status": "disabled", "detail": "not selected"}
 

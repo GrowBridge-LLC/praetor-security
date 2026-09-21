@@ -12,9 +12,11 @@ import datetime
 import json
 
 import capability
+import core
 
 from core import (Severity, engine_blind_spots, ENGINE_OK, ENGINE_NOT_APPLICABLE,
-                  ENGINE_DISABLED, ENGINE_UNAVAILABLE, ENGINE_ERROR)
+                  ENGINE_NO_COVERAGE, ENGINE_DISABLED, ENGINE_UNAVAILABLE,
+                  ENGINE_ERROR)
 
 # 2.0 (2026-08-10): BREAKING for consumers that match on `rule_id`.
 #   `claude-hook-autorun`  -> `agent-hook-autorun`
@@ -50,6 +52,9 @@ from core import (Severity, engine_blind_spots, ENGINE_OK, ENGINE_NOT_APPLICABLE
 #: `executionSuccessful: false` are both computed from, exposed so a consumer
 #: does not have to re-derive a safety question. Additive; a 4.2 consumer
 #: ignores it.
+#: 5.0 adds the `no-coverage` engine status. This is a MAJOR bump because a
+#: consumer exhaustively matching status words must handle the named gap rather
+#: than treating an unknown word as success.
 #:
 #: 🔴 THE KEY SHIPPED BEFORE THIS NUMBER MOVED, AND THAT IS THE DEFECT WORTH
 #: RECORDING. `walked_nothing` was added in commit 3e8bc0f while
@@ -59,7 +64,7 @@ from core import (Severity, engine_blind_spots, ENGINE_OK, ENGINE_NOT_APPLICABLE
 #: the gate catches this: `test_the_schema_version_is_major_minor` checks the
 #: SHAPE of the number, and no test relates a new report key to a bump.
 #: ⇒ **Adding a key to the report means editing this line in the same commit.**
-SCHEMA_VERSION = "4.3"
+SCHEMA_VERSION = "5.0"
 
 _SEV_ORDER = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO]
 
@@ -97,6 +102,7 @@ PRAETOR is a high-signal aid, not a guarantee of security. Known limits:
 _STATUS_MARKS = {
     ENGINE_OK: "[ran]",
     ENGINE_NOT_APPLICABLE: "[n/a]",
+    ENGINE_NO_COVERAGE: "[GAP]",
     ENGINE_DISABLED: "[off]",
     ENGINE_UNAVAILABLE: "[BLIND]",
     ENGINE_ERROR: "[error]",
@@ -110,6 +116,8 @@ def _engine_status_block(meta: dict) -> list:
         status = info.get("status", "?")
         detail = info.get("detail", "")
         mark = _STATUS_MARKS.get(status, "[BLIND]")
+        if status == ENGINE_OK and core.sast_no_coverage_details(detail):
+            mark = "[ran+GAP]"
         lines.append(f"  {mark:10} {name:8} {detail}")
     blind = engine_blind_spots(engines)
     if blind:
