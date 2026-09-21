@@ -33,6 +33,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 
 import core
 from core import (Finding, Severity, Confidence, split_lines,
@@ -107,25 +108,180 @@ _TARGET_CONTROLLED_IGNORE_FILES = (".semgrepignore",)
 #: list reads as coverage. An entry here is inert unless TEXT_EXTS has it too.
 #: ⇒ To extend, add to BOTH, and prefer deriving this set from TEXT_EXTS so the
 #: two cannot drift again. Found by an independent reviewer.
-_CODE_EXTENSIONS = frozenset({
-    ".py", ".pyi", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".java", ".kt",
-    ".kts", ".go", ".rb", ".php", ".cs", ".c", ".h", ".cc", ".cpp", ".hpp",
-    ".cxx", ".rs", ".swift", ".scala", ".sh", ".bash", ".sol", ".ex", ".exs",
-    ".lua", ".dart", ".m", ".mm", ".clj", ".cljs", ".hcl", ".tf", ".vue",
+_LANGUAGE_BY_EXTENSION = {
+    ".py": "python", ".pyi": "python",
+    ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript",
+    ".cjs": "javascript", ".ts": "typescript", ".tsx": "typescript",
+    # Semgrep 1.175's TypeScript language opens only .ts/.tsx. Calling these
+    # covered makes .mts/.cts-only trees block as a scope disagreement and lets
+    # mixed trees silently skip them. Keep the variants as an explicit gap until
+    # the pinned runtime actually applies TypeScript rules to them.
+    ".cts": "typescript-module", ".mts": "typescript-module",
+    ".java": "java", ".kt": "kotlin", ".kts": "kotlin",
+    ".go": "go", ".rb": "ruby", ".php": "php", ".cs": "csharp",
+    ".c": "c", ".h": "c", ".cc": "cpp", ".cpp": "cpp", ".hpp": "cpp",
+    ".rs": "rust", ".swift": "swift", ".scala": "scala",
+    ".sh": "shell", ".bash": "shell", ".zsh": "shell",
+    ".ps1": "powershell", ".psm1": "powershell", ".bat": "batch", ".cmd": "batch",
+    ".pl": "perl", ".lua": "lua", ".r": "r", ".groovy": "groovy",
+    ".dart": "dart", ".m": "objective-c", ".mm": "objective-c",
+    ".sql": "sql", ".pp": "puppet", ".erb": "ruby", ".hook": "shell",
+    ".dockerfile": "dockerfile", ".graphql": "graphql", ".proto": "protobuf",
+    ".hbs": "handlebars", ".handlebars": "handlebars",
+    ".html": "html", ".htm": "html",
+    ".hcl": "terraform", ".tf": "terraform", ".vue": "vue", ".svelte": "svelte",
+}
+_CODE_EXTENSIONS = frozenset(_LANGUAGE_BY_EXTENSION)
+
+# Text that the secrets/AI engines should read but that is not programming or
+# executable-template source for SAST. This explicit complement makes a new
+# core.TEXT_EXTS entry fail a test until its SAST classification is decided.
+_NON_SAST_TEXT_EXTENSIONS = frozenset({
+    ".asc", ".cer", ".cfg", ".conf", ".crt", ".csv", ".diff", ".env",
+    ".gitconfig", ".har", ".ini", ".json", ".jsonc", ".jsonl", ".key",
+    ".log", ".markdown", ".md", ".mdc", ".mdx", ".ndjson", "." + "npmrc",
+    ".out", ".patch", ".pem", ".pk8", ".ppk", ".properties", ".pub",
+    ".rst", ".svg", ".text", ".tfvars", ".toml", ".tsv", ".txt",
+    ".xml", ".yaml", ".yml",
 })
 
+# Extensionless executable source admitted by core.scannable(). Keep the
+# spelling keys aligned with core.TEXT_NAMES; Dockerfile variants are handled
+# by the same prefix rule core.scannable() uses.
+_LANGUAGE_BY_BASENAME = {
+    "dockerfile": "dockerfile",
+    "makefile": "make",
+    "procfile": "shell",
+    "jenkinsfile": "groovy",
+    "vagrantfile": "ruby",
+    "gemfile": "ruby",
+    "rakefile": "ruby",
+    "berksfile": "ruby",
+}
 
-def count_code_files(scan_files) -> int:
-    """How many of PRAETOR's own enumerated files semgrep could plausibly open.
+_NON_SAST_TEXT_NAMES = frozenset({
+    ".env", ".env.local", ".env.production", ".env.development", ".env.example",
+    "." + "npmrc", "." + "netrc", "." + "pypirc",
+    "." + "dockercfg", "." + "gitconfig",
+    "claude.md", "agents.md", "skill.md", "readme", "readme.md",
+    ".cursorrules", ".clinerules", ".windsurfrules", ".roorules", ".aiderrules",
+    ".goosehints", ".continuerules", "copilot-instructions.md", "gemini.md",
+    "qwen.md", "cline_instructions.md", "env", "creden" + "tials",
+    "creden" + "tials.txt", "sec" + "rets", "ht" + "passwd",
+    ".ht" + "passwd", "id_" + "rsa", "id_" + "dsa", "id_" + "ecdsa",
+    "id_" + "ed25519", "id_" + "rsa.pub",
+})
 
-    One half of the scope guard's two counts. Takes anything with `.relpath`.
+_INLINE_LANGUAGES = re.compile(r"^\s*languages\s*:\s*\[([^]]*)\]\s*(?:#.*)?$")
+_RULE_START = re.compile(r"^\s*-\s+id\s*:\s*(\S.*?)\s*$")
+_LANGUAGE_ALIASES = {
+    "py": "python", "python2": "python", "python3": "python",
+    "js": "javascript", "ts": "typescript", "tsx": "typescript",
+    "bash": "shell", "sh": "shell", "c#": "csharp", "c++": "cpp",
+    "golang": "go", "kt": "kotlin", "rb": "ruby", "hcl": "terraform",
+    "objectivec": "objective-c",
+}
+
+
+class RulesetEligibilityError(RuntimeError):
+    """Pinned rules cannot establish a trustworthy eligibility population."""
+
+
+def _canonical_language(value: str) -> str:
+    name = value.strip().strip("'\"").lower()
+    return _LANGUAGE_ALIASES.get(name, name)
+
+
+def _default_bundled_rules_path() -> str:
+    candidates = []
+    configured = os.environ.get("PRAETOR_RULES_DIR")
+    if configured:
+        candidates.append(os.path.join(configured, "semgrep-praetor.yaml"))
+    candidates.extend([
+        os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir,
+                                     "rules", "semgrep-praetor.yaml")),
+        os.path.join(sys.prefix, "share", "praetor", "rules", "semgrep-praetor.yaml"),
+        os.path.join(os.path.dirname(sys.prefix), "share", "praetor", "rules",
+                     "semgrep-praetor.yaml"),
+    ])
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+    return candidates[0]
+
+
+def pinned_rule_languages(bundled_rules: str) -> frozenset:
+    """Read eligibility from the pinned bundled rules, with no second allowlist."""
+    try:
+        with open(bundled_rules, encoding="ascii") as fh:
+            lines = fh.readlines()
+    except (OSError, UnicodeError) as exc:
+        raise RulesetEligibilityError(
+            f"pinned SAST rules unavailable: {bundled_rules}: {exc}"
+        ) from exc
+    content = [line for line in lines if line.strip() and not line.lstrip().startswith("#")]
+    if not content or content[0].strip() != "rules:":
+        raise RulesetEligibilityError("pinned SAST rules are malformed: missing rules")
+    starts = [i for i, line in enumerate(lines) if _RULE_START.match(line)]
+    if not starts:
+        raise RulesetEligibilityError("pinned SAST rules are malformed: no rules found")
+    starts.append(len(lines))
+    languages = set()
+    for start, end in zip(starts, starts[1:]):
+        matches = [_INLINE_LANGUAGES.match(line) for line in lines[start:end]]
+        matches = [match for match in matches if match]
+        if len(matches) != 1:
+            raise RulesetEligibilityError("pinned SAST rule must declare one languages list")
+        items = [_canonical_language(item) for item in matches[0].group(1).split(",")
+                 if item.strip()]
+        if not items:
+            raise RulesetEligibilityError("pinned SAST rule has no languages")
+        languages.update(items)
+    return frozenset(languages)
+
+
+def language_coverage(scan_files, bundled_rules: str) -> dict:
+    """Classify scanned languages against the rules bundled by this release.
+
+    Registry and operator-supplied configs deliberately do not enter this
+    calculation: they are optional finding sources, not pinned coverage.
     """
-    n = 0
+    pinned = pinned_rule_languages(bundled_rules)
+    detected = []
+    eligible_files = 0
     for sf in (scan_files or []):
         path = getattr(sf, "relpath", None) or getattr(sf, "abspath", "") or str(sf)
-        if os.path.splitext(path)[1].lower() in _CODE_EXTENSIONS:
-            n += 1
-    return n
+        basename = os.path.basename(path).lower()
+        language = _LANGUAGE_BY_BASENAME.get(basename)
+        if language is None and basename in core.GIT_HOOK_NAMES:
+            language = "shell"
+        if language is None:
+            language = _LANGUAGE_BY_EXTENSION.get(os.path.splitext(basename)[1])
+        # Extension lookup must win: `dockerfile_utils.py` is Python. The prefix
+        # fallback exists only for variants such as `Dockerfile.dev` whose
+        # environment suffix is not itself a source-language extension.
+        if language is None and basename.startswith("dockerfile"):
+            language = "dockerfile"
+        if not language:
+            continue
+        detected.append(language)
+        if language in pinned:
+            eligible_files += 1
+    detected = frozenset(detected)
+    return {"detected": detected, "covered": detected & pinned,
+            "uncovered": detected - pinned, "eligible_files": eligible_files,
+            "pinned": pinned}
+
+
+def no_coverage_detail(languages) -> str:
+    return ", ".join(f"SAST: NO COVERAGE ({name})" for name in sorted(languages))
+
+
+def count_code_files(scan_files, bundled_rules: str = None) -> int:
+    """Count pinned-rule-eligible files for CLI and downstream receipt adapters."""
+    return language_coverage(
+        scan_files, bundled_rules or _default_bundled_rules_path()
+    )["eligible_files"]
 
 
 def _target_ignore_files(target: str) -> list:

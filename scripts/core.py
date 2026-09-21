@@ -69,12 +69,12 @@ class Confidence(IntEnum):
 # 🔴 An engine that could not measure must never be indistinguishable from an
 # engine that measured and found nothing. Every consumer that turns a scan into
 # a DECISION -- `--fail-on`, a CI gate, a human reading the report -- reads
-# these six words, so they are defined once, here, and nowhere else.
+# these seven words, so they are defined once, here, and nowhere else.
 #
 #   ok               the engine ran to completion. Its zero means something.
-#   not-applicable   nothing of this kind exists in the TARGET (no dependency
-#                    manifests to audit). A property of what was scanned. There
-#                    was nothing to measure, so nothing is unmeasured.
+#   not-applicable   nothing of this kind exists in the TARGET (for example, no
+#                    dependency manifests). Nothing is left unmeasured.
+#   no-coverage      pinned rules name the language gap; visible, never PASS.
 #   disabled         the OPERATOR excluded this engine (`--engines`). Their
 #                    choice, made knowingly; not a surprise blind spot.
 #   unavailable      the ENVIRONMENT could not run this engine (no semgrep
@@ -105,6 +105,7 @@ class Confidence(IntEnum):
 
 ENGINE_OK = "ok"
 ENGINE_NOT_APPLICABLE = "not-applicable"
+ENGINE_NO_COVERAGE = "no-coverage"
 ENGINE_DISABLED = "disabled"
 ENGINE_UNAVAILABLE = "unavailable"
 ENGINE_ERROR = "error"
@@ -129,11 +130,40 @@ ENGINE_ERROR = "error"
 #: distinction still cannot silently pass a gated scan.
 ENGINE_PARTIAL_PARSE = "partial-parse"
 
+_NO_COVERAGE_SUFFIX = re.compile(
+    r"SAST: NO COVERAGE \([a-z0-9+#.-]+\)"
+    r"(?:, SAST: NO COVERAGE \([a-z0-9+#.-]+\))*\Z"
+)
+_NO_COVERAGE_PHRASE = re.compile(r"SAST: NO COVERAGE \([a-z0-9+#.-]+\)")
+
+
+def sast_no_coverage_details(detail: str) -> list:
+    text = str(detail or "")
+    match = _NO_COVERAGE_SUFFIX.search(text)
+    if not match:
+        return []
+    if match.start() and text[match.start() - 2:match.start()] != "; ":
+        return []
+    return _NO_COVERAGE_PHRASE.findall(match.group(0))
+
+
+def _status_is_trusted(info: dict) -> bool:
+    status = (info or {}).get("status", "")
+    if status not in GATE_TRUSTED_STATUSES:
+        return False
+    if status == ENGINE_NO_COVERAGE:
+        detail = str((info or {}).get("detail", ""))
+        gaps = sast_no_coverage_details(detail)
+        return bool(gaps) and detail == ", ".join(gaps)
+    return True
+
 #: Statuses under which an engine's silence is TRUSTWORTHY input to a gate.
 #: 🔴 Deliberately an allowlist. Any status word not named here -- including one
 #: added by a future engine and never considered here -- is treated as a blind
 #: spot. Unproven ⇒ assume unmeasured, exactly as an unproven finding is KEPT.
-GATE_TRUSTED_STATUSES = frozenset({ENGINE_OK, ENGINE_NOT_APPLICABLE, ENGINE_DISABLED})
+GATE_TRUSTED_STATUSES = frozenset({
+    ENGINE_OK, ENGINE_NOT_APPLICABLE, ENGINE_NO_COVERAGE, ENGINE_DISABLED,
+})
 
 
 #: Statuses that do not mean the scanner itself malfunctioned. This is a separate
@@ -166,7 +196,8 @@ GATE_TRUSTED_STATUSES = frozenset({ENGINE_OK, ENGINE_NOT_APPLICABLE, ENGINE_DISA
 #: deliberately, so it falls through to the same "[BLIND]" default an
 #: unrecognised status gets.
 NON_MALFUNCTION_STATUSES = frozenset({
-    ENGINE_OK, ENGINE_NOT_APPLICABLE, ENGINE_DISABLED, ENGINE_UNAVAILABLE,
+    ENGINE_OK, ENGINE_NOT_APPLICABLE, ENGINE_NO_COVERAGE, ENGINE_DISABLED,
+    ENGINE_UNAVAILABLE,
 })
 
 
@@ -226,7 +257,7 @@ def engine_blind_spots(engine_meta: dict) -> list:
     for name in sorted(engine_meta or {}):
         info = engine_meta[name] or {}
         status = info.get("status", "")
-        if status not in GATE_TRUSTED_STATUSES:
+        if not _status_is_trusted(info):
             blind.append((name, status or "?", info.get("detail", "")))
     return blind
 
@@ -243,7 +274,8 @@ def engine_malfunctions(engine_meta: dict) -> list:
     for name in sorted(engine_meta or {}):
         info = engine_meta[name] or {}
         status = info.get("status", "")
-        if status not in NON_MALFUNCTION_STATUSES:
+        if (status not in NON_MALFUNCTION_STATUSES
+                or (status == ENGINE_NO_COVERAGE and not _status_is_trusted(info))):
             broken.append((name, status or "?", info.get("detail", "")))
     return broken
 
@@ -252,7 +284,11 @@ def engine_malfunctions(engine_meta: dict) -> list:
 #: 🔴 Strictly narrower than GATE_TRUSTED_STATUSES, and the gap is the point.
 #: `disabled` and `not-applicable` are trustworthy silences -- but they are
 #: silences. An engine can be trusted without having measured anything.
-ENGINE_MEASURED_STATUSES = frozenset({ENGINE_OK})
+# `no-coverage` is a measurement of the pinned ruleset against the detected
+# language population. It proves the named gap rather than proving source was
+# analysed, but must satisfy the whole-scan floor: the required contract is a
+# non-blocking named gap, not "NOTHING WAS MEASURED" for every shell-only tree.
+ENGINE_MEASURED_STATUSES = frozenset({ENGINE_OK, ENGINE_NO_COVERAGE})
 
 
 def engines_that_measured(engine_meta: dict) -> list:
@@ -298,7 +334,8 @@ def engines_that_measured(engine_meta: dict) -> list:
     family). Do not extend anything to depend on it as proof that work happened.
     """
     return [name for name in sorted(engine_meta or {})
-            if (engine_meta[name] or {}).get("status", "") in ENGINE_MEASURED_STATUSES]
+            if ((engine_meta[name] or {}).get("status", "") in ENGINE_MEASURED_STATUSES
+                and _status_is_trusted(engine_meta[name] or {}))]
 
 
 # --------------------------------------------------------------------------- #

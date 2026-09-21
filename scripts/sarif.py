@@ -297,6 +297,15 @@ def render_sarif(result: dict, meta: dict) -> str:
         "properties": {"praetorCategory": "COVERAGE"},
     } for f in all_findings if f.get("category") == "COVERAGE"]
 
+    for name, info in sorted((meta.get("engines") or {}).items()):
+        for gap in core.sast_no_coverage_details((info or {}).get("detail", "")):
+            notifications.append({
+                "level": "warning",
+                "message": {"text": gap},
+                "descriptor": {"id": "praetor-sast-no-coverage"},
+                "properties": {"praetorCategory": "COVERAGE", "engine": name},
+            })
+
     invocation = {
         # 🔴 `executionSuccessful` IS NOT "no findings". It says the TOOL ran
         # correctly. A scan that could not measure the tree must report false
@@ -405,8 +414,4 @@ def _scan_was_degraded(meta: dict) -> bool:
     if not core.engines_that_measured(engines):
         return True
 
-    for info in engines.values():
-        status = (info or {}).get("status")
-        if status not in core.GATE_TRUSTED_STATUSES:
-            return True
-    return False
+    return bool(core.engine_blind_spots(engines))

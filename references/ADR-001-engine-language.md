@@ -9,6 +9,24 @@ PRAETOR's engine is ported from Python to Rust, incrementally, under four bindin
 conditions (below). The Python implementation stays shipped and stays the
 reference until the Rust one reproduces its output exactly.
 
+### Binding SAST eligibility contract for the port
+
+The Rust port does not yet have a SAST module. When SAST is ported, replaced or
+otherwise wired into that CLI, it must preserve the Python reference contract:
+
+- a language is eligible only when a ruleset pinned by that release declares it;
+- eligibility is derived from those pinned rules, never a second language list;
+- a detected language without pinned rules reports
+  `SAST: NO COVERAGE (<language>)`, never `ok`, PASS or silence;
+- optional registry or operator-supplied rules may add findings but cannot
+  establish pinned coverage; and
+- missing, unreadable or malformed pinned rules fail closed.
+
+The differential corpus must include shell-only, Python-only and mixed
+Python/shell targets before any Rust SAST path can replace the Python release
+path. A pinned shell ruleset remains tracked separately in
+https://github.com/GrowBridge-LLC/praetor-security/issues/2.
+
 ## Context
 
 A project-wide ruling made Rust the default language. "Default" flips the burden

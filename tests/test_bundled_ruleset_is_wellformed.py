@@ -23,6 +23,8 @@ import os
 
 import pytest
 
+import engine_sast
+
 yaml = pytest.importorskip("yaml", reason="PyYAML needed to parse the bundled ruleset")
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -59,6 +61,15 @@ def _all_rules():
 
 def test_ruleset_parses():
     assert _rules(), "the bundled ruleset is empty or unparseable"
+
+
+def test_runtime_eligibility_parser_matches_the_structured_ruleset():
+    structured = {
+        engine_sast._canonical_language(language)
+        for rule in _rules()
+        for language in rule["languages"]
+    }
+    assert engine_sast.pinned_rule_languages(_RULES) == frozenset(structured)
 
 
 def test_every_rule_has_the_fields_semgrep_requires():

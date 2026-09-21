@@ -12,6 +12,28 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Fixed — SAST eligibility was broader than the pinned rules
+
+PRAETOR classified shell and many other source languages as SAST-eligible even
+though the bundled pinned rules cover only Python, JavaScript and TypeScript.
+On a shell-only change Semgrep was therefore asked to prove coverage with zero
+applicable pinned rules, and the scope guard blocked the receipt as if the
+runtime had failed. Every bash-only enforcement node in the downstream G1
+schedule hit that state.
+
+Eligibility is now derived directly from every `languages` declaration in the
+bundled ruleset. A shell-only target reports the explicit, machine-readable gap
+`SAST: NO COVERAGE (shell)` with status `no-coverage`; it is neither PASS nor a
+runtime failure. The secrets, dependency and AI-security engines still run.
+Mixed targets scan covered files and name every uncovered language; Semgrep
+1.175's unsupported `.cts`/`.mts` are `typescript-module` gaps. Registry and operator-supplied rules may add findings, but cannot
+claim pinned coverage. Missing or malformed bundled rules fail closed.
+
+`schema_version` is `5.0` because `no-coverage` is a new engine status word.
+The public follow-up for a pinned shell ruleset is
+[issue #2](https://github.com/GrowBridge-LLC/praetor-security/issues/2); no hook
+should claim shell SAST coverage until that rule and its positive controls ship.
+
 ### Fixed — 🔴 INV-1 was STILL false: the guard ran after seven imports
 
 The fix that closed `python -m praetor` executing the target's `core.py` was

@@ -416,13 +416,30 @@ def test_unrecognised_status_is_treated_as_a_blind_spot():
 
 
 @pytest.mark.parametrize("status", sorted(core.GATE_TRUSTED_STATUSES))
-def test_trusted_statuses_are_exactly_the_three_defensible_ones(status):
-    assert status in (core.ENGINE_OK, core.ENGINE_NOT_APPLICABLE, core.ENGINE_DISABLED), (
-        f"{status!r} was added to the gate's trusted set. Only three states justify "
-        "reading an engine's silence as meaningful: it ran (ok), there was nothing of "
-        "its kind in the target (not-applicable), or the operator switched it off "
-        "(disabled). Anything else means PRAETOR did not look."
+def test_trusted_statuses_are_exactly_the_four_defensible_ones(status):
+    assert status in (
+        core.ENGINE_OK, core.ENGINE_NOT_APPLICABLE,
+        core.ENGINE_NO_COVERAGE, core.ENGINE_DISABLED,
+    ), (
+        f"{status!r} was added to the gate's trusted set. Only four states justify "
+        "reading an engine's silence as meaningful: it ran (ok), pinned rules prove "
+        "a named language gap (no-coverage), there was nothing of its kind in the "
+        "target (not-applicable), or the operator switched it off (disabled)."
     )
+
+
+def test_no_coverage_is_trusted_only_with_the_exact_named_gap_grammar():
+    exact = {"sast": {"status": core.ENGINE_NO_COVERAGE,
+                      "detail": "SAST: NO COVERAGE (shell)"}}
+    assert core.engine_blind_spots(exact) == []
+    assert core.engines_that_measured(exact) == ["sast"]
+
+    for detail in ("", "shell", "SAST: NO COVERAGE (shell) trailing",
+                   "SAST: NO COVERAGE ()"):
+        malformed = {"sast": {"status": core.ENGINE_NO_COVERAGE, "detail": detail}}
+        assert core.engine_blind_spots(malformed), detail
+        assert core.engine_malfunctions(malformed), detail
+        assert core.engines_that_measured(malformed) == [], detail
 
 
 @pytest.mark.parametrize("status", [core.ENGINE_ERROR, core.ENGINE_UNAVAILABLE])
