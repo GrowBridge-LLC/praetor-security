@@ -80,6 +80,19 @@ def test_documents_that_state_the_version_agree_with_the_code():
             f"{relpath} says {m.group(1)}, the tool is {praetor.VERSION}")
 
 
+def test_the_action_defaults_to_its_matching_pypi_release():
+    """A tagged Action must not silently install another release or a moving
+    source branch when the caller accepts its defaults."""
+    text = (_ROOT / "action.yml").read_text(encoding="utf-8")
+    block = text.split("  praetor-version:", 1)[1].split("  python-version:", 1)[0]
+    match = re.search(r'^    default:\s*"==([^"]+)"$', block, re.M)
+    assert match, "action.yml must default praetor-version to an exact release"
+    assert match.group(1) == praetor.VERSION, (
+        f"action.yml installs {match.group(1)!r} by default, but this Action is "
+        f"version {praetor.VERSION!r}"
+    )
+
+
 def test_the_version_is_semver():
     """The policy is semantic versioning; a version that cannot be parsed as one
     cannot be compared, sorted or pinned."""

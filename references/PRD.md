@@ -4,7 +4,7 @@ The structured specification: who it is for, what it must do, what it must never
 do, and how each requirement is verified. Every requirement has an ID so it can
 be cited, tested against, and argued with.
 
-**Version 1.1.0.** Status keys: ✅ met · 🔨 committed, not built · 🔬 researched,
+**Version 1.1.1.** Status keys: ✅ met · 🔨 committed, not built · 🔬 researched,
 undecided · ❌ out of scope with a reason.
 
 ---
@@ -199,9 +199,9 @@ treated as a blind spot, never as a pass.
 |---|---|---|---|
 | **DIS-1** | Install from source | ✅ | |
 | **DIS-2** | GitHub Action | ✅ | *(shipped broken; repaired)* |
-| **DIS-3** | pre-commit hook | 🔨 | **needs a tag** |
-| **DIS-4** | PyPI release via OIDC trusted publishing | 🔨 | **needs the owner's login** |
-| **DIS-5** | GitHub Marketplace listing | 🔨 | needs DIS-4 |
+| **DIS-3** | pre-commit hook | 🔨 | tagged; needs clean consumer verification |
+| **DIS-4** | PyPI release via OIDC trusted publishing | ✅ | `1.1.0` published and clean-install verified |
+| **DIS-5** | GitHub Marketplace listing | 🔨 | owner self-serve |
 | **DIS-6** | OWASP GenAI Solutions Landscape listing | 🔨 | free, self-serve |
 | **DIS-7** | Editor / IDE integration | 🔬 | |
 

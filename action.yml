@@ -48,8 +48,8 @@ inputs:
     default: ""
   praetor-ref:
     description: >
-      Git ref to install from when no praetor-version is given. Defaults to the
-      published default branch. ⚠️ PIN THIS to a tag or commit SHA in production:
+      Git ref to install from when praetor-version is explicitly empty. Defaults
+      to the published default branch. ⚠️ PIN THIS to a tag or commit SHA:
       tracking a moving branch means the gate's verdict can change with no commit
       in YOUR repository, which is a reproducibility defect a downstream team
       reported against exactly this shape.
@@ -57,10 +57,10 @@ inputs:
     default: main
   praetor-version:
     description: >-
-      Version constraint for the praetor-security PyPI package (e.g. "==1.0.1"
-      or ">=1.0.0"). Empty installs the latest release.
+      Version constraint for the praetor-security PyPI package (e.g. "==1.1.1"
+      or ">=1.1.0"). Empty installs from praetor-ref instead.
     required: false
-    default: ""
+    default: "==1.1.1"
   python-version:
     description: Python version to run PRAETOR under.
     required: false
@@ -105,19 +105,12 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        # 🔴 THIS ACTION WAS SHIPPED BROKEN AND MARKED DONE. It ran
-        # `pip install praetor-security[...]`, and that package does not exist:
-        # PyPI returns 404, because the name has never been registered and no
-        # release has ever been cut. Every run of this Action failed at its
-        # install step. The roadmap ticked the box on the FILE EXISTING, which is
-        # this repository's own "identified is not enforced" lesson turned back
-        # on its own shipping surface.
-        #
-        # Until a PyPI release exists, install from the repository itself. That
-        # works today, needs nothing registered, and is what a user cloning the
-        # project already does.
+        # The Action originally installed a package that did not exist and every
+        # run failed at this step. The default now pins the package release that
+        # matches this Action tag. A caller may deliberately clear the version
+        # and supply praetor-ref to test a source branch or immutable commit.
         if [ -n "${{ inputs.praetor-version }}" ]; then
-          # An explicit version means the caller wants the published package.
+          # A non-empty version selects the published package (the default path).
           pip install "praetor-security[sast,sca]${{ inputs.praetor-version }}"
         else
           pip install "git+https://github.com/GrowBridge-LLC/praetor-security@${{ inputs.praetor-ref }}#egg=praetor-security[sast,sca]"

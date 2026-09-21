@@ -1,10 +1,10 @@
 # PRAETOR — road to a genuine v1
 
-**Status of this document.** `pyproject.toml` already says `version = "1.0.0"`, but
-that number was never earned — nothing is tagged, nothing is published, and
-`CHANGELOG.md`'s own `1.0.0` entry says so directly: *"Not a release — a version
-number... nothing has been tagged and nothing is published to PyPI."* This document
-defines what would have to be true before that version number stops being aspirational.
+**Status of this document.** Version 1.1.0 is tagged and published on PyPI; this
+roadmap began when the untagged `1.0.0` designation was still aspirational.
+`CHANGELOG.md` preserves that historical state directly: *"Not a release — a
+version number... nothing has been tagged and nothing is published to PyPI."*
+The checklist below now records which of those original release gates were met.
 Written 2026-09-03, after two competitor surveys (`references/audits/2026-08-24-*`
 and `references/audits/2026-09-02-*`) and a full round of feature work informed by them.
 
@@ -12,14 +12,14 @@ and `references/audits/2026-09-02-*`) and a full round of feature work informed 
 > done the previous day were marked done **because the file existed**, not
 > because it worked. Verified:
 >
-> * `action.yml` ran `pip install praetor-security[...]`. PyPI returns **404**
->   for that name -- it has never been registered and no release has ever been
->   cut. **Every run of the Action failed at its install step.**
+> * `action.yml` ran `pip install praetor-security[...]`. PyPI returned **404**
+>   at the time because no release had been registered or cut. **Every run of
+>   the Action failed at its install step.**
 > * `.pre-commit-hooks.yaml` needs an immutable `rev:` to be referenced. `git tag`
 >   is **empty**. The hook was unusable.
 >
-> Both now read `[~]` -- shipped but INERT until a release exists. The Action has
-> since been repaired to install from the repository so it works without PyPI.
+> Both were changed to `[~]` until a release existed. They now ship with the
+> tagged, published package; this historical failure remains as the evidence.
 >
 > ⚠️ This is this repository's own "identified is not enforced" lesson, turned
 > back on its own shipping surface, by the person who had just written the
@@ -46,20 +46,19 @@ gate.
 
 ## 1. Distribution — the biggest gap, and it's not a code gap
 
-Right now: not on PyPI, no published GitHub Action, no pre-commit-framework hook
-entry, no VS Code/editor integration. A developer who wants to try PRAETOR today has
-to clone the repo and run a Python script directly. That is real adoption friction,
-independent of how good the engines are.
+Current: `praetor-security` is published on PyPI, and the GitHub Action and
+pre-commit hook ship in the tagged repository. Editor integration remains open.
+A developer can install the CLI directly; the remaining distribution work is
+adoption and integration breadth, not basic package availability.
 
-- [ ] **Publish to PyPI** as `praetor-security`, so `pip install praetor-security`
-  works — the package metadata in `pyproject.toml` is already correct, this is a
-  packaging/CI task, not a design one. The name isn't registered yet, so this is a
-  *pending-publisher* registration (name + `GrowBridge-LLC` + repo + exact workflow
-  filename, via PyPI's OIDC trusted-publishing flow — no stored token, `id-token:
-  write` scoped to the publish job only), and it should happen well before the
-  actual first release: someone else claiming the name first invalidates the
-  pending registration. Before wiring the workflow, verify the bundled ruleset
-  actually installs — it ships via `[tool.setuptools.data-files]`, not
+- [x] **Published to PyPI** as `praetor-security`; `pip install praetor-security`
+  works. Version 1.1.0 was published from the tagged commit through the configured
+  GitHub OIDC trusted publisher (`GrowBridge-LLC`, this repository, `publish.yml`,
+  environment `pypi`) with no stored token and `id-token: write` scoped to the
+  publish job. The workflow built the real wheel, installed it in a clean venv,
+  and proved the bundled ruleset survived installation before publishing. The
+  published wheel and source archive hashes match the retained build artifacts.
+  The rules ship via `[tool.setuptools.data-files]`, not
   `package-data`, since PRAETOR ships flat modules; build the real wheel and
   `pip install` it into a fresh empty venv to confirm `praetor --no-registry`
   still finds `rules/semgrep-praetor.yaml` from the installed copy, not the source
@@ -87,8 +86,8 @@ independent of how good the engines are.
   Given commit-time latency expectations for this class of tool, default the
   shipped hook to a fast profile (e.g. `--engines secrets --fail-on HIGH`) and
   document the heavier `--engines all` as an opt-in pre-push stage.
-- [ ] Tag an actual `v1.0.0` release once the above lands, so "PRAETOR 1.0" refers
-  to something real.
+- [x] Tag and publish the first installable release (`v1.1.0`; `1.0.0` was never
+  released), so a PRAETOR version refers to an immutable artifact.
 - [ ] **Known constraint on any future hosted/SaaS use of Semgrep's registry
   packs** (`p/owasp-top-ten`, `p/security-audit`, `p/ai-best-practices`): as of
   Dec 13, 2024, Semgrep's own rule registry is no longer open-source — the
