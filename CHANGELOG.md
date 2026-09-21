@@ -3,14 +3,14 @@
 Notable changes to PRAETOR, most recent first.
 
 This file starts at `1.0.0`, the version in `pyproject.toml` at the time it was
-written. No releases are tagged yet, so everything below `Unreleased` is on `main`
-and not in any published artifact.
+written. `1.0.0` was never tagged or published; `1.1.0` is the first tagged
+release.
 
 Because PRAETOR is a security scanner, entries say what a change means for
 **detection** — a bug here is not a broken feature, it is a scanner reporting
 "nothing found" while something is there.
 
-## Unreleased
+## 1.1.0 — the first installable release
 
 ### Fixed — SAST eligibility was broader than the pinned rules
 
@@ -350,7 +350,7 @@ every scan. Suppressed findings are emitted **marked suppressed**, not dropped.
 tool ran correctly, not that nothing was found.
 
 
-## 1.1.0 — the first installable release
+### Release summary
 
 🔴 **READ THIS FIRST IF YOUR CI JUST TURNED RED.** This release fixes several
 false negatives, and a fixed false negative makes a previously-passing scan fail.
