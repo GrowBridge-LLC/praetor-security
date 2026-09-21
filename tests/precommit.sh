@@ -9,7 +9,7 @@
 #
 # It NEVER regenerates a baseline and never edits a tracked file. It is not
 # read-only, though, and saying so would be false: running the suites writes
-# __pycache__/, .pytest_cache/ and rust/target/. All three are gitignored, so
+# __pycache__/, .pytest_cache/ and the external CARGO_TARGET_DIR, so
 # `git status` stays clean -- but "only reads" was literally untrue and this file
 # is not the place to be loose about what a check does.
 #
@@ -28,6 +28,55 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 ROOT="$(pwd)"
 export PATH="$HOME/.cargo/bin:$PATH"
+
+# PYTHON is one executable path, never a shell fragment. An explicit invalid
+# choice must fail rather than silently select a different interpreter.
+if [ -n "${PYTHON:-}" ]; then
+  PYTHON_CMD=("$PYTHON")
+elif command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
+  PYTHON_CMD=(python3)
+elif command -v py >/dev/null 2>&1 && py -3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
+  PYTHON_CMD=(py -3)
+else
+  printf '%s\n' 'No Python interpreter found: set PYTHON or install python3/py.' >&2
+  exit 2
+fi
+if ! "${PYTHON_CMD[@]}" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)'; then
+  printf '%s\n' 'The selected Python must run and be version 3.10 or newer.' >&2
+  exit 2
+fi
+
+# Build output must never enter the tree measured by the self-scan. Require an
+# explicit destination and resolve symlinks before comparing containment.
+if [ -z "${CARGO_TARGET_DIR:-}" ]; then
+  printf '%s\n' 'Set CARGO_TARGET_DIR to a directory outside the repository.' >&2
+  exit 2
+fi
+if ! CARGO_TARGET_DIR="$("${PYTHON_CMD[@]}" - "$ROOT" "$CARGO_TARGET_DIR" <<'PY'
+from pathlib import Path
+import os
+import sys
+try:
+    root, target = (Path(value).resolve() for value in sys.argv[1:])
+    # Bash command substitution strips trailing newlines from emitted paths.
+    if str(target).endswith("\n"):
+        raise ValueError("CARGO_TARGET_DIR must not end with a newline")
+    if target == root or root in target.parents:
+        raise ValueError("CARGO_TARGET_DIR is inside the repository")
+    # Existing identities also cover case-insensitive POSIX filesystems.
+    for parent in (target, *target.parents):
+        if parent.exists() and parent.samefile(root):
+            raise ValueError("CARGO_TARGET_DIR is inside the repository")
+    # Emit filesystem bytes, independent of redirected Python text encoding.
+    sys.stdout.buffer.write(os.fsencode(str(target)))
+except (OSError, RuntimeError, ValueError) as exc:
+    print(str(exc), file=sys.stderr)
+    raise SystemExit(2)
+PY
+)"; then
+  exit 2
+fi
+export CARGO_TARGET_DIR
 
 FAILED=0
 fail() { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; FAILED=1; }
@@ -53,7 +102,7 @@ echo "== PRAETOR pre-commit gate =="
 # rubber stamp. A floor cannot fall silently, and `SKIPPED == 0` is what actually
 # catches the disappearing-test class.
 MIN_PY=232
-PYOUT="$(PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 py -3.14 -m pytest tests/ -q 2>&1)"
+PYOUT="$(PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 "${PYTHON_CMD[@]}" -m pytest tests/ -q 2>&1)"
 PYPASS="$(printf '%s' "$PYOUT" | grep -oE '[0-9]+ passed' | tail -1 | grep -oE '^[0-9]+')"
 PYSKIP="$(printf '%s' "$PYOUT" | grep -oE '[0-9]+ (skipped|deselected|xfailed)' | grep -oE '^[0-9]+' | awk '{s+=$1} END{print s+0}')"
 if printf '%s' "$PYOUT" | grep -qE '[0-9]+ (failed|error)'; then
@@ -93,10 +142,10 @@ else
 fi
 
 # ---- 3. Generated Unicode tables current -----------------------------------
-if py -3.14 tools/gen_unicode_tables.py --check >/dev/null 2>&1; then
+if "${PYTHON_CMD[@]}" tools/gen_unicode_tables.py --check >/dev/null 2>&1; then
   pass "unicode tables current"
 else
-  fail "unicode tables STALE -- run: py -3.14 tools/gen_unicode_tables.py"
+  fail "unicode tables check FAILED -- run the selected Python on tools/gen_unicode_tables.py --check"
 fi
 
 # ---- 4. Self-scan unchanged ------------------------------------------------
@@ -255,7 +304,7 @@ EXPECT_FILTERED=29
 # so its path exclusion was removed rather than retained as a silent scope hole.
 # If another nested checkout appears, the pin must fail loudly until that exact
 # population is classified; do not pre-authorise a path that does not exist.
-SS="$(py -3.14 scripts/praetor.py . --no-registry --exclude '^\.local/' --exclude '^\.claude/' 2>&1)"
+SS="$("${PYTHON_CMD[@]}" scripts/praetor.py . --no-registry --exclude '^\.local/' --exclude '^\.claude/' 2>&1)"
 SS_RC=$?
 GOT_ACTIVE="$(printf '%s' "$SS" | grep -oE 'Findings \(active\): [0-9]+' | grep -oE '[0-9]+$')"
 GOT_FILTERED="$(printf '%s' "$SS" | grep -oE 'Filtered \(likely FP / low-signal, shown separately\): [0-9]+' | grep -oE '[0-9]+$')"
@@ -374,14 +423,14 @@ case "$REMOTE" in git@github.com-growbridge:*) : ;; *) fail "remote is '$REMOTE'
 DIFF_RUNNER=tests/differential/run_differential.py
 if [ ! -f "$DIFF_RUNNER" ]; then
   fail "differential runner MISSING ($DIFF_RUNNER) -- the Python<->Rust line-definition contract is ungated"
-elif DIFFOUT="$(py -3.14 "$DIFF_RUNNER" 2>&1)"; then
+elif DIFFOUT="$("${PYTHON_CMD[@]}" "$DIFF_RUNNER" 2>&1)"; then
   pass "differential Python<->Rust contract holds"
 else
   # Not necessarily a divergence: the runner also exits non-zero when the corpus
   # is too thin to discriminate, when the toolchain is unreachable, or when the
   # interpreter is missing. Gating on any of those is correct; naming them all
   # "DIVERGED" sends the reader to the wrong file, so print the real output.
-  fail "differential gate FAILED -- run: py -3.14 $DIFF_RUNNER"
+  fail "differential gate FAILED -- run the selected Python on $DIFF_RUNNER"
   printf '%s\n' "$DIFFOUT" | sed 's/^/      /'
 fi
 
@@ -420,18 +469,18 @@ fi
 KB_DRIFT=tests/kb-drift.py
 if [ ! -f "$KB_DRIFT" ]; then
   fail "KB drift gate MISSING ($KB_DRIFT)"
-elif KBOUT="$(py -3.14 "$KB_DRIFT" 2>&1)"; then
+elif KBOUT="$("${PYTHON_CMD[@]}" "$KB_DRIFT" 2>&1)"; then
   KBN="$(printf '%s' "$KBOUT" | grep -oE '[0-9]+ record' | head -1 | grep -oE '^[0-9]+')"
   pass "KB drift check (${KBN:-0} record(s), 0 drifted)"
 else
-  fail "KB drift gate FAILED -- run: py -3.14 $KB_DRIFT"
+  fail "KB drift gate FAILED -- run the selected Python on $KB_DRIFT"
   printf '%s\n' "$KBOUT" | sed 's/^/      /'
 fi
 
 EMPTY_FIELDS=tests/kb-empty-fields.py
 if [ ! -f "$EMPTY_FIELDS" ]; then
   fail "KB empty-field pin MISSING ($EMPTY_FIELDS)"
-elif EMPTYOUT="$(py -3.14 "$EMPTY_FIELDS" 2>&1)"; then
+elif EMPTYOUT="$("${PYTHON_CMD[@]}" "$EMPTY_FIELDS" 2>&1)"; then
   pass "KB empty-field pin holds (EXPECTED_EMPTY_VERBATIM=9)"
 else
   fail "KB empty-field pin FAILED"
@@ -441,7 +490,7 @@ fi
 CONTENT_ANCHOR=tests/kb-content-anchor.py
 if [ ! -f "$CONTENT_ANCHOR" ]; then
   fail "KB content-anchor gate MISSING ($CONTENT_ANCHOR)"
-elif CAOUT="$(py -3.14 "$CONTENT_ANCHOR" 2>&1)"; then
+elif CAOUT="$("${PYTHON_CMD[@]}" "$CONTENT_ANCHOR" 2>&1)"; then
   pass "KB content-anchor gate passed"
 else
   fail "KB content-anchor gate FAILED"
@@ -451,7 +500,7 @@ fi
 VOLATILE_SOURCES=tests/kb-volatile-sources.py
 if [ ! -f "$VOLATILE_SOURCES" ]; then
   fail "KB volatile-source gate MISSING ($VOLATILE_SOURCES)"
-elif VOUT="$(py -3.14 "$VOLATILE_SOURCES" 2>&1)"; then
+elif VOUT="$("${PYTHON_CMD[@]}" "$VOLATILE_SOURCES" 2>&1)"; then
   pass "KB volatile-source gate passed"
 else
   fail "KB volatile-source gate FAILED"
