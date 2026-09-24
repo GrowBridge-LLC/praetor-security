@@ -52,9 +52,6 @@ from core import (Severity, engine_blind_spots, ENGINE_OK, ENGINE_NOT_APPLICABLE
 #: `executionSuccessful: false` are both computed from, exposed so a consumer
 #: does not have to re-derive a safety question. Additive; a 4.2 consumer
 #: ignores it.
-#: 5.0 adds the `no-coverage` engine status. This is a MAJOR bump because a
-#: consumer exhaustively matching status words must handle the named gap rather
-#: than treating an unknown word as success.
 #:
 #: 🔴 THE KEY SHIPPED BEFORE THIS NUMBER MOVED, AND THAT IS THE DEFECT WORTH
 #: RECORDING. `walked_nothing` was added in commit 3e8bc0f while
@@ -64,7 +61,10 @@ from core import (Severity, engine_blind_spots, ENGINE_OK, ENGINE_NOT_APPLICABLE
 #: the gate catches this: `test_the_schema_version_is_major_minor` checks the
 #: SHAPE of the number, and no test relates a new report key to a bump.
 #: ⇒ **Adding a key to the report means editing this line in the same commit.**
-SCHEMA_VERSION = "5.0"
+#:
+#: 5.0 adds the `no-coverage` SAST status. No keys changed, but a status word is
+#: an exhaustive-enum contract, so references/VERSIONING.md requires MAJOR.
+SCHEMA_VERSION = "5.1"
 
 _SEV_ORDER = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO]
 
@@ -116,7 +116,8 @@ def _engine_status_block(meta: dict) -> list:
         status = info.get("status", "?")
         detail = info.get("detail", "")
         mark = _STATUS_MARKS.get(status, "[BLIND]")
-        if status == ENGINE_OK and core.sast_no_coverage_details(detail):
+        if (name == "sast" and status == ENGINE_OK
+                and core.sast_no_coverage_details(detail)):
             mark = "[ran+GAP]"
         lines.append(f"  {mark:10} {name:8} {detail}")
     blind = engine_blind_spots(engines)

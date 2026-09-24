@@ -28,12 +28,16 @@ Semgrep performs static analysis only; it never executes the scanned code.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shutil
+import shlex
 import subprocess
 import sys
+import tempfile
+import time
 
 import core
 from core import (Finding, Severity, Confidence, split_lines,
@@ -67,6 +71,8 @@ DEFAULT_REGISTRY_CONFIGS = ["p/owasp-top-ten", "p/security-audit", "p/ai-best-pr
 #: of this value that converts a timeout into a passing scan.
 _SEMGREP_TIMEOUT_DEFAULT = 900
 _SEMGREP_TIMEOUT = int(os.environ.get("PRAETOR_SEMGREP_TIMEOUT") or _SEMGREP_TIMEOUT_DEFAULT)
+_SEMGREP_VERSION = "1.177.0"
+_SEMGREP_DOCKER_IMAGE = f"semgrep/semgrep:{_SEMGREP_VERSION}"
 
 #: Disables semgrep's own `.semgrepignore` handling, so the SCANNED TREE cannot
 #: decide what gets scanned. See the long note at the call site.
@@ -89,107 +95,100 @@ _RETRYABLE_FLAGS = (_SEMGREPIGNORE_OFF, _DISABLE_NOSEM)
 #: what made the first version miss two total-shrink routes. See the guard.
 _TARGET_CONTROLLED_IGNORE_FILES = (".semgrepignore",)
 
-#: Extensions for files semgrep plausibly has a language for. Used only to ask
-#: "did PRAETOR find code here?" before accusing semgrep of having opened none.
-#:
-#: ⚠️ A DELIBERATE NARROWING WITH A KNOWN DIRECTION. A language missing from this
-#: set means a repo written only in that language does not get the scope check --
-#: it does not mean a false alarm. So the failure mode is losing layer 2 for an
-#: exotic language, with layer 1 (the flag) still in place; not blocking a
-#: legitimate scan.
-#:
-#: 🔴 "ADD TO IT FREELY" WAS THE WRONG REMEDY AND POINTED AT THE WRONG GATE.
-#: `count_code_files` only ever sees what `core.walk_files` yielded, and that is
-#: gated on `core.TEXT_EXTS`. Six extensions ALREADY IN THIS SET are absent from
-#: TEXT_EXTS and can therefore never be counted:
-#:     .clj  .cljs  .cxx  .ex  .exs  .sol
-#: So a Solidity or Elixir repo has `enumerated_code_files == 0` permanently and
-#: the two-count scope guard is DISABLED for it -- while `.sol` sitting in this
-#: list reads as coverage. An entry here is inert unless TEXT_EXTS has it too.
-#: ⇒ To extend, add to BOTH, and prefer deriving this set from TEXT_EXTS so the
-#: two cannot drift again. Found by an independent reviewer.
-_LANGUAGE_BY_EXTENSION = {
-    ".py": "python", ".pyi": "python",
-    ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript",
-    ".cjs": "javascript", ".ts": "typescript", ".tsx": "typescript",
-    # Semgrep 1.175's TypeScript language opens only .ts/.tsx. Calling these
-    # covered makes .mts/.cts-only trees block as a scope disagreement and lets
-    # mixed trees silently skip them. Keep the variants as an explicit gap until
-    # the pinned runtime actually applies TypeScript rules to them.
-    ".cts": "typescript-module", ".mts": "typescript-module",
-    ".java": "java", ".kt": "kotlin", ".kts": "kotlin",
-    ".go": "go", ".rb": "ruby", ".php": "php", ".cs": "csharp",
-    ".c": "c", ".h": "c", ".cc": "cpp", ".cpp": "cpp", ".hpp": "cpp",
-    ".rs": "rust", ".swift": "swift", ".scala": "scala",
-    ".sh": "shell", ".bash": "shell", ".zsh": "shell",
-    ".ps1": "powershell", ".psm1": "powershell", ".bat": "batch", ".cmd": "batch",
-    ".pl": "perl", ".lua": "lua", ".r": "r", ".groovy": "groovy",
-    ".dart": "dart", ".m": "objective-c", ".mm": "objective-c",
-    ".sql": "sql", ".pp": "puppet", ".erb": "ruby", ".hook": "shell",
-    ".dockerfile": "dockerfile", ".graphql": "graphql", ".proto": "protobuf",
-    ".hbs": "handlebars", ".handlebars": "handlebars",
-    ".html": "html", ".htm": "html",
-    ".hcl": "terraform", ".tf": "terraform", ".vue": "vue", ".svelte": "svelte",
-}
+# Detection and walker admission share core's source-kind authority. These
+# compatibility views do not declare eligibility; rules and runtime admission do.
+_LANGUAGE_BY_EXTENSION = core.SOURCE_LANGUAGE_BY_EXTENSION
 _CODE_EXTENSIONS = frozenset(_LANGUAGE_BY_EXTENSION)
 
-# Text that the secrets/AI engines should read but that is not programming or
-# executable-template source for SAST. This explicit complement makes a new
-# core.TEXT_EXTS entry fail a test until its SAST classification is decided.
-_NON_SAST_TEXT_EXTENSIONS = frozenset({
-    ".asc", ".cer", ".cfg", ".conf", ".crt", ".csv", ".diff", ".env",
-    ".gitconfig", ".har", ".ini", ".json", ".jsonc", ".jsonl", ".key",
-    ".log", ".markdown", ".md", ".mdc", ".mdx", ".ndjson", "." + "npmrc",
-    ".out", ".patch", ".pem", ".pk8", ".ppk", ".properties", ".pub",
-    ".rst", ".svg", ".text", ".tfvars", ".toml", ".tsv", ".txt",
-    ".xml", ".yaml", ".yml",
-})
 
-# Extensionless executable source admitted by core.scannable(). Keep the
-# spelling keys aligned with core.TEXT_NAMES; Dockerfile variants are handled
-# by the same prefix rule core.scannable() uses.
-_LANGUAGE_BY_BASENAME = {
-    "dockerfile": "dockerfile",
-    "makefile": "make",
-    "procfile": "shell",
-    "jenkinsfile": "groovy",
-    "vagrantfile": "ruby",
-    "gemfile": "ruby",
-    "rakefile": "ruby",
-    "berksfile": "ruby",
+_INLINE_LANGUAGES = re.compile(r"^    languages\s*:\s*\[([^]]*)\]\s*(?:#.*)?$")
+_RULE_START = re.compile(r"^  -\s+id\s*:\s*(\S.*?)\s*$")
+_RULE_KEY = re.compile(r"^    ([A-Za-z][A-Za-z0-9_-]*)\s*:")
+_DUMP_RULE_START = re.compile(
+    r'(?m)^\s*\[?\{\s*Rule\.id\s*=\s*\(\s*"[^"]+"\s*,\s*_\s*\)\s*;'
+)
+_DUMP_RULE_FIELD = re.compile(r'(?m)^\s*(?:\[?\{\s*)?Rule\.id\s*=')
+_DUMP_INVALID_RULES_FIELD = re.compile(r"(?m)^  invalid_rules\s*=")
+_DUMP_RECORD_START = re.compile(r"(?m)^\{\s*Rule_fetching\.rules\s*=")
+_DUMP_RULES_HEADER = re.compile(r"(?:Rule_fetching\.rules|\brules)\s*=")
+_DUMP_TARGET_FIELD = re.compile(
+    r"\btarget_selector\s*=\s*(?:(?:\(Some\s*\[([^]]+)\]\))|None)\s*;\s*"
+    r"target_analyzer\s*=",
+)
+_DUMP_TARGET_TOKEN = re.compile(r"\btarget_selector\s*=")
+_DUMP_PATH_FIELD = re.compile(
+    r"\bpaths\s*=\s*(?:(None\s*;)|\(Some\s*\{\s*Rule\.require\s*=\s*(\[\]|\[))",
+)
+_DUMP_PATH_TOKEN = re.compile(r"\bpaths\s*=")
+
+#: The one eligibility alias authority. Keys are PRAETOR's detected-language
+#: names; values are the Semgrep language IDs PRAETOR recognizes.
+#: Recognition does not imply coverage: an empty alias set (currently
+#: Objective-C), or a future detected language absent from this table, cannot
+#: be covered.
+SAST_LANGUAGE_ALIASES = {
+    "shell": frozenset({"bash", "sh"}),
+    "python": frozenset({"python", "python3", "py"}),
+    "javascript": frozenset({"javascript", "js"}),
+    "typescript": frozenset({"typescript", "ts"}),
+    "java": frozenset({"java"}),
+    "kotlin": frozenset({"kotlin", "kt"}),
+    "go": frozenset({"go", "golang"}),
+    "ruby": frozenset({"ruby"}),
+    "php": frozenset({"php"}),
+    "csharp": frozenset({"csharp", "c#"}),
+    "c": frozenset({"c"}),
+    "cpp": frozenset({"cpp", "c++"}),
+    "rust": frozenset({"rust"}),
+    "swift": frozenset({"swift"}),
+    "scala": frozenset({"scala"}),
+    "lua": frozenset({"lua"}),
+    "dart": frozenset({"dart"}),
+    "objective-c": frozenset(),
+    "terraform": frozenset({"terraform", "hcl", "tf"}),
+    "vue": frozenset({"vue"}),
 }
 
-_NON_SAST_TEXT_NAMES = frozenset({
-    ".env", ".env.local", ".env.production", ".env.development", ".env.example",
-    "." + "npmrc", "." + "netrc", "." + "pypirc",
-    "." + "dockercfg", "." + "gitconfig",
-    "claude.md", "agents.md", "skill.md", "readme", "readme.md",
-    ".cursorrules", ".clinerules", ".windsurfrules", ".roorules", ".aiderrules",
-    ".goosehints", ".continuerules", "copilot-instructions.md", "gemini.md",
-    "qwen.md", "cline_instructions.md", "env", "creden" + "tials",
-    "creden" + "tials.txt", "sec" + "rets", "ht" + "passwd",
-    ".ht" + "passwd", "id_" + "rsa", "id_" + "dsa", "id_" + "ecdsa",
-    "id_" + "ed25519", "id_" + "rsa.pub",
-})
-
-_INLINE_LANGUAGES = re.compile(r"^\s*languages\s*:\s*\[([^]]*)\]\s*(?:#.*)?$")
-_RULE_START = re.compile(r"^\s*-\s+id\s*:\s*(\S.*?)\s*$")
-_LANGUAGE_ALIASES = {
-    "py": "python", "python2": "python", "python3": "python",
-    "js": "javascript", "ts": "typescript", "tsx": "typescript",
-    "bash": "shell", "sh": "shell", "c#": "csharp", "c++": "cpp",
-    "golang": "go", "kt": "kotlin", "rb": "ruby", "hcl": "terraform",
-    "objectivec": "objective-c",
-}
+_monotonic = time.monotonic
 
 
 class RulesetEligibilityError(RuntimeError):
     """Pinned rules cannot establish a trustworthy eligibility population."""
 
 
-def _canonical_language(value: str) -> str:
-    name = value.strip().strip("'\"").lower()
-    return _LANGUAGE_ALIASES.get(name, name)
+class RulesetRuntimeUnavailable(RuntimeError):
+    """The rules are locally well-formed but Semgrep is unavailable to resolve them."""
+
+
+def _detected_language_for_id(name: str):
+    value = name.strip().strip("'\"").lower()
+    for detected, aliases in SAST_LANGUAGE_ALIASES.items():
+        if value in aliases:
+            return detected
+    return None
+
+
+def _is_registry_config(config: str) -> bool:
+    """Whether Semgrep must interpret this source as a registry identifier."""
+    value = os.fspath(config)
+    return bool(re.fullmatch(r"(?:p|r|s)/[A-Za-z0-9_.@/-]+", value))
+
+
+def _is_local_config_source(config: str) -> bool:
+    value = os.fspath(config)
+    return not _is_registry_config(value) and not re.match(
+        r"^[A-Za-z][A-Za-z0-9+.-]*://", value
+    )
+
+
+def _normalized_config_source(config: str, *, force_local: bool = False) -> str:
+    """One identity for every config from coverage resolution through scanning."""
+    value = os.fspath(config)
+    if not force_local and _is_registry_config(value):
+        return value
+    if not force_local and not _is_local_config_source(value):
+        return value
+    return os.path.abspath(os.path.expanduser(value))
 
 
 def _default_bundled_rules_path() -> str:
@@ -198,8 +197,9 @@ def _default_bundled_rules_path() -> str:
     if configured:
         candidates.append(os.path.join(configured, "semgrep-praetor.yaml"))
     candidates.extend([
-        os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir,
-                                     "rules", "semgrep-praetor.yaml")),
+        os.path.abspath(os.path.join(
+            os.path.dirname(__file__), os.pardir, "rules", "semgrep-praetor.yaml"
+        )),
         os.path.join(sys.prefix, "share", "praetor", "rules", "semgrep-praetor.yaml"),
         os.path.join(os.path.dirname(sys.prefix), "share", "praetor", "rules",
                      "semgrep-praetor.yaml"),
@@ -211,7 +211,15 @@ def _default_bundled_rules_path() -> str:
 
 
 def pinned_rule_languages(bundled_rules: str) -> frozenset:
-    """Read eligibility from the pinned bundled rules, with no second allowlist."""
+    """Detected-language names declared by the pinned bundled rules.
+
+    Compatibility/introspection API only. It does not implement ``covers(L)``:
+    it cannot validate rules or account for path filters and operator configs.
+    ``language_coverage`` is the eligibility authority and resolves rules with
+    Semgrep itself. A malformed, unreadable, or missing file still raises here
+    rather than collapsing to an empty declaration population.
+    """
+    languages = set()
     try:
         with open(bundled_rules, encoding="ascii") as fh:
             lines = fh.readlines()
@@ -219,69 +227,619 @@ def pinned_rule_languages(bundled_rules: str) -> frozenset:
         raise RulesetEligibilityError(
             f"pinned SAST rules unavailable: {bundled_rules}: {exc}"
         ) from exc
-    content = [line for line in lines if line.strip() and not line.lstrip().startswith("#")]
-    if not content or content[0].strip() != "rules:":
-        raise RulesetEligibilityError("pinned SAST rules are malformed: missing rules")
+
+    content = [line.rstrip("\r\n") for line in lines
+               if line.strip() and not line.lstrip().startswith("#")]
+    if not content or content[0] != "rules:" or content.count("rules:") != 1:
+        raise RulesetEligibilityError("pinned SAST rules are malformed: missing top-level rules")
+
     starts = [i for i, line in enumerate(lines) if _RULE_START.match(line)]
     if not starts:
         raise RulesetEligibilityError("pinned SAST rules are malformed: no rules found")
     starts.append(len(lines))
-    languages = set()
     for start, end in zip(starts, starts[1:]):
-        matches = [_INLINE_LANGUAGES.match(line) for line in lines[start:end]]
+        block = lines[start:end]
+        keys = [match.group(1) for line in block if (match := _RULE_KEY.match(line))]
+        matches = [_INLINE_LANGUAGES.match(line) for line in block]
         matches = [match for match in matches if match]
-        if len(matches) != 1:
-            raise RulesetEligibilityError("pinned SAST rule must declare one languages list")
-        items = [_canonical_language(item) for item in matches[0].group(1).split(",")
-                 if item.strip()]
-        if not items:
-            raise RulesetEligibilityError("pinned SAST rule has no languages")
-        languages.update(items)
+        if (len(matches) != 1
+                or not {"languages", "message", "severity"}.issubset(keys)
+                or not any(key.startswith("pattern") for key in keys)):
+            rule_id = _RULE_START.match(lines[start]).group(1)
+            raise RulesetEligibilityError(
+                f"pinned SAST rule {rule_id!r} is malformed"
+            )
+        raw_items = [item.strip().strip("'\"")
+                     for item in matches[0].group(1).split(",")]
+        if (not raw_items or any(not item for item in raw_items)
+                or any(not re.fullmatch(r"[A-Za-z0-9_+#.-]+", item)
+                       for item in raw_items)):
+            raise RulesetEligibilityError("pinned SAST rule has an empty languages list")
+        languages.update(
+            detected
+            for item in raw_items
+            if (detected := _detected_language_for_id(item)) is not None
+        )
     return frozenset(languages)
 
 
-def language_coverage(scan_files, bundled_rules: str) -> dict:
-    """Classify scanned languages against the rules bundled by this release.
+def _dump_rule_blocks(output: str, end: int):
+    """Return structurally balanced top-level rule objects, or fail closed."""
+    header = _DUMP_RULES_HEADER.search(output, 0, end)
+    if header is None:
+        return None
+    list_start = output.find("[", header.end(), end)
+    if list_start < 0:
+        return None
+    square_depth = 0
+    brace_depth = 0
+    rule_start = None
+    blocks = []
+    in_string = False
+    escaped = False
+    for index in range(list_start, end):
+        char = output[index]
+        if in_string:
+            if char == "\n":
+                # A physical newline inside a rendered string makes structural
+                # lines indistinguishable from attacker-controlled payload.
+                return None
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "[":
+            square_depth += 1
+        elif char == "]":
+            square_depth -= 1
+            if square_depth < 0:
+                return None
+            if square_depth == 0:
+                if brace_depth or rule_start is not None:
+                    return None
+                return blocks
+        elif char == "{":
+            if square_depth == 1 and brace_depth == 0:
+                rule_start = index
+            brace_depth += 1
+        elif char == "}":
+            brace_depth -= 1
+            if brace_depth < 0:
+                return None
+            if brace_depth == 0 and rule_start is not None:
+                blocks.append(output[rule_start:index + 1])
+                rule_start = None
+    return None
 
-    Registry and operator-supplied configs deliberately do not enter this
-    calculation: they are optional finding sources, not pinned coverage.
+
+def _rules_from_semgrep_dump_record(output: str):
+    """Parse one validated Rule_fetching record, or fail it closed."""
+    invalid_fields = list(_DUMP_INVALID_RULES_FIELD.finditer(output))
+    if len(invalid_fields) != 1:
+        return None
+    invalid_field = invalid_fields[0]
+    if not re.fullmatch(
+            r"\s*\[\s*\]\s*;\s*(?:origin\s*=.*)?\}\s*",
+            output[invalid_field.end():], flags=re.DOTALL):
+        return None
+    invalid_at = invalid_field.start()
+    blocks = _dump_rule_blocks(output, invalid_at)
+    if blocks is None or len(blocks) != len(_DUMP_RULE_FIELD.findall(output[:invalid_at])):
+        # Partial parsing is more dangerous than total failure: a surviving
+        # subset could falsely establish coverage for an optional source.
+        return None
+    rules = []
+    for block in blocks:
+        starts = list(_DUMP_RULE_START.finditer(block))
+        if len(starts) != 1 or starts[0].start() != 0:
+            return None
+        # Rule-controlled pattern, fix, and metadata text can contain strings
+        # shaped like resolved fields on either side of the real fields. There
+        # is no trustworthy way to choose among duplicates in this textual dump
+        # format, so ambiguity invalidates the whole source fail-closed.
+        target_matches = list(_DUMP_TARGET_FIELD.finditer(block))
+        if (len(target_matches) != 1
+                or len(_DUMP_TARGET_TOKEN.findall(block)) != 1):
+            return None
+        target_match = target_matches[0]
+        # generic, regex, and none resolve with target_selector=None. Preserve
+        # the validated rule in the population, but give it no language IDs so
+        # it cannot count for any detected language.
+        raw_languages = target_match.group(1)
+        language_ids = frozenset(
+            item.strip().lower() for item in raw_languages.split(";")
+            if item.strip()
+        ) if raw_languages is not None else frozenset()
+        path_matches = list(_DUMP_PATH_FIELD.finditer(block))
+        if (len(path_matches) != 1
+                or len(_DUMP_PATH_TOKEN.findall(block)) != 1):
+            # A future dump shape cannot safely establish coverage.
+            return None
+        paths_match = path_matches[0]
+        has_include = paths_match.group(1) is None and paths_match.group(2) != "[]"
+        rules.append({"languages": language_ids, "has_include": has_include})
+    return rules
+
+
+def _rules_from_semgrep_dump(output: str):
+    """Extract rules only when every resolved config record validates.
+
+    Semgrep emits one ``Rule_fetching`` record per loaded local config file.
+    Each record owns its own final ``invalid_rules`` field; accepting a valid
+    subset while another record is malformed would falsely establish coverage.
+    Older Semgrep dump shapes are one implicit record and remain supported.
     """
-    pinned = pinned_rule_languages(bundled_rules)
-    detected = []
-    eligible_files = 0
+    record_starts = list(_DUMP_RECORD_START.finditer(output))
+    if not record_starts:
+        records = [output]
+    else:
+        if output[:record_starts[0].start()].strip():
+            return None
+        records = [
+            output[start.start():(
+                record_starts[index + 1].start()
+                if index + 1 < len(record_starts) else len(output)
+            )]
+            for index, start in enumerate(record_starts)
+        ]
+    resolved = []
+    for record in records:
+        rules = _rules_from_semgrep_dump_record(record)
+        if rules is None:
+            return None
+        resolved.extend(rules)
+    return resolved
+
+
+def _config_crosses_target_trust_boundary(config: str, target: str) -> bool:
+    """Whether local config is target-owned or a directory that can load it."""
+    if _is_registry_config(config):
+        return False
+    unresolved_config = _normalized_config_source(config)
+    unresolved_target = os.path.abspath(os.path.expanduser(target)) if target else ""
+    if not unresolved_target or not os.path.exists(unresolved_config):
+        return False
+    try:
+        # Parent relationships must be derived from canonical paths. samefile()
+        # on an unresolved leaf does not make dirname(unresolved_leaf) canonical.
+        config_path = os.path.realpath(unresolved_config)
+        target_path = os.path.realpath(unresolved_target)
+        if not os.path.samefile(config_path, unresolved_config):
+            return True
+        if not os.path.samefile(target_path, unresolved_target):
+            return True
+    except (OSError, ValueError):
+        return True
+
+    def within(child: str, parent: str):
+        """True/False by filesystem identity; None means fail-closed uncertainty."""
+        try:
+            if os.path.samefile(child, parent):
+                return True
+            current = child if os.path.isdir(child) else os.path.dirname(child)
+            while True:
+                if os.path.samefile(current, parent):
+                    return True
+                ancestor = os.path.dirname(current)
+                if ancestor == current:
+                    return False
+                current = ancestor
+        except (OSError, ValueError):
+            return None
+
+    config_inside_target = within(config_path, target_path)
+    target_inside_config = (
+        within(target_path, config_path) if os.path.isdir(config_path) else False
+    )
+    if config_inside_target is None or target_inside_config is None:
+        return True
+    return config_inside_target or target_inside_config
+
+
+def _docker_local_config_mount(config: str):
+    """Return one stable, read-only Docker binding for an exact local source."""
+    source = _normalized_config_source(config, force_local=True)
+    identity = hashlib.sha256(os.fsencode(os.path.realpath(source))).hexdigest()[:20]
+    target = f"/praetor-config-{identity}"
+    return source, target, f"{source}:{target}:ro"
+
+
+def _dump_config_command(runtime: dict, config: str):
+    """Build config resolution for the same Semgrep runtime used by the scan."""
+    resolved = _normalized_config_source(config)
+    is_local = _is_local_config_source(resolved)
+    if runtime["mode"] == "native":
+        return runtime["prefix"] + ["show", "dump-config", resolved]
+    if runtime["mode"] == "wsl":
+        config_arg = _win_to_wsl(resolved) if is_local else resolved
+        return [
+            *runtime["prefix"][:-1], "env", "SEMGREP_SEND_METRICS=off",
+            "SEMGREP_ENABLE_VERSION_CHECK=0", runtime["prefix"][-1],
+            "show", "dump-config", config_arg,
+        ]
+    if runtime["mode"] == "docker":
+        if is_local and os.path.exists(resolved):
+            source, mount_target, binding = _docker_local_config_mount(resolved)
+            return [
+                "docker", "run", "--rm", "--network", "host",
+                "-e", "SEMGREP_SEND_METRICS=off",
+                "-e", "SEMGREP_ENABLE_VERSION_CHECK=0",
+                "-v", binding, _SEMGREP_DOCKER_IMAGE, "semgrep",
+                "show", "dump-config", mount_target,
+            ]
+        return [
+            "docker", "run", "--rm", "--network", "host",
+            "-e", "SEMGREP_SEND_METRICS=off",
+            "-e", "SEMGREP_ENABLE_VERSION_CHECK=0",
+            _SEMGREP_DOCKER_IMAGE, "semgrep", "show", "dump-config", resolved,
+        ]
+    return []
+
+
+def _resolve_rule_source(config: str, runtime: dict, timeout: int = 60):
+    """Resolve one config with Semgrep; return validated rules or ``None``."""
+    command = _dump_config_command(runtime, config)
+    if not command:
+        return None
+    environment = dict(os.environ)
+    environment["SEMGREP_SEND_METRICS"] = "off"
+    environment["SEMGREP_ENABLE_VERSION_CHECK"] = "0"
+    try:
+        completed = core.run_tool(command, timeout=timeout, env=environment)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    return _rules_from_semgrep_dump(completed.stdout or "")
+
+
+def _source_rule_counts(rules) -> dict:
+    counts = {}
+    for detected, aliases in SAST_LANGUAGE_ALIASES.items():
+        count = sum(
+            1 for rule in rules
+            if not rule["has_include"] and aliases.intersection(rule["languages"])
+        )
+        if count:
+            counts[detected] = count
+    return counts
+
+
+def _resolved_language_population(rules):
+    """Return canonical resolved languages and unrecognized dump tokens."""
+    canonical = set()
+    unknown = set()
+    for rule in rules:
+        for language_id in rule["languages"]:
+            normalized = str(language_id).strip().strip("'\"").lower()
+            # These validated analyzers deliberately never establish language
+            # coverage, but they are known rather than dump-format drift.
+            if normalized in {"generic", "regex", "none"}:
+                continue
+            detected = _detected_language_for_id(normalized)
+            if detected is None:
+                unknown.add(str(language_id))
+            else:
+                canonical.add(detected)
+    return frozenset(canonical), frozenset(unknown)
+
+
+def _runtime_filename_extensions(runtime: dict, timeout: int = 30) -> dict:
+    """Ask the selected engine for its filename metadata, without a target.
+
+    Neither invocation reads/imports target code. Remote commands use argv, no
+    shell; Docker needs no target mount or network. Missing/changed metadata
+    proves no admission. Shebang-only admission is deliberately not inferred:
+    an unproven filename retains its named coverage gap.
+    """
+    mode = runtime.get("mode")
+    if mode == "native":
+        launcher = []
+    elif mode == "wsl":
+        launcher = runtime["prefix"][:-1]
+    elif mode == "docker":
+        launcher = ["docker", "run", "--rm", "--network", "none",
+                    _SEMGREP_DOCKER_IMAGE]
+    else:
+        return {}
+    semgrep = "semgrep" if mode == "docker" else runtime["prefix"][-1]
+    environment = dict(os.environ, SEMGREP_SEND_METRICS="off",
+                       SEMGREP_ENABLE_VERSION_CHECK="0")
+    try:
+        located = core.run_tool(
+            launcher + [semgrep, "scan", "--dump-engine-path"],
+            timeout=timeout / 2, env=environment,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+        )
+        binary = (located.stdout or "").strip()
+        # The engine, not PATH or a target-relative filename, supplies this path.
+        absolute = (binary.startswith("/") if mode != "native"
+                    else os.path.isabs(binary))
+        if located.returncode or not absolute or "\n" in binary:
+            return {}
+        dumped = core.run_tool(
+            launcher + [binary, "-dump_extensions"],
+            timeout=timeout / 2, env=environment,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+        )
+        if dumped.returncode:
+            return {}
+        lines = core.split_lines(dumped.stdout or "")
+        if not lines or lines[0] != "Language to supported file extension mappings:":
+            return {}
+        extensions = {}
+        for line in lines[1:]:
+            language, separator, values = line.strip().partition("->")
+            if not separator or not language or not values:
+                return {}
+            suffixes = tuple(value.strip() for value in values.split(","))
+            if not all(suffixes):
+                return {}
+            extensions[language] = suffixes
+        return extensions
+    except (OSError, subprocess.SubprocessError):
+        return {}
+
+
+def _filename_admitted(path: str, language: str, extensions: dict) -> bool:
+    # Semgrep's suffix matching is case-sensitive, unlike source discovery.
+    return any(path.endswith(suffix)
+               for alias in SAST_LANGUAGE_ALIASES.get(language, ())
+               for suffix in extensions.get(alias, ()))
+
+
+def _filename_admitted_casefolded(path: str, language: str, extensions: dict) -> bool:
+    """PRAETOR's source kind is case-insensitive even when Semgrep's is not."""
+    folded = path.casefold()
+    return any(folded.endswith(suffix.casefold())
+               for alias in SAST_LANGUAGE_ALIASES.get(language, ())
+               for suffix in extensions.get(alias, ()))
+
+
+def _filename_known_to_runtime(path: str, extensions: dict) -> bool:
+    """A known suffix selects Semgrep's parser even if the shebang disagrees."""
+    return any(path.endswith(suffix)
+               for suffixes in extensions.values() for suffix in suffixes)
+
+
+_SHEBANG_INTERPRETERS = {
+    "python": "python", "python2": "python", "python3": "python",
+    "bash": "shell", "sh": "shell", "zsh": "shell",
+    "node": "javascript", "nodejs": "javascript",
+    "ruby": "ruby", "pwsh": "powershell", "powershell": "powershell",
+}
+
+
+def _shebang_language(path: str) -> str | None:
+    """Read only the first line of a walker-admitted file; never run it."""
+    try:
+        with open(path, "rb") as source:
+            first = source.readline(256)
+    except OSError:
+        return None
+    if not first.startswith(b"#!") or b"\n" not in first:
+        return None
+    try:
+        words = shlex.split(first[2:].decode("ascii").strip())
+    except (UnicodeError, ValueError):
+        return None
+    if not words:
+        return None
+    interpreter = os.path.basename(words[0]).lower()
+    if interpreter == "env":
+        args = words[1:]
+        if args and args[0] == "-S":
+            args = args[1:]
+        args = [arg for arg in args if not arg.startswith("-") and "=" not in arg]
+        if not args:
+            return None
+        interpreter = os.path.basename(args[0]).lower()
+    if re.fullmatch(r"python3(?:\.\d+)?", interpreter):
+        interpreter = "python3"
+    return _SHEBANG_INTERPRETERS.get(interpreter)
+
+
+def language_coverage(scan_files, bundled_rules: str, *, target=None,
+                      extra_configs=None, use_registry=False, prefer="auto",
+                      wsl_distro="Ubuntu", timeout=_SEMGREP_TIMEOUT) -> dict:
+    """Resolve in-effect rules and report coverage for each detected language."""
+    # Validate the pinned artifact before runtime detection.  Runtime absence is
+    # an ordinary ENGINE_UNAVAILABLE fact; a missing, unreadable, or malformed
+    # trust root remains a scanner error even on a host without Semgrep.
+    declared_pinned_languages = pinned_rule_languages(bundled_rules)
+
+    runtime = detect_runtime(prefer, wsl_distro)
+    if not runtime["available"]:
+        raise RulesetRuntimeUnavailable(runtime["detail"])
+
+    extensions = _runtime_filename_extensions(runtime, timeout=min(timeout, 30))
+
+    detected_files = []
+    shebang_by_path = {}
+    absolute_by_path = {}
+    extension_by_path = {}
     for sf in (scan_files or []):
         path = getattr(sf, "relpath", None) or getattr(sf, "abspath", "") or str(sf)
-        basename = os.path.basename(path).lower()
-        language = _LANGUAGE_BY_BASENAME.get(basename)
-        if language is None and basename in core.GIT_HOOK_NAMES:
-            language = "shell"
-        if language is None:
-            language = _LANGUAGE_BY_EXTENSION.get(os.path.splitext(basename)[1])
-        # Extension lookup must win: `dockerfile_utils.py` is Python. The prefix
-        # fallback exists only for variants such as `Dockerfile.dev` whose
-        # environment suffix is not itself a source-language extension.
-        if language is None and basename.startswith("dockerfile"):
-            language = "dockerfile"
-        if not language:
+        absolute = getattr(sf, "abspath", None)
+        absolute_by_path[path] = absolute or os.path.abspath(os.path.join(target or ".", path))
+        # Establish the suffix language before reading content. A shebang is
+        # additive evidence and must never replace a covered suffix.
+        extension = core.source_language(path)
+        mapped_suffix = (os.path.splitext(os.path.basename(path))[1].casefold()
+                         in core.SOURCE_LANGUAGE_BY_EXTENSION)
+        shebang = _shebang_language(absolute_by_path[path]) if extensions else None
+        # A basename such as pre-commit is a useful code hint, but it is not
+        # an extension. Its mapped shebang alone decides SAST eligibility.
+        if shebang and not mapped_suffix:
+            extension = None
+        if extension:
+            detected_files.append((path, extension))
+            if _filename_admitted_casefolded(path, extension, extensions):
+                extension_by_path[path] = extension
+        if shebang:
+            shebang_by_path[path] = shebang
+            if shebang != extension:
+                detected_files.append((path, shebang))
+    detected = frozenset(language for _, language in detected_files)
+
+    source_specs = [(
+        "pinned rules", _normalized_config_source(bundled_rules, force_local=True), True
+    )]
+    if use_registry:
+        source_specs.extend(
+            (f"registry config {config}", _normalized_config_source(config), False)
+            for config in DEFAULT_REGISTRY_CONFIGS
+        )
+    source_specs.extend(
+        (f"operator config {config}", _normalized_config_source(config), False)
+        for config in (extra_configs or [])
+    )
+
+    sources = {language: [] for language in detected}
+    unresolved = []
+    ignored_target_configs = []
+    resolved_optional = []
+    pinned_languages = set()
+    resolution_deadline = _monotonic() + timeout
+    for label, config, pinned in source_specs:
+        if not pinned and _config_crosses_target_trust_boundary(config, target):
+            ignored_target_configs.append(label)
             continue
-        detected.append(language)
-        if language in pinned:
-            eligible_files += 1
-    detected = frozenset(detected)
-    return {"detected": detected, "covered": detected & pinned,
-            "uncovered": detected - pinned, "eligible_files": eligible_files,
-            "pinned": pinned}
+        remaining = resolution_deadline - _monotonic()
+        if remaining <= 0:
+            raise RulesetEligibilityError(
+                f"SAST rule resolution timeout before {label}"
+            )
+        rules = _resolve_rule_source(config, runtime, timeout=remaining)
+        if rules is None:
+            raise RulesetEligibilityError(f"SAST rule source unresolved: {label}")
+        if pinned and not rules:
+            raise RulesetEligibilityError(
+                f"pinned SAST rules are malformed or empty: {bundled_rules}"
+            )
+        if pinned:
+            resolved_pinned_languages, unknown_dump_languages = (
+                _resolved_language_population(rules)
+            )
+            missing_languages = declared_pinned_languages - resolved_pinned_languages
+            if unknown_dump_languages or missing_languages:
+                details = []
+                if unknown_dump_languages:
+                    details.append(
+                        "unrecognized resolved language id(s): "
+                        + ", ".join(sorted(unknown_dump_languages))
+                    )
+                if missing_languages:
+                    details.append(
+                        "declared language(s) absent after resolution: "
+                        + ", ".join(sorted(missing_languages))
+                    )
+                raise RulesetEligibilityError(
+                    "pinned SAST rule language resolution drift: " + "; ".join(details)
+                )
+        if not pinned:
+            resolved_optional.append(label)
+        rule_counts = _source_rule_counts(rules)
+        if pinned:
+            pinned_languages.update(rule_counts)
+        for language, count in rule_counts.items():
+            if language in sources:
+                sources[language].append({"source": label, "count": count})
+
+    eligible = [(path, language) for path, language in detected_files
+                if sources[language] and (extension_by_path.get(path) == language
+                                          or shebang_by_path.get(path) == language)]
+    covered = frozenset(language for _, language in eligible)
+    uncovered = frozenset(language for path, language in detected_files
+                          if not sources[language]
+                          or (extension_by_path.get(path) != language
+                              and shebang_by_path.get(path) != language))
+    # One language may have both admitted and omitted source kinds.
+    sources = {language: evidence if language in covered else []
+               for language, evidence in sources.items()}
+    return {
+        "detected": detected,
+        "covered": covered,
+        "uncovered": uncovered,
+        "eligible_files": len({path for path, _language in eligible}),
+        "eligible_paths": tuple(dict.fromkeys(path for path, _language in eligible)),
+        # Mixed-case suffixes and extensionless shebang scripts both need an
+        # explicit Semgrep target. The name is retained for caller compatibility.
+        "shebang_targets": tuple(dict.fromkeys(absolute_by_path[path]
+                                 for path, language in eligible
+                                 if not _filename_known_to_runtime(path, extensions))),
+        "shebang_languages": {
+            absolute_by_path[path]: shebang_by_path.get(path, extension_by_path.get(path))
+            for path, language in eligible
+            if not _filename_known_to_runtime(path, extensions)
+        },
+        "additional_languages": {
+            absolute_by_path[path]: shebang_by_path[path]
+            for path, language in eligible
+            if path in extension_by_path and path in shebang_by_path
+            and extension_by_path[path] != shebang_by_path[path]
+            and _filename_known_to_runtime(path, extensions)
+            and language == shebang_by_path[path]
+        },
+        "pinned": frozenset(pinned_languages),
+        "sources": sources,
+        "unresolved": tuple(unresolved),
+        "ignored_target_configs": tuple(ignored_target_configs),
+        "resolved_optional": tuple(resolved_optional),
+        "rules_loaded": True,
+        "runtime_version": runtime.get("version"),
+    }
+
+
+def coverage_detail(coverage: dict) -> str:
+    """Stable per-language coverage evidence, including unresolved sources."""
+    details = []
+    unresolved = coverage.get("unresolved", ())
+    ignored = coverage.get("ignored_target_configs", ())
+    uncovered = []
+    for language in sorted(coverage.get("detected", ())):
+        language_sources = coverage.get("sources", {}).get(language, ())
+        if language_sources:
+            for source in language_sources:
+                noun = "rule" if source["count"] == 1 else "rules"
+                details.append(
+                    f"SAST: {language} covered by {source['source']} "
+                    f"({source['count']} {noun})"
+                )
+        if language in coverage.get("uncovered", ()) or not language_sources:
+            uncovered.append(f"SAST: NO COVERAGE ({language})")
+    if unresolved:
+        details.append("unresolved: " + ", ".join(unresolved))
+    if ignored:
+        details.append("ignored scanned-target config: " + ", ".join(ignored))
+    if uncovered:
+        # Named gaps stay at the end in the stable grammar consumed by the
+        # fail-closed exit gate. Evidence may precede them, never follow them.
+        details.append(", ".join(uncovered))
+    return "; ".join(details)
 
 
 def no_coverage_detail(languages) -> str:
-    return ", ".join(f"SAST: NO COVERAGE ({name})" for name in sorted(languages))
+    """Compatibility formatter for callers without source-resolution evidence."""
+    return "; ".join(f"SAST: NO COVERAGE ({name})" for name in sorted(languages))
 
 
 def count_code_files(scan_files, bundled_rules: str = None) -> int:
-    """Count pinned-rule-eligible files for CLI and downstream receipt adapters."""
-    return language_coverage(
-        scan_files, bundled_rules or _default_bundled_rules_path()
-    )["eligible_files"]
+    """Count files eligible under the pinned bundled ruleset.
+
+    This is a compatibility API used by downstream receipt adapters, not a
+    second eligibility authority.  Source and vendored layouts both keep the
+    rules directory beside ``scripts``; the CLI passes its already-resolved
+    installed rules path explicitly.
+    """
+    if bundled_rules is None:
+        bundled_rules = _default_bundled_rules_path()
+    return language_coverage(scan_files, bundled_rules)["eligible_files"]
 
 
 def _target_ignore_files(target: str) -> list:
@@ -320,6 +878,30 @@ def _scanned_count(data: dict) -> int:
     if not isinstance(scanned, list):
         return -1
     return len(scanned)
+
+
+def _bundled_rule_languages(path: str) -> dict:
+    """Known bundled rule IDs for conservative cross-parser filtering."""
+    try:
+        import yaml
+        with open(path, encoding="utf-8") as source:
+            document = yaml.safe_load(source)
+    except (ImportError, OSError, UnicodeError, ValueError):
+        return {}
+    if not isinstance(document, dict) or not isinstance(document.get("rules"), list):
+        return {}
+    languages = {}
+    for rule in document["rules"]:
+        if not isinstance(rule, dict) or not isinstance(rule.get("id"), str):
+            return {}
+        ids = rule.get("languages")
+        if not isinstance(ids, list) or not all(isinstance(item, str) for item in ids):
+            return {}
+        rid = rule["id"]
+        if rid in languages:
+            return {}
+        languages[rid] = frozenset(item.lower() for item in ids)
+    return languages
 
 
 def _win_to_wsl(path: str) -> str:
@@ -400,7 +982,7 @@ def _report_root(mode: str, target: str) -> str:
 
 
 def detect_runtime(prefer: str = "auto", wsl_distro: str = "Ubuntu") -> dict:
-    """Return {mode, cmd_prefix, available, detail}. mode in native|wsl|docker|none.
+    """Return {mode, prefix, available, detail, version}. mode is native|wsl|docker|none.
 
     🔴 EVERY BRANCH MEASURES THE RUNTIME. None infers a working semgrep from a
     file existing somewhere on a PATH -- see `_probe_semgrep`, and
@@ -419,12 +1001,14 @@ def detect_runtime(prefer: str = "auto", wsl_distro: str = "Ubuntu") -> dict:
         if exe:
             ok, detail = _probe_semgrep([exe])
             if ok:
-                return {"mode": "native", "prefix": [exe], "available": True, "detail": detail}
+                return {"mode": "native", "prefix": [exe], "available": True,
+                        "detail": detail, "version": detail.removeprefix("semgrep ")}
             why.append(f"native semgrep at {exe} {detail}")
         else:
             why.append("no semgrep on PATH")
         if prefer == "native":
-            return {"mode": "none", "prefix": [], "available": False, "detail": "; ".join(why)}
+            return {"mode": "none", "prefix": [], "available": False,
+                    "detail": "; ".join(why), "version": None}
 
     if prefer in ("wsl", "auto") and shutil.which("wsl"):
         exe = _wsl_semgrep_path(wsl_distro)
@@ -433,12 +1017,14 @@ def detect_runtime(prefer: str = "auto", wsl_distro: str = "Ubuntu") -> dict:
             ok, detail = _probe_semgrep(prefix)
             if ok:
                 return {"mode": "wsl", "prefix": prefix, "available": True,
-                        "detail": f"{detail} (wsl:{wsl_distro})"}
+                        "detail": f"{detail} (wsl:{wsl_distro})",
+                        "version": detail.removeprefix("semgrep ")}
             why.append(f"wsl:{wsl_distro} semgrep at {exe} {detail}")
         else:
             why.append(f"no semgrep on the login PATH of wsl:{wsl_distro}")
         if prefer == "wsl":
-            return {"mode": "none", "prefix": [], "available": False, "detail": "; ".join(why)}
+            return {"mode": "none", "prefix": [], "available": False,
+                    "detail": "; ".join(why), "version": None}
 
     if prefer in ("docker", "auto") and shutil.which("docker"):
         # 🔴 `shutil.which` proves the CLI is INSTALLED. It does not prove the
@@ -463,11 +1049,13 @@ def detect_runtime(prefer: str = "auto", wsl_distro: str = "Ubuntu") -> dict:
         if ready:
             # We do not pull here; caller runs with -v mount. Report as available-if-image.
             return {"mode": "docker", "prefix": ["docker"], "available": True,
-                    "detail": "docker (image semgrep/semgrep will be used)"}
+                    "detail": f"docker (image {_SEMGREP_DOCKER_IMAGE} will be used)",
+                    "version": _SEMGREP_VERSION}
         why.append(f"docker CLI present but {reason}")
 
     return {"mode": "none", "prefix": [], "available": False,
-            "detail": "; ".join(why) if why else "no semgrep runtime found (native/WSL/Docker)"}
+            "detail": "; ".join(why) if why else "no semgrep runtime found (native/WSL/Docker)",
+            "version": None}
 
 
 def _docker_daemon_ready(timeout: int = 10) -> tuple:
@@ -648,7 +1236,9 @@ def _classify_scan_errors(errors: list) -> str:
 def run(target: str, bundled_rules: str, use_registry: bool = True,
         extra_configs=None, prefer: str = "auto", wsl_distro: str = "Ubuntu",
         timeout: int = _SEMGREP_TIMEOUT, excludes=None,
-        enumerated_code_files: int = -1, skip_dirs=None) -> dict:
+        enumerated_code_files: int = -1, skip_dirs=None,
+        shebang_targets=(), shebang_languages=None, eligible_paths=(),
+        additional_languages=None) -> dict:
     """
     Returns {findings: [...],
              status: 'ok'|'unavailable'|'error'|'partial-parse', detail: str,
@@ -661,10 +1251,10 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
 
     configs = []
     if bundled_rules and os.path.exists(bundled_rules):
-        configs.append(bundled_rules)
+        configs.append(_normalized_config_source(bundled_rules, force_local=True))
     if use_registry:
-        configs.extend(DEFAULT_REGISTRY_CONFIGS)
-    configs.extend(extra_configs or [])
+        configs.extend(_normalized_config_source(c) for c in DEFAULT_REGISTRY_CONFIGS)
+    configs.extend(_normalized_config_source(c) for c in (extra_configs or []))
     if not configs:
         configs = ["p/security-audit"] if use_registry else []
     if not configs:
@@ -760,30 +1350,42 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
     for d in sorted(core.DEFAULT_SKIP_DIRS if skip_dirs is None else skip_dirs):
         common += ["--exclude", d]
 
+    # Semgrep's folder walk does not admit extensionless scripts by shebang.
+    # Its explicit-target override opens them without executing their contents.
+    # The paths come only from PRAETOR's own already-admitted walker.
+    if shebang_targets:
+        common.append("--scan-unknown-extensions")
+
     if mode == "native":
         cfg_args = []
         for c in configs:
             cfg_args += ["--config", c]
-        cmd = rt["prefix"] + cfg_args + common + [os.path.abspath(target)]
+        cmd = rt["prefix"] + cfg_args + common + [os.path.abspath(target)] + list(shebang_targets)
         cwd = None
     elif mode == "wsl":
         wt = _win_to_wsl(target)
         cfg_args = []
         for c in configs:
-            cfg_args += ["--config", (_win_to_wsl(c) if os.path.exists(c) else c)]
-        cmd = rt["prefix"] + cfg_args + common + [wt]
+            cfg_args += ["--config", (_win_to_wsl(c) if _is_local_config_source(c) else c)]
+        cmd = rt["prefix"] + cfg_args + common + [wt] + [
+            _win_to_wsl(path) for path in shebang_targets]
         cwd = None
     else:  # docker
         tgt = os.path.abspath(target)
         cfg_args = []
+        config_vols = []
         for c in configs:
-            # bundled local file must be mounted too; registry packs pass as-is
-            cfg_args += ["--config", ("/rules/" + os.path.basename(c) if os.path.exists(c) else c)]
+            if _is_local_config_source(c) and os.path.exists(c):
+                _source, config_target, binding = _docker_local_config_mount(c)
+                config_vols += ["-v", binding]
+                cfg_args += ["--config", config_target]
+            else:
+                cfg_args += ["--config", c]
         vols = ["-v", f"{tgt}:/src:ro"]
-        if bundled_rules and os.path.exists(bundled_rules):
-            vols += ["-v", f"{os.path.dirname(os.path.abspath(bundled_rules))}:/rules:ro"]
-        cmd = ["docker", "run", "--rm", "--network", "host"] + vols + \
-              ["semgrep/semgrep", "semgrep"] + cfg_args + common + ["/src"]
+        cmd = ["docker", "run", "--rm", "--network", "host"] + vols + config_vols + \
+              [_SEMGREP_DOCKER_IMAGE, "semgrep"] + cfg_args + common + ["/src"] + [
+                  "/src/" + os.path.relpath(path, tgt).replace("\\", "/")
+                  for path in shebang_targets]
         cwd = None
 
     def _invoke(command):
@@ -896,6 +1498,27 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
 
     findings = []
     report_root = _report_root(mode, target)
+    scanned_relpaths = {
+        _relative_to_report_root(path, report_root)
+        for path in data.get("paths", {}).get("scanned", [])
+        if isinstance(path, str)
+    }
+    missing_paths = sorted(set(eligible_paths) - scanned_relpaths)
+    for rel in missing_paths:
+        findings.append(Finding(
+            engine="sast", rule_id="sast-file-not-scanned",
+            title="SAST eligible file was not scanned",
+            severity=Severity.HIGH, confidence=Confidence.HIGH,
+            file=rel, line=1, category="COVERAGE",
+            description="PRAETOR selected this file for SAST, but Semgrep did not report opening it.",
+            snippet="", fix="Inspect Semgrep target admission and rerun before trusting this scan.",
+        ))
+    shebang_by_relpath = {
+        os.path.relpath(path, os.path.abspath(target)).replace("\\", "/"): language
+        for path, language in (shebang_languages or {}).items()
+    }
+    bundled_language_ids = (_bundled_rule_languages(bundled_rules)
+                            if shebang_by_relpath else {})
     line_cache: dict = {}
     for res in data.get("results", []):
         extra = res.get("extra", {}) or {}
@@ -906,6 +1529,20 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
             continue
         rid = res.get("check_id", "semgrep-rule")
         short = rid.split(".")[-1]
+        declared = bundled_language_ids.get(short)
+        if rel in shebang_by_relpath and declared is not None:
+            expected = SAST_LANGUAGE_ALIASES.get(shebang_by_relpath[rel], frozenset())
+            # A case-divergent suffix is unknown to Semgrep's filename walk,
+            # so it is passed explicitly and parsed under every config. Its
+            # suffix still identifies real source to our walker: retain a
+            # Semgrep finding for either that language or the shebang language.
+            expected = expected | SAST_LANGUAGE_ALIASES.get(
+                core.source_language(rel), frozenset())
+            if not declared.intersection(expected):
+                # Explicit unknown-extension targets are parsed under every
+                # config language. Drop only a provably different bundled
+                # parser; unknown/operator rules remain visible, fail safe.
+                continue
         refs = md.get("references", []) or []
         cwe = _first(md.get("cwe", ""))
         owasp = _first(md.get("owasp", ""))
@@ -947,7 +1584,13 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
     scan_errors = data.get("errors", []) or []
     n_errors = len(scan_errors)
     error_status = _classify_scan_errors(scan_errors)
-    detail = f"{rt['detail']}; ran configs={configs}; scan errors={n_errors}"
+    if missing_paths:
+        error_status = ENGINE_ERROR
+    opened = f"Semgrep opened {scanned} file(s)" if scanned >= 0 else "Semgrep opened file count unavailable"
+    detail = (f"{rt['detail']}; ran configs={configs}; scan errors={n_errors}; "
+              f"{opened}")
+    if missing_paths:
+        detail += f"; {len(missing_paths)} eligible file(s) not scanned"
     if n_errors:
         # 🔴 A COUNT, NOT A STATUS ON ITS OWN. `scan errors=N` used to sit in
         # `detail` next to an unconditional `status: "ok"` -- printed,
@@ -981,4 +1624,42 @@ def run(target: str, bundled_rules: str, use_registry: bool = True,
         else:
             detail += (f"; NOTE this semgrep rejected {rejected_flag}; retry omitted exactly "
                        "that flag -- upgrade semgrep for full protection")
-    return {"findings": findings, "status": error_status, "detail": detail, "runtime": mode}
+    # Semgrep's parser follows a known suffix even for an explicit target.
+    # Scan a disposable unknown-suffix copy under the additional shebang
+    # language, then map its findings back to the original file. The target
+    # remains read-only; a failed copy or scan is an active HIGH coverage gap.
+    for source_path, language in (additional_languages or {}).items():
+        rel = os.path.relpath(source_path, os.path.abspath(target)).replace("\\", "/")
+        try:
+            with tempfile.TemporaryDirectory(prefix="praetor-sast-language-") as spare:
+                alias = os.path.join(spare, "source.__praetor_unknown__")
+                shutil.copyfile(source_path, alias)
+                extra = run(
+                    spare, bundled_rules, use_registry=use_registry,
+                    extra_configs=extra_configs, prefer=prefer,
+                    wsl_distro=wsl_distro, timeout=timeout,
+                    skip_dirs=skip_dirs, enumerated_code_files=1,
+                    shebang_targets=(alias,), shebang_languages={alias: language},
+                    eligible_paths=(os.path.basename(alias),),
+                )
+        except OSError as exc:
+            extra = {"status": ENGINE_ERROR, "detail": str(exc), "findings": [],
+                     "scanned_file_count": 0}
+        if extra["status"] != ENGINE_OK or extra.get("scanned_file_count") != 1:
+            findings.append(Finding(
+                engine="sast", rule_id="sast-file-not-scanned",
+                title="SAST language was not scanned", severity=Severity.HIGH,
+                confidence=Confidence.HIGH, file=rel, line=1,
+                category="COVERAGE", description=(
+                    f"The {language} shebang parser was not verified: {extra['detail']}"),
+                snippet="", fix="Inspect Semgrep target admission and rerun.",
+            ))
+            error_status = ENGINE_ERROR
+            detail += f"; {language} parser not verified for {rel}"
+        else:
+            for finding in extra["findings"]:
+                finding.file = rel
+                findings.append(finding)
+    return {"findings": findings, "status": error_status, "detail": detail,
+            "runtime": mode, "version": rt.get("version"),
+            "scanned_file_count": scanned}

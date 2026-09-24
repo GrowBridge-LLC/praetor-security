@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 import os
 import re
@@ -1038,8 +1039,46 @@ def _scan_mcp(text: str, rel: str) -> list:
 # Engine entry
 # --------------------------------------------------------------------------- #
 
-def scan(scan_files, read_text) -> list:
+_FLAG_RULE_ID = "dangerous-permission-flag"
+
+
+def _load_flag_allowlist(path: str | None, root: str | None) -> dict:
+    """Read only the operator-selected tool rules, never a target-supplied file."""
+    if not path or not root or not os.path.isfile(path):
+        return {}
+    with open(path, encoding="utf-8") as source:
+        document = json.load(source)
+    if not isinstance(document, dict) or set(document) != {"entries"} or not isinstance(document["entries"], list):
+        raise ValueError("invalid AI-security flag allowlist schema")
+    entries = {}
+    for entry in document["entries"]:
+        if (not isinstance(entry, dict) or set(entry) !=
+                {"path", "line", "line_sha256", "rule_id", "reason", "reviewer"}):
+            raise ValueError("invalid AI-security flag allowlist entry")
+        rel = entry["path"]
+        if (not isinstance(rel, str) or not rel or "\\" in rel or
+                os.path.isabs(rel) or any(part in ("", ".", "..") for part in rel.split("/"))):
+            raise ValueError("invalid AI-security flag allowlist path")
+        if os.path.commonpath((os.path.realpath(root), os.path.realpath(os.path.join(root, rel)))) != os.path.realpath(root):
+            raise ValueError("AI-security flag allowlist path escapes its trusted root")
+        if (type(entry["line"]) is not int or entry["line"] <= 0 or
+                not isinstance(entry["line_sha256"], str) or
+                not re.fullmatch(r"[0-9a-f]{64}", entry["line_sha256"]) or
+                entry["rule_id"] != _FLAG_RULE_ID or
+                not isinstance(entry["reason"], str) or not entry["reason"].strip() or
+                not isinstance(entry["reviewer"], str) or not entry["reviewer"].strip()):
+            raise ValueError("invalid AI-security flag allowlist evidence")
+        key = (rel, entry["line"], entry["rule_id"])
+        if key in entries:
+            raise ValueError("duplicate AI-security flag allowlist entry")
+        entries[key] = entry
+    return entries
+
+
+def scan(scan_files, read_text, *, flag_allowlist_path=None, flag_allowlist_root=None) -> list:
     findings: list = []
+    allowlist = _load_flag_allowlist(flag_allowlist_path, flag_allowlist_root)
+    matched_allowlist = set()
     for sf in scan_files:
         text = read_text(sf.abspath)
         if not text:
@@ -1058,17 +1097,31 @@ def scan(scan_files, read_text) -> list:
         for i, line in enumerate(lines, start=1):
             if len(line) > 6000:
                 skipped += 1
-                continue
-            for group in (INJECTION, EXFIL):
+                # Keep the short dangerous-flag expression active even when
+                # broader injection/exfil analysis reaches its line cap.
+                groups = (tuple(rule for rule in INJECTION
+                                if rule[0] == _FLAG_RULE_ID),)
+            else:
+                groups = (INJECTION, EXFIL)
+            for group in groups:
                 for rule_id, title, rx, sev, conf, cat, cwe, owasp, fix in group:
                     if rx.search(line):
-                        findings.append(Finding(
+                        finding = Finding(
                             engine="aisec", rule_id=rule_id, title=title,
                             severity=sev, confidence=conf, file=rel, line=i, category=cat,
                             description=title + ".",
                             snippet=line.strip()[:200],
                             fix=fix, cwe=cwe, owasp=owasp, references=[REF_LLM],
-                        ))
+                        )
+                        key = (rel, i, rule_id)
+                        entry = allowlist.get(key)
+                        if entry and hashlib.sha256(line.encode("utf-8")).hexdigest() == entry["line_sha256"]:
+                            finding.filtered = True
+                            finding.filter_reason = (
+                                "reviewed exact-line flag allowlist: " + entry["reason"]
+                                + " (reviewer: " + entry["reviewer"] + ")")
+                            matched_allowlist.add(key)
+                        findings.append(finding)
         if skipped and not any(f.file == rel and f.category == "COVERAGE" for f in findings):
             findings.append(Finding(
                 engine="aisec", rule_id="aisec-long-line-skip",
@@ -1080,4 +1133,17 @@ def scan(scan_files, read_text) -> list:
                 fix="Split oversized lines before scanning to restore full AI-security coverage.",
                 references=[REF_LLM],
             ))
+    for key, entry in allowlist.items():
+        if key in matched_allowlist:
+            continue
+        rel, line_no, _rule_id = key
+        findings.append(Finding(
+            engine="aisec", rule_id="aisec-stale-flag-allowlist",
+            title="Reviewed flag allowlist entry is stale",
+            severity=Severity.HIGH, confidence=Confidence.HIGH,
+            file=rel, line=line_no, category="COVERAGE",
+            description="The reviewed line hash no longer matches a detected flag; the entry silenced nothing.",
+            snippet=f"path={rel}; line={line_no}; reviewer={entry['reviewer']}",
+            fix="Review the current line and remove or update this exact-line allowlist entry.",
+        ))
     return findings

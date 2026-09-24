@@ -78,7 +78,7 @@ python scripts/praetor.py <target>
 
 ### Optional engines
 
-Only **Python 3.8+** is strictly required. Install the optional engines for full
+Only **Python 3.10+** is strictly required. Install the optional engines for full
 coverage:
 
 ```bash
@@ -90,7 +90,7 @@ coverage:
 # Docker (see below). PRAETOR reports this honestly as [error] or [BLIND]
 # rather than as a clean scan, but the sast engine WILL be unavailable until
 # you provide one of those runtimes.
-pipx install semgrep            # or:  pip install semgrep
+pipx install 'semgrep==1.177.0' # or:  pip install 'semgrep==1.177.0'
 
 # SCA engine (osv-scanner - preferred, language-agnostic):
 winget install Google.OSVScanner        # Windows
@@ -184,26 +184,32 @@ by turning any blind spot into exit `3` — but only if you pass it.)
 
 ### schema_version 5.0 — SAST names languages without pinned coverage
 
-`meta.engines.sast.status` can now be `no-coverage`. SAST eligibility is the set
-of languages declared by the bundled pinned rules, not a separately maintained
-extension allowlist. In this release those rules cover Python, JavaScript and
-TypeScript `.ts`/`.tsx`; `.cts`/`.mts` remain a named `typescript-module` gap
-because the pinned Semgrep runtime does not open them. A shell-only change produces:
+`meta.engines.sast.status` can now be `no-coverage`. SAST eligibility comes from
+validated in-effect rules, not a separately maintained extension allowlist.
+The bundled pinned rules cover Python, JavaScript and TypeScript `.ts`/`.tsx`; `.cts`/`.mts` remain a named `typescript-module` gap
+because the pinned Semgrep runtime does not open them. With only the bundled
+rules, a shell-only change produces:
 
 ```text
 [GAP]      sast     SAST: NO COVERAGE (shell)
 ```
 
-This is a deliberate, trustworthy statement about the pinned ruleset, so it
-does not become exit `3`; it is not an `ok`/PASS result either. On a mixed
+This names a missing-rules gap, not an `ok`/PASS result or an engine malfunction.
+It is nonblocking when another selected engine measures the target; if nothing
+measures it, a gated scan still exits `3` (`NOTHING WAS MEASURED`). On a mixed
 Python/shell target, Python is scanned and the text report uses `[ran+GAP]` with
 the shell phrase appended to the engine detail. SARIF carries each gap as a
 warning tool-execution notification.
 
-Registry packs and `--semgrep-config` may add findings, but they never enlarge
-the pinned eligibility set or erase this gap. A missing, unreadable or malformed
-bundled ruleset is an engine error and fails closed. Consumers that exhaustively
-match status words must add `no-coverage`; that wire change is why this is schema
+Enabled registry packs and trusted `--semgrep-config` sources can enlarge
+in-effect eligibility and replace a named gap with evidence naming the covering
+source and counting rules. Rules must validate, match a canonical language alias,
+and have no `paths.include` filter; generic-only rules cannot establish coverage.
+Target-controlled configs cannot grant coverage, though explicitly supplied
+configs still run and their findings remain enforceable. A missing, unreadable
+or malformed bundled ruleset, or an unresolved enabled source, fails closed.
+See the [binding requirement](references/REQ-SAST-ELIGIBILITY.md) for the exact
+predicate and its disclosed limits. Consumers that exhaustively match status words must add `no-coverage`; that wire change is why this is schema
 major 5. The pinned-shell-rules follow-up is
 [issue #2](https://github.com/GrowBridge-LLC/praetor-security/issues/2).
 
@@ -362,7 +368,7 @@ anything:
 | **inline ignore** | the flagged line carries `praetor:ignore` / `nosec` / `nosemgrep` |
 | **lexical context** | the match is inside a comment or docstring — text that cannot execute |
 | **reachability** | the matched string provably never reaches a dangerous sink (`exec`, shell, filesystem, network). Python, intra-file |
-| **heuristics** | example/template env files, integrity hashes in lockfiles, low-confidence phrasing in docs |
+| **heuristics** | integrity hashes in real lockfiles/minified/generated assets, low-confidence AI-security phrasing in documentation, low-confidence low-entropy secret-named assignments |
 
 Comment syntax is selected from the flagged file's type, never inferred from a
 line alone: a Markdown heading and `//` within a YAML URL are content, not an
@@ -383,12 +389,13 @@ therefore apply to the AI-security engine only, and that carve-out is enforced b
 tests that call the real suppression functions — not by a convention, and not by a
 test that merely inspects the config those functions read.
 
-⚠️ **Scope of that promise, stated exactly.** It covers the two passes above. Two
-older heuristics *can* still move a secret to FILTERED, in narrow cases: a secret in
-an `.env.example`/`.env.template`-style file, and a low-confidence, low-entropy value
-assigned to a secret-named variable. Both are visible in the FILTERED bucket with a
-reason. So the accurate claim is *"context and reachability never suppress a secret"*,
-not *"nothing ever does"* — **read the FILTERED bucket, do not assume it is all noise.**
+⚠️ **Scope of that promise, stated exactly.** It covers the two passes above.
+Example/template path-only secret suppression was removed; real credentials in
+those files remain enforceable. Only the low-confidence, low-entropy
+secret-named-assignment heuristic can still move a secret finding to FILTERED,
+where it remains visible with a reason. So the accurate claim is *"context and
+reachability never suppress a secret"*, not *"nothing ever does"* —
+**read the FILTERED bucket, do not assume it is all noise.**
 
 🟢 **Suppression fails safe.** Anything PRAETOR cannot *prove* inert is kept —
 unparseable source, an unfamiliar construct, a non-Python file, a value that

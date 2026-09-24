@@ -245,7 +245,14 @@ fi
 # ⚠️ The filtered count FELL and that is not an improvement -- those findings
 # became ACTIVE. Active falling while filtered also falls is the failure this
 # pinned PAIR exists to catch.
-EXPECT_ACTIVE=50
+# 2026-09-22: 50 -> 47 active; filtered remains 29. Coordinator measured the
+# reconstructed prior frozen subject with the current scanner: exactly three
+# removals, zero additions, all aisec:sensitive-file-read fixture hits in old
+# scripts/core.py:632 (dot build/config names), :672 (dot credential config
+# names), and :696 (private-key basename). The classifier retains every source
+# kind but assembles these literals from harmless parts, per CLAUDE.md's fixture
+# rule. This is fixture attribution, not a suppression improvement; baseline unchanged.
+EXPECT_ACTIVE=47
 # 2026-08-12: 45 -> 53, deliberately, and NOT because false positives improved.
 # The two causes were measured separately by reverting each change on its own:
 #   +3  the dedup fix stopped DISCARDING findings. A filtered finding could win

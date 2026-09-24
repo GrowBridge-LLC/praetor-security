@@ -93,6 +93,28 @@ def test_the_action_defaults_to_its_matching_pypi_release():
     )
 
 
+def test_python_floor_and_ci_matrix_cover_both_supported_edges():
+    project = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    workflow = (_ROOT / ".github/workflows/invariants.yml").read_text(encoding="utf-8")
+    assert 'requires-python = ">=3.10"' in project
+    assert workflow.count("python-version: ['3.10', '3.14']") == 2
+
+
+def test_every_tracked_semgrep_install_surface_uses_the_same_exact_pin():
+    project = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    pin_match = re.search(r'sast\s*=\s*\["semgrep==([0-9.]+)"\]', project)
+    assert pin_match, "the sast extra must use one exact Semgrep pin"
+    pin = pin_match.group(1)
+    surfaces = {
+        "workflow": _ROOT / ".github/workflows/invariants.yml",
+        "README": _ROOT / "README.md",
+        "skill": _ROOT / "SKILL.md",
+    }
+    for label, path in surfaces.items():
+        text = path.read_text(encoding="utf-8")
+        assert f"semgrep=={pin}" in text, f"{label} does not install semgrep=={pin}"
+
+
 def test_the_version_is_semver():
     """The policy is semantic versioning; a version that cannot be parsed as one
     cannot be compared, sorted or pinned."""

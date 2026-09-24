@@ -224,6 +224,18 @@ def test_nosemgrep_outcome_is_filtered_with_reason_and_without_marker_active(mon
             )],
         }
 
+    monkeypatch.setattr(engine_sast, "language_coverage", lambda *a, **kw: {
+        "detected": frozenset({"python"}),
+        "covered": frozenset({"python"}),
+        "uncovered": frozenset(),
+        "eligible_files": 1,
+        "pinned": frozenset({"python"}),
+        "sources": {"python": [{"source": "pinned rules", "count": 1}]},
+        "unresolved": (),
+        "ignored_target_configs": (),
+        "resolved_optional": (),
+        "rules_loaded": True,
+    })
     monkeypatch.setattr(engine_sast, "run", fake_sast_run)
 
     def scan(source):
@@ -387,6 +399,85 @@ def test_the_target_is_passed_as_data_never_as_a_program(tmp_path, monkeypatch):
                 f"{mode}: argv[0]={argv[0]!r} lies inside the scanned tree -- that "
                 f"is executing the target, not reading it"
             )
+
+
+def test_coverage_resolution_never_exposes_target_as_a_config_source(
+        tmp_path, monkeypatch):
+    """INV-1 covers metadata probes and dump-config as well as the scan path."""
+    trusted = tmp_path / "trusted"
+    trusted.mkdir()
+    bundled = trusted / "rules.yaml"
+    bundled.write_text(
+        "rules:\n  - id: pinned-python\n    languages: [python]\n"
+        "    severity: WARNING\n    message: pinned\n    pattern: eval(...)\n",
+        encoding="ascii",
+    )
+    # Keep the target beside the pinned file: mounting the config's parent would
+    # expose the scanned tree even though the config file itself is trusted.
+    target = trusted / "target"
+    target.mkdir()
+    target_config = target / "target-owned.yaml"
+    target_config.write_text(
+        "rules:\n  - id: target-bash\n    languages: [bash]\n"
+        "    severity: WARNING\n    message: target\n    pattern: echo ...\n",
+        encoding="ascii",
+    )
+    dump = (
+        'config = Valid { rules =\n  [{ Rule.id = ("fixture", _);\n'
+        '  message = "fixture"; severity = `Warning; '
+        'target_selector = (Some [Python]);\n'
+        '  target_analyzer = (Analyzer.AnalyzerType.L (Python, []));\n'
+        '  options = None; fix = None; fix_regexp = None; paths = None;\n'
+        '  metadata = None; }];\n  invalid_rules = [];\n}\n'
+    )
+
+    for mode in ("native", "wsl", "docker"):
+        calls = []
+
+        def fake_run_tool(cmd, **kwargs):
+            calls.append((list(cmd), kwargs))
+
+            class _R:
+                returncode = 0
+                stdout = (
+                    "/trusted/semgrep-core\n" if "--dump-engine-path" in cmd else
+                    "Language to supported file extension mappings:\npython->.py\n"
+                    if "-dump_extensions" in cmd else dump
+                )
+                stderr = ""
+            return _R()
+
+        prefix = ["semgrep"] if mode == "native" else (
+            ["wsl", "-d", "Ubuntu", "semgrep"] if mode == "wsl" else ["docker"]
+        )
+        monkeypatch.setattr(engine_sast, "detect_runtime", lambda *a, **kw: {
+            "mode": mode, "prefix": prefix, "available": True,
+            "detail": "test", "version": "test",
+        })
+        monkeypatch.setattr(_core, "run_tool", fake_run_tool)
+
+        coverage = engine_sast.language_coverage(
+            ["app.py"], str(bundled), target=str(target),
+            extra_configs=[str(target_config), str(target)], use_registry=False,
+        )
+
+        assert coverage["covered"] == frozenset({"python"})
+        assert len(calls) == 3, calls
+        assert "--dump-engine-path" in calls[0][0]
+        assert "-dump_extensions" in calls[1][0]
+        assert "dump-config" in calls[2][0]
+        for index, (argv, kwargs) in enumerate(calls):
+            assert kwargs.get("shell") in (None, False)
+            assert kwargs.get("cwd") != str(target)
+            assert all(str(target) not in arg for arg in argv), argv
+            if mode == "docker":
+                mounts = [argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "-v"]
+                _source, config_target, binding = engine_sast._docker_local_config_mount(
+                    str(bundled)
+                )
+                assert mounts == ([binding] if index == 2 else [])
+                if index == 2:
+                    assert config_target in argv
 
 
 def test_file_selection_never_follows_a_symlinked_file(tmp_path, monkeypatch):

@@ -63,13 +63,14 @@ def test_ruleset_parses():
     assert _rules(), "the bundled ruleset is empty or unparseable"
 
 
-def test_runtime_eligibility_parser_matches_the_structured_ruleset():
-    structured = {
-        engine_sast._canonical_language(language)
+def test_runtime_eligibility_parser_reads_every_pinned_rule_language():
+    """A YAML-format change must not silently erase runtime eligibility."""
+    expected = {
+        str(language).lower()
         for rule in _rules()
-        for language in rule["languages"]
+        for language in (rule.get("languages") or [])
     }
-    assert engine_sast.pinned_rule_languages(_RULES) == frozenset(structured)
+    assert engine_sast.pinned_rule_languages(_RULES) == frozenset(expected)
 
 
 def test_every_rule_has_the_fields_semgrep_requires():

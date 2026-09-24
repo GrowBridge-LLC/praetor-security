@@ -1,0 +1,16 @@
+config = Valid { rules =
+  [{ Rule.id =
+       ("rules.fixture-python", _);
+     message = "fixture";
+     severity = `Warning; target_selector = (Some [Python]);
+     target_analyzer = (Analyzer.AnalyzerType.L (Python, []));
+     options = None; fix = None; fix_regexp = None; paths = None;
+     metadata = None; };
+   { Rule.id = ("rules.fixture-js-ts", _);
+     message = "fixture";
+     severity = `Warning; target_selector = (Some [Js; Ts]);
+     target_analyzer = (Analyzer.AnalyzerType.L (Js, []));
+     options = None; fix = None; fix_regexp = None; paths = None;
+     metadata = None; }];
+  invalid_rules = [];
+}

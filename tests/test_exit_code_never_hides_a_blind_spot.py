@@ -66,12 +66,29 @@ def _break_secrets(monkeypatch):
 
 def _set_sast_status(monkeypatch, status, detail="simulated SAST status"):
     """Return a status through the real SAST-to-engine-meta wiring."""
+    _set_sast_coverage(monkeypatch)
     monkeypatch.setattr(
         engine_sast,
         "run",
         lambda *a, **kw: {"findings": [], "status": status, "detail": detail,
                            "runtime": "test-double"},
     )
+
+
+def _set_sast_coverage(monkeypatch):
+    """Keep status/exit tests independent of the optional Semgrep install."""
+    monkeypatch.setattr(engine_sast, "language_coverage", lambda *a, **kw: {
+        "detected": frozenset({"python"}),
+        "covered": frozenset({"python"}),
+        "uncovered": frozenset(),
+        "eligible_files": 1,
+        "pinned": frozenset({"python"}),
+        "sources": {"python": [{"source": "pinned rules", "count": 1}]},
+        "unresolved": (),
+        "ignored_target_configs": (),
+        "resolved_optional": (),
+        "rules_loaded": True,
+    })
 
 
 def _run(argv):
@@ -278,6 +295,7 @@ def test_real_findings_outrank_degradation(tmp_path, monkeypatch, capsys):
     def half_broken(*a, **kw):
         raise RuntimeError("simulated sast failure")
 
+    _set_sast_coverage(monkeypatch)
     monkeypatch.setattr(engine_sast, "run", half_broken)
     rc = _run([str(tmp_path), "--engines", "secrets,sast", "--fail-on", "HIGH",
                "--format", "json", "--quiet"])
@@ -314,6 +332,7 @@ def test_combined_case_still_names_the_blind_engine(tmp_path, monkeypatch, capsy
     def half_broken(*a, **kw):
         raise RuntimeError("simulated sast failure")
 
+    _set_sast_coverage(monkeypatch)
     monkeypatch.setattr(engine_sast, "run", half_broken)
     rc = _run([str(tmp_path), "--engines", "secrets,sast", "--fail-on", "HIGH",
                "--format", "json", "--quiet"])
@@ -415,31 +434,49 @@ def test_unrecognised_status_is_treated_as_a_blind_spot():
     )
 
 
+def test_no_coverage_status_with_malformed_detail_fails_closed():
+    info = {"sast": {"status": core.ENGINE_NO_COVERAGE, "detail": "all good"}}
+    assert core.engine_blind_spots(info)
+    assert core.engine_malfunctions(info)
+    assert core.engines_that_measured(info) == []
+
+
+def test_no_coverage_status_is_trusted_only_for_sast():
+    info = {
+        "secrets": {
+            "status": core.ENGINE_NO_COVERAGE,
+            "detail": "SAST: NO COVERAGE (shell)",
+        },
+    }
+    assert core.engine_blind_spots(info) == [
+        ("secrets", core.ENGINE_NO_COVERAGE, "SAST: NO COVERAGE (shell)"),
+    ]
+    assert core.engine_malfunctions(info) == [
+        ("secrets", core.ENGINE_NO_COVERAGE, "SAST: NO COVERAGE (shell)"),
+    ]
+
+
+def test_another_engines_detail_cannot_change_its_text_status_mark():
+    result = {"active": [], "filtered": [], "summary": {},
+              "total_active": 0, "total_filtered": 0}
+    meta = {"target": "t", "timestamp": "now", "version": "x", "file_count": 1,
+            "engines": {"secrets": {"status": core.ENGINE_OK,
+                                      "detail": "SAST: NO COVERAGE (shell)"}}}
+    text = report.render_text(result, meta)
+    assert "[ran+GAP]" not in text
+    assert "[ran]      secrets" in text
+
+
 @pytest.mark.parametrize("status", sorted(core.GATE_TRUSTED_STATUSES))
 def test_trusted_statuses_are_exactly_the_four_defensible_ones(status):
-    assert status in (
-        core.ENGINE_OK, core.ENGINE_NOT_APPLICABLE,
-        core.ENGINE_NO_COVERAGE, core.ENGINE_DISABLED,
-    ), (
+    assert status in (core.ENGINE_OK, core.ENGINE_NOT_APPLICABLE,
+                      core.ENGINE_NO_COVERAGE, core.ENGINE_DISABLED), (
         f"{status!r} was added to the gate's trusted set. Only four states justify "
-        "reading an engine's silence as meaningful: it ran (ok), pinned rules prove "
-        "a named language gap (no-coverage), there was nothing of its kind in the "
-        "target (not-applicable), or the operator switched it off (disabled)."
+        "reading an engine's silence as meaningful: it ran (ok), there was nothing of "
+        "its kind in the target (not-applicable), the pinned rules name a coverage gap "
+        "(no-coverage), or the operator switched it off (disabled). Anything else "
+        "means PRAETOR did not look."
     )
-
-
-def test_no_coverage_is_trusted_only_with_the_exact_named_gap_grammar():
-    exact = {"sast": {"status": core.ENGINE_NO_COVERAGE,
-                      "detail": "SAST: NO COVERAGE (shell)"}}
-    assert core.engine_blind_spots(exact) == []
-    assert core.engines_that_measured(exact) == ["sast"]
-
-    for detail in ("", "shell", "SAST: NO COVERAGE (shell) trailing",
-                   "SAST: NO COVERAGE ()"):
-        malformed = {"sast": {"status": core.ENGINE_NO_COVERAGE, "detail": detail}}
-        assert core.engine_blind_spots(malformed), detail
-        assert core.engine_malfunctions(malformed), detail
-        assert core.engines_that_measured(malformed) == [], detail
 
 
 @pytest.mark.parametrize("status", [core.ENGINE_ERROR, core.ENGINE_UNAVAILABLE])

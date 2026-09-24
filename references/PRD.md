@@ -4,7 +4,7 @@ The structured specification: who it is for, what it must do, what it must never
 do, and how each requirement is verified. Every requirement has an ID so it can
 be cited, tested against, and argued with.
 
-**Version 1.1.1.** Status keys: ✅ met · 🔨 committed, not built · 🔬 researched,
+**Version 1.2.0.** Status keys: ✅ met · 🔨 committed, not built · 🔬 researched,
 undecided · ❌ out of scope with a reason.
 
 ---
@@ -125,7 +125,7 @@ snippet, fingerprint, SARIF — can see them.
 | **DET-6** | MCP manifests: autostart, unpinned source, credentials handed over — by name **and** by content | ✅ |
 | **DET-7** | Serialized models: pickle opcodes disassembled, never loaded | ✅ |
 | **DET-8** | Known-vulnerable dependencies with advisory IDs and upgrade path | ✅ |
-| **DET-9** | SAST eligibility is derived from the bundled pinned rules. This release pins Python, JavaScript and TypeScript `.ts`/`.tsx`; Semgrep does not open `.cts`/`.mts`, so they remain a named `typescript-module` gap. Every detected language without effective pinned coverage is reported as `SAST: NO COVERAGE (<language>)`, never PASS or silence. Optional registry/custom rules may add findings but do not establish pinned coverage. | ✅ ⚠️ |
+| **DET-9** | Rule-derived SAST coverage from validated in-effect configs, with source counts and named gaps for recognized languages without a counting rule | ✅ |
 | **DET-10** | Encoded payloads decoded one level and rescanned | ✅ |
 | **DET-11** | **Cross-file**: a payload defined in one file, used dangerously in another | ✅ ⚠️ |
 | **DET-12** | Cross-file through a function parameter and an aliased call | 🔨 |
@@ -199,9 +199,9 @@ treated as a blind spot, never as a pass.
 |---|---|---|---|
 | **DIS-1** | Install from source | ✅ | |
 | **DIS-2** | GitHub Action | ✅ | *(shipped broken; repaired)* |
-| **DIS-3** | pre-commit hook | 🔨 | tagged; needs clean consumer verification |
-| **DIS-4** | PyPI release via OIDC trusted publishing | ✅ | `1.1.0` published and clean-install verified |
-| **DIS-5** | GitHub Marketplace listing | 🔨 | owner self-serve |
+| **DIS-3** | pre-commit hook | 🔨 | **needs a tag** |
+| **DIS-4** | PyPI release via OIDC trusted publishing | 🔨 | **needs the owner's login** |
+| **DIS-5** | GitHub Marketplace listing | 🔨 | needs DIS-4 |
 | **DIS-6** | OWASP GenAI Solutions Landscape listing | 🔨 | free, self-serve |
 | **DIS-7** | Editor / IDE integration | 🔬 | |
 

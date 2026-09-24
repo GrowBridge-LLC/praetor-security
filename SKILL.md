@@ -112,9 +112,9 @@ blind spot is knowingly accepted.
 
 ## Prerequisites and graceful degradation
 
-- **Python 3.8+** is the only hard requirement; the `secrets` and `aisec` engines
+- **Python 3.10+** is the only hard requirement; the `secrets` and `aisec` engines
   are pure standard library and always run.
-- **Semgrep** powers `sast`. Install with `pip install semgrep` (verified working
+- **Semgrep** powers `sast`. Install with `pip install 'semgrep==1.177.0'` (verified working
   natively on macOS and Linux; on Windows the pip-installed launcher exits 1
   with no output because semgrep-core is not built for native Windows -- use
   WSL or Docker there, see `README.md`). If it is not present natively, PRAETOR

@@ -28,12 +28,39 @@ _PRAETOR = os.path.join(
 _KEY = "AKIA" + "QWERTYUIOPASDFGH"
 
 
-def _scan(tmp_path, *extra):
+def _scan(tmp_path, *extra, env=None):
     proc = subprocess.run(
         [sys.executable, _PRAETOR, str(tmp_path), "--engines", "secrets,aisec",
          "--no-registry", "--format", "sarif", "--quiet", *extra],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
+        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
     return json.loads(proc.stdout)
+
+
+def _coverage_semgrep_env(tmp_path):
+    """Resolve pinned coverage without requiring Semgrep in ordinary pytest CI."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    semgrep = bindir / "semgrep"
+    semgrep.write_text(
+        "#!/usr/bin/python3\n"
+        "import sys\n"
+        "if '--version' in sys.argv:\n"
+        "    print('1.177.0')\n"
+        "elif sys.argv[1:3] == ['show', 'dump-config']:\n"
+        "    print('config = Valid { rules =\\n  [{ Rule.id = (\\\"python\\\", _);')\n"
+        "    print('severity = `Warning; target_selector = (Some [Python]);')\n"
+        "    print('target_analyzer = x; paths = None; };')\n"
+        "    print('  { Rule.id = (\\\"javascript\\\", _); severity = `Warning;')\n"
+        "    print('target_selector = (Some [Javascript]); target_analyzer = x; paths = None; };')\n"
+        "    print('  { Rule.id = (\\\"typescript\\\", _); severity = `Warning;')\n"
+        "    print('target_selector = (Some [Typescript]); target_analyzer = x; paths = None;')\n"
+        "    print('}];\\n  invalid_rules = [];\\n}')\n",
+        encoding="utf-8",
+    )
+    semgrep.chmod(0o755)
+    env = dict(os.environ)
+    env["PATH"] = str(bindir) + os.pathsep + env.get("PATH", "")
+    return env
 
 
 def _seed(tmp_path, body=None):
@@ -376,6 +403,61 @@ def test_a_coverage_note_also_reaches_the_notification_channel(tmp_path):
     notes = run["invocations"][0].get("toolExecutionNotifications") or []
     assert any(n["descriptor"]["id"] == "file-too-large-skipped" for n in notes)
     assert any(r["ruleId"] == "file-too-large-skipped" for r in run["results"])
+
+
+def test_a_named_sast_language_gap_reaches_the_notification_channel(tmp_path):
+    """A report-only named gap must survive SARIF presentation as more than metadata."""
+    (tmp_path / "build.sh").write_text("echo ready\n", encoding="utf-8")
+    doc = _scan(
+        tmp_path, "--engines", "sast", env=_coverage_semgrep_env(tmp_path)
+    )
+    run = _run(doc)
+    notes = run["invocations"][0].get("toolExecutionNotifications") or []
+
+    assert run["invocations"][0]["executionSuccessful"] is False
+    assert any(
+        note["descriptor"]["id"] == "praetor-sast-no-coverage"
+        and note["message"]["text"] == "SAST: NO COVERAGE (shell)"
+        for note in notes
+    )
+
+
+def test_a_mixed_target_gap_reaches_sarif_even_when_sast_ran():
+    sys.path.insert(0, os.path.join(os.path.dirname(_PRAETOR)))
+    import sarif
+
+    result = {"active": [], "filtered": []}
+    meta = {
+        "version": "test", "timestamp": "now",
+        "scope": {"walked_nothing": False},
+        "engines": {
+            "sast": {"status": "ok", "detail":
+                     "pinned Python rules ran; SAST: NO COVERAGE (shell)"},
+        },
+    }
+    run = _run(json.loads(sarif.render_sarif(result, meta)))
+    notes = run["invocations"][0].get("toolExecutionNotifications") or []
+    assert any(n["message"]["text"] == "SAST: NO COVERAGE (shell)" for n in notes)
+
+
+def test_another_engines_detail_cannot_create_a_sast_gap_notification():
+    sys.path.insert(0, os.path.join(os.path.dirname(_PRAETOR)))
+    import sarif
+
+    result = {"active": [], "filtered": []}
+    meta = {
+        "version": "test", "timestamp": "now",
+        "scope": {"walked_nothing": False},
+        "engines": {
+            "secrets": {"status": "ok", "detail": "SAST: NO COVERAGE (shell)"},
+        },
+    }
+    run = _run(json.loads(sarif.render_sarif(result, meta)))
+    notes = run["invocations"][0].get("toolExecutionNotifications") or []
+    assert not any(
+        note.get("descriptor", {}).get("id") == "praetor-sast-no-coverage"
+        for note in notes
+    )
 
 
 def test_execution_successful_is_false_when_no_engine_measured(tmp_path):

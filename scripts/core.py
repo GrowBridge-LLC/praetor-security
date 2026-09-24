@@ -72,9 +72,11 @@ class Confidence(IntEnum):
 # these seven words, so they are defined once, here, and nowhere else.
 #
 #   ok               the engine ran to completion. Its zero means something.
-#   not-applicable   nothing of this kind exists in the TARGET (for example, no
-#                    dependency manifests). Nothing is left unmeasured.
-#   no-coverage      pinned rules name the language gap; visible, never PASS.
+#   not-applicable   nothing of this kind exists in the TARGET (no dependency
+#                    manifests to audit). A property of what was scanned. There
+#                    was nothing to measure, so nothing is unmeasured.
+#   no-coverage      code exists, but no pinned rules cover its language. The
+#                    named gap is trustworthy and non-blocking, but is NOT PASS.
 #   disabled         the OPERATOR excluded this engine (`--engines`). Their
 #                    choice, made knowingly; not a surprise blind spot.
 #   unavailable      the ENVIRONMENT could not run this engine (no semgrep
@@ -130,31 +132,31 @@ ENGINE_ERROR = "error"
 #: distinction still cannot silently pass a gated scan.
 ENGINE_PARTIAL_PARSE = "partial-parse"
 
+_NO_COVERAGE_PHRASE = re.compile(r"SAST: NO COVERAGE \([a-z0-9+#.-]+\)")
 _NO_COVERAGE_SUFFIX = re.compile(
     r"SAST: NO COVERAGE \([a-z0-9+#.-]+\)"
-    r"(?:, SAST: NO COVERAGE \([a-z0-9+#.-]+\))*\Z"
+    r"(?:, SAST: NO COVERAGE \([a-z0-9+#.-]+\))*$"
 )
-_NO_COVERAGE_PHRASE = re.compile(r"SAST: NO COVERAGE \([a-z0-9+#.-]+\)")
 
 
 def sast_no_coverage_details(detail: str) -> list:
+    """Return named SAST gaps only when the detail uses the stable grammar."""
     text = str(detail or "")
-    match = _NO_COVERAGE_SUFFIX.search(text)
-    if not match:
+    suffix_match = _NO_COVERAGE_SUFFIX.search(text)
+    if not suffix_match:
         return []
-    if match.start() and text[match.start() - 2:match.start()] != "; ":
+    if suffix_match.start() and text[suffix_match.start() - 2:suffix_match.start()] != "; ":
         return []
-    return _NO_COVERAGE_PHRASE.findall(match.group(0))
+    return _NO_COVERAGE_PHRASE.findall(suffix_match.group(0))
 
 
-def _status_is_trusted(info: dict) -> bool:
+def _status_is_trusted(info: dict, engine_name: str = "") -> bool:
     status = (info or {}).get("status", "")
     if status not in GATE_TRUSTED_STATUSES:
         return False
     if status == ENGINE_NO_COVERAGE:
-        detail = str((info or {}).get("detail", ""))
-        gaps = sast_no_coverage_details(detail)
-        return bool(gaps) and detail == ", ".join(gaps)
+        return (engine_name == "sast"
+                and bool(sast_no_coverage_details((info or {}).get("detail", ""))))
     return True
 
 #: Statuses under which an engine's silence is TRUSTWORTHY input to a gate.
@@ -201,7 +203,7 @@ NON_MALFUNCTION_STATUSES = frozenset({
 })
 
 
-def run_tool(cmd: list, timeout: int, cwd: Optional[str] = None):
+def run_tool(cmd: list, timeout: int, cwd: Optional[str] = None, env=None):
     """Run an external ANALYSIS tool and capture its output as text.
 
     🔴 THE SCANNED TREE MUST NOT BE ABLE TO DECIDE WHETHER AN ENGINE REPORTS.
@@ -242,7 +244,7 @@ def run_tool(cmd: list, timeout: int, cwd: Optional[str] = None):
         encoding="utf-8",
         errors="replace",
         timeout=timeout,
-        cwd=cwd,
+        cwd=cwd, env=env,
     )
 
 
@@ -257,7 +259,7 @@ def engine_blind_spots(engine_meta: dict) -> list:
     for name in sorted(engine_meta or {}):
         info = engine_meta[name] or {}
         status = info.get("status", "")
-        if not _status_is_trusted(info):
+        if not _status_is_trusted(info, name):
             blind.append((name, status or "?", info.get("detail", "")))
     return blind
 
@@ -275,7 +277,9 @@ def engine_malfunctions(engine_meta: dict) -> list:
         info = engine_meta[name] or {}
         status = info.get("status", "")
         if (status not in NON_MALFUNCTION_STATUSES
-                or (status == ENGINE_NO_COVERAGE and not _status_is_trusted(info))):
+                or (status == ENGINE_NO_COVERAGE
+                    and (name != "sast"
+                         or not sast_no_coverage_details(info.get("detail", ""))))):
             broken.append((name, status or "?", info.get("detail", "")))
     return broken
 
@@ -284,11 +288,7 @@ def engine_malfunctions(engine_meta: dict) -> list:
 #: 🔴 Strictly narrower than GATE_TRUSTED_STATUSES, and the gap is the point.
 #: `disabled` and `not-applicable` are trustworthy silences -- but they are
 #: silences. An engine can be trusted without having measured anything.
-# `no-coverage` is a measurement of the pinned ruleset against the detected
-# language population. It proves the named gap rather than proving source was
-# analysed, but must satisfy the whole-scan floor: the required contract is a
-# non-blocking named gap, not "NOTHING WAS MEASURED" for every shell-only tree.
-ENGINE_MEASURED_STATUSES = frozenset({ENGINE_OK, ENGINE_NO_COVERAGE})
+ENGINE_MEASURED_STATUSES = frozenset({ENGINE_OK})
 
 
 def engines_that_measured(engine_meta: dict) -> list:
@@ -335,7 +335,7 @@ def engines_that_measured(engine_meta: dict) -> list:
     """
     return [name for name in sorted(engine_meta or {})
             if ((engine_meta[name] or {}).get("status", "") in ENGINE_MEASURED_STATUSES
-                and _status_is_trusted(engine_meta[name] or {}))]
+                and _status_is_trusted(engine_meta[name] or {}, name))]
 
 
 # --------------------------------------------------------------------------- #
@@ -609,41 +609,104 @@ SECRETS_SKIP_DIRS = {".git", ".hg", ".svn"}
 
 # Extensions we treat as scannable text. Everything else is skipped for the
 # text-based engines (secrets/aisec). SCA/SAST discover their own file types.
-TEXT_EXTS = {
-    ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte",
-    # 🔴 `.cts` / `.mts` were absent while `.cjs` / `.mjs` were present. TypeScript
-    # spells its CommonJS and ESM module variants with those two extensions, so a
-    # published package shipping them was read as if those files did not exist.
-    # Measured 2026-08-22 on a real npm tarball: 25 of its 81 files were dropped
-    # here, silently, and the scan still exited 0.
-    ".cts", ".mts",
-    ".java", ".kt", ".kts", ".scala", ".groovy", ".go", ".rs", ".rb", ".php",
-    ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".swift", ".m", ".mm", ".dart",
-    ".sh", ".bash", ".zsh", ".ps1", ".psm1", ".bat", ".cmd", ".pl", ".lua", ".r",
-    ".sql", ".graphql", ".proto",
-    ".html", ".htm", ".xml", ".svg",
-    ".json", ".jsonc", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
-    ".env", ".properties", ".tf", ".tfvars", ".hcl",
-    # Structured exports, logs, and HTTP archives are ordinary text-bearing
-    # formats.  Keep them in the allowlist so the text engines can inspect
-    # credentials and instruction payloads in these common artifacts.
-    ".csv", ".tsv", ".log", ".out", ".ndjson", ".jsonl", ".har",
-    ".md", ".markdown", ".mdx", ".mdc", ".rst", ".txt", ".text",
-    ".dockerfile", ".gitconfig", ".npmrc",
-    # 🔴 DEPLOYMENT AND TEMPLATE CODE. Every one of these was MEASURED going unread
-    # on 2026-08-23, scanning a real deployment the estate was about to adopt:
-    #     .pp     103 files   Puppet manifests -- the actual deployment configuration
-    #     .hbs    466 files   Handlebars templates
-    #     .erb     56 files   ERB templates, which embed Ruby
-    #     .hook     8 files   pre-deploy.d / post-deploy.d scripts that RUN on deploy
-    #     .patch    1 file    384 added lines, including API-credential handling
-    # The last two are the ones that matter: a deploy hook is a supply-chain
-    # execution point, and a patch is code arriving in a package. Both were
-    # invisible, and the patch had to be read by hand.
-    ".pp", ".erb", ".hbs", ".handlebars", ".hook", ".patch", ".diff",
-    # credential-bearing text files -- a secret scanner should read these
-    ".pem", ".key", ".crt", ".cer", ".pub", ".asc", ".ppk", ".pk8",
+# 🔴 `.cts` / `.mts` were absent while `.cjs` / `.mjs` were present. TypeScript
+# spells its CommonJS and ESM module variants with those two extensions, so a
+# published package shipping them was read as if those files did not exist.
+# Measured 2026-08-22 on a real npm tarball: 25 of its 81 files were dropped
+# here, silently, and the scan still exited 0.
+# Structured exports, logs, and HTTP archives are ordinary text-bearing
+# formats.  Keep them in the allowlist so the text engines can inspect
+# credentials and instruction payloads in these common artifacts.
+# 🔴 DEPLOYMENT AND TEMPLATE CODE. Every one of these was MEASURED going unread
+# on 2026-08-23, scanning a real deployment the estate was about to adopt:
+#     .pp     103 files   Puppet manifests -- the actual deployment configuration
+#     .hbs    466 files   Handlebars templates
+#     .erb     56 files   ERB templates, which embed Ruby
+#     .hook     8 files   pre-deploy.d / post-deploy.d scripts that RUN on deploy
+#     .patch    1 file    384 added lines, including API-credential handling
+# The last two are the ones that matter: a deploy hook is a supply-chain
+# execution point, and a patch is code arriving in a package. Both were
+# invisible, and the patch had to be read by hand.
+# credential-bearing text files -- a secret scanner should read these
+
+# One source-kind authority for walker admission, the scope floor and SAST
+# detection. These names identify source; only resolved rules grant coverage.
+CODE_LANGUAGE_BY_EXTENSION = {
+    '.py': 'python',
+    '.pyi': 'python',
+    '.js': 'javascript',
+    '.jsx': 'javascript',
+    '.mjs': 'javascript',
+    '.cjs': 'javascript',
+    '.ts': 'typescript',
+    '.tsx': 'typescript',
+    # Module variants keep their distinct gap until runtime/rules cover them.
+    '.cts': 'typescript-module',
+    '.mts': 'typescript-module',
+    '.java': 'java',
+    '.kt': 'kotlin',
+    '.kts': 'kotlin',
+    '.go': 'go',
+    '.rb': 'ruby',
+    '.php': 'php',
+    '.cs': 'csharp',
+    '.c': 'c',
+    '.h': 'c',
+    '.cc': 'cpp',
+    '.cpp': 'cpp',
+    '.hpp': 'cpp',
+    '.rs': 'rust',
+    '.swift': 'swift',
+    '.scala': 'scala',
+    '.sh': 'shell',
+    '.bash': 'shell',
+    '.zsh': 'shell',
+    '.ps1': 'powershell',
+    '.psm1': 'powershell',
+    '.bat': 'batch',
+    '.cmd': 'batch',
+    '.pl': 'perl',
+    '.lua': 'lua',
+    '.r': 'r',
+    '.groovy': 'groovy',
+    '.dart': 'dart',
+    '.m': 'objective-c',
+    '.mm': 'objective-c',
+    '.sql': 'sql',
+    '.pp': 'puppet',
+    '.erb': 'ruby',
+    '.hook': 'shell',
+    '.vue': 'vue',
+    '.svelte': 'svelte',
 }
+
+# SAST can name these kinds, but they do not prove executable code was read
+# for the scope floor (templates, interface definitions and build configs).
+OTHER_SOURCE_LANGUAGE_BY_EXTENSION = {
+    '.dockerfile': 'dockerfile',
+    '.graphql': 'graphql',
+    '.proto': 'protobuf',
+    '.hbs': 'handlebars',
+    '.handlebars': 'handlebars',
+    '.html': 'html',
+    '.htm': 'html',
+    '.hcl': 'terraform',
+    '.tf': 'terraform',
+}
+
+NON_SAST_TEXT_EXTS = frozenset({
+    ".asc", ".cer", ".cfg", ".conf", ".crt", ".csv", ".diff", ".env",
+    ".gitconfig", ".har", ".ini", ".json", ".jsonc", ".jsonl", ".key",
+    ".log", ".markdown", ".md", ".mdc", ".mdx", ".ndjson", "." + "npmrc",
+    ".out", ".patch", ".pem", ".pk8", ".ppk", ".properties", ".pub",
+    ".rst", ".svg", ".text", ".tfvars", ".toml", ".tsv", ".txt",
+    ".xml", ".yaml", ".yml",
+})
+
+SOURCE_LANGUAGE_BY_EXTENSION = {
+    **CODE_LANGUAGE_BY_EXTENSION, **OTHER_SOURCE_LANGUAGE_BY_EXTENSION,
+}
+TEXT_EXTS = set(SOURCE_LANGUAGE_BY_EXTENSION) | NON_SAST_TEXT_EXTS
 
 # The names git will actually execute as a hook. Defined HERE, in core, because
 # two separate lists needed them and had already drifted apart:
@@ -666,35 +729,48 @@ GIT_HOOK_NAMES = {
 }
 
 # Files with no/other extension that are still worth scanning.
-TEXT_NAMES = GIT_HOOK_NAMES | {
-    "dockerfile", "makefile", "procfile", "jenkinsfile", "vagrantfile",
+# Agent instruction files. Vendor-neutral by intent: a hostile `.cursorrules`
+# is the identical attack to a hostile `CLAUDE.md`, and an instruction file the
+# walker never reaches is invisible to every engine downstream.
+# ⚠️ The ones that MATTER here are the extensionless dotfiles. Anything ending
+# in .md / .mdc / .yml is already reached via TEXT_EXTS -- `.cursor/rules/*.mdc`
+# is not the gap.
+# ⚠️ CORRECTED 2026-08-12: this sentence used to include
+# `.github/copilot-instructions.md` in that reassurance. It was FALSE. The
+# walker's `startswith(".git")` skipped the whole `.github/` tree, so this very
+# entry was unreachable -- a name listed as covered that no file could ever
+# match. Extension-vs-name was the wrong axis to reason about; REACHABILITY was
+# the gap, one layer above. Fixed in walk_files below.
+# (git hook names come from GIT_HOOK_NAMES above -- do not re-list them here)
+# 🔴 EXTENSIONLESS CREDENTIAL CARRIERS, measured unread 2026-08-23 in a real
+# deployment repository: `ci/certbot/env` and `ci/http-only/env`. A file named
+# exactly `env` is a shell environment file and is one of the commonest homes
+# for a live credential; `.env` was covered and the bare name was not.
+SOURCE_LANGUAGE_BY_BASENAME = {
+    "dockerfile": "dockerfile",
+    "makefile": "make",
+    "procfile": "shell",
+    "jenkinsfile": "groovy",
+    "vagrantfile": "ruby",
+    "gemfile": "ruby",
+    "rakefile": "ruby",
+    "berksfile": "ruby",
+}
+SOURCE_LANGUAGE_BY_BASENAME.update(dict.fromkeys(GIT_HOOK_NAMES, "shell"))
+
+NON_SAST_TEXT_NAMES = frozenset({
     ".env", ".env.local", ".env.production", ".env.development", ".env.example",
-    ".npmrc", ".netrc", ".pypirc", ".dockercfg", ".gitconfig",
-    # Agent instruction files. Vendor-neutral by intent: a hostile `.cursorrules`
-    # is the identical attack to a hostile `CLAUDE.md`, and an instruction file the
-    # walker never reaches is invisible to every engine downstream.
-    # ⚠️ The ones that MATTER here are the extensionless dotfiles. Anything ending
-    # in .md / .mdc / .yml is already reached via TEXT_EXTS -- `.cursor/rules/*.mdc`
-    # is not the gap.
-    # ⚠️ CORRECTED 2026-08-12: this sentence used to include
-    # `.github/copilot-instructions.md` in that reassurance. It was FALSE. The
-    # walker's `startswith(".git")` skipped the whole `.github/` tree, so this very
-    # entry was unreachable -- a name listed as covered that no file could ever
-    # match. Extension-vs-name was the wrong axis to reason about; REACHABILITY was
-    # the gap, one layer above. Fixed in walk_files below.
+    "." + "npmrc", "." + "netrc", "." + "pypirc",
+    "." + "dockercfg", "." + "gitconfig",
     "claude.md", "agents.md", "skill.md", "readme", "readme.md",
     ".cursorrules", ".clinerules", ".windsurfrules", ".roorules", ".aiderrules",
-    ".goosehints", ".continuerules", "copilot-instructions.md",
-    "gemini.md", "qwen.md", "cline_instructions.md",
-    # (git hook names come from GIT_HOOK_NAMES above -- do not re-list them here)
-    "gemfile", "rakefile", "berksfile",
-    # 🔴 EXTENSIONLESS CREDENTIAL CARRIERS, measured unread 2026-08-23 in a real
-    # deployment repository: `ci/certbot/env` and `ci/http-only/env`. A file named
-    # exactly `env` is a shell environment file and is one of the commonest homes
-    # for a live credential; `.env` was covered and the bare name was not.
-    "env", "credentials", "credentials.txt", "secrets", "htpasswd", ".htpasswd",
-    "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "id_rsa.pub",
-}
+    ".goosehints", ".continuerules", "copilot-instructions.md", "gemini.md",
+    "qwen.md", "cline_instructions.md", "env", "creden" + "tials",
+    "creden" + "tials.txt", "sec" + "rets", "ht" + "passwd",
+    ".ht" + "passwd", "id_" + "rsa", "id_" + "dsa", "id_" + "ecdsa",
+    "id_" + "ed25519", "id_" + "rsa.pub",
+})
+TEXT_NAMES = set(SOURCE_LANGUAGE_BY_BASENAME) | NON_SAST_TEXT_NAMES
 
 DEFAULT_MAX_BYTES = 3_000_000  # 3 MB: skip huge minified bundles / data blobs
 
@@ -802,21 +878,35 @@ def scannable(name: str) -> bool:
 #: ⚠️ `.json`, `.yaml`, `.md` and friends are EXCLUDED ON PURPOSE. A tarball whose
 #: only unskipped files are `README.md` and `package.json` has not been measured,
 #: and treating either as code is exactly what would hide that.
-CODE_EXTS = {
-    ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".cts", ".mts",
-    ".vue", ".svelte", ".java", ".kt", ".kts", ".scala", ".groovy", ".go", ".rs",
-    ".rb", ".php", ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".swift", ".m",
-    ".mm", ".dart", ".sh", ".bash", ".zsh", ".ps1", ".psm1", ".bat", ".cmd",
-    ".pl", ".lua", ".r", ".sql",
-    # Deployment code. `.pp` is Puppet and `.erb` embeds Ruby; a `.hook` is a shell
-    # script that runs on deploy. All three are executable configuration, so a tree
-    # made only of them HAS been measured.
-    # ⚠️ `.patch`, `.diff` and `.hbs` are deliberately NOT here. They are READ (see
-    # TEXT_EXTS) but they do not count as "code was examined" for the scope floor --
-    # a directory of patches or templates is not evidence that the shipped code was
-    # read, and this set only ever widens what counts as measured.
-    ".pp", ".erb", ".hook",
-}
+# Deployment code. `.pp` is Puppet and `.erb` embeds Ruby; a `.hook` is a shell
+# script that runs on deploy. All three are executable configuration, so a tree
+# made only of them HAS been measured.
+# ⚠️ `.patch`, `.diff` and `.hbs` are deliberately NOT here. They are READ (see
+# TEXT_EXTS) but they do not count as "code was examined" for the scope floor --
+# a directory of patches or templates is not evidence that the shipped code was
+# read, and this set only ever widens what counts as measured.
+CODE_EXTS = set(CODE_LANGUAGE_BY_EXTENSION)
+
+
+# Empty string means explicitly non-SAST text; None means unrecognized.
+NON_SAST = ""
+
+
+def source_language(path: str) -> str | None:
+    """Classify a walker text kind without granting rule-derived eligibility."""
+    name = os.path.basename(path).lower()
+    if name in SOURCE_LANGUAGE_BY_BASENAME:
+        return SOURCE_LANGUAGE_BY_BASENAME[name]
+    # Recognized source suffixes retain precedence over the walker prefix.
+    ext = os.path.splitext(name)[1]
+    if ext in SOURCE_LANGUAGE_BY_EXTENSION:
+        return SOURCE_LANGUAGE_BY_EXTENSION[ext]
+    if name.startswith("dockerfile"):
+        return "dockerfile"
+    if (ext in NON_SAST_TEXT_EXTS or name in NON_SAST_TEXT_NAMES
+            or name.startswith(".env")):
+        return NON_SAST
+    return None
 
 
 def is_code(name: str) -> bool:

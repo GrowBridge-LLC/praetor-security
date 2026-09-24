@@ -85,6 +85,17 @@ def _outcome(apply, path: Path, finding):
 
 def _scan_inline_fixture(monkeypatch, target: Path):
     """Run the pipeline with a deterministic SAST finding for the one fixture."""
+    monkeypatch.setattr(engine_sast, "language_coverage", lambda *a, **kw: {
+        "detected": frozenset({"python"}),
+        "covered": frozenset({"python"}),
+        "uncovered": frozenset(),
+        "eligible_files": 1,
+        "pinned": frozenset({"python"}),
+        "sources": {"python": [{"source": "pinned rules", "count": 1}]},
+        "unresolved": (), "ignored_target_configs": (),
+        "resolved_optional": (), "rules_loaded": True,
+    })
+
     def fake_sast(scan_target, *_args, **_kwargs):
         relpath = (
             "subject.py"

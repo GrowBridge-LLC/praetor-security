@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "praetor-security"
-version = "1.1.1"
+version = "1.2.0"
 description = "Multi-engine static security analysis (SAST, secrets, SCA, AI-security, serialized-model) for code, repos, and AI-agent skills/plugins/MCP servers. Reads, never runs."
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = { file = "LICENSE" }
 keywords = [
     "security", "sast", "secrets", "sca", "static-analysis",
@@ -35,7 +35,7 @@ dependencies = []
 [project.optional-dependencies]
 # The external engines. Installing these is optional -- PRAETOR reports an engine
 # as `unavailable` rather than silently reporting zero findings.
-sast = ["semgrep"]
+sast = ["semgrep==1.177.0"]
 sca = ["pip-audit"]
 # pyyaml is TEST-ONLY: it parses the bundled ruleset for
 # test_bundled_ruleset_is_wellformed.py. It was undeclared, so CI installed
@@ -71,7 +71,7 @@ py-modules = [
 # installed `--no-registry` run found nothing. data-files installs relative to
 # sys.prefix, which _find_bundled_rules() in praetor.py searches.
 [tool.setuptools.data-files]
-"share/praetor/rules" = ["rules/semgrep-praetor.yaml"]
+"share/praetor/rules" = ["rules/semgrep-praetor.yaml", "rules/aisec-flag-allowlist.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

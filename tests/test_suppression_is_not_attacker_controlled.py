@@ -564,13 +564,20 @@ def test_the_flag_does_not_silently_widen_scope_into_vendored_code(tmp_path, mon
         )
 
 
-def test_count_code_files_counts_code_and_not_prose():
-    """The other half of the comparison."""
+def test_count_code_files_counts_code_and_not_prose(monkeypatch):
+    """The scope count follows pinned-rule eligibility, not source-shaped files."""
+    monkeypatch.setattr(engine_sast, "detect_runtime", lambda *a, **kw: {
+        "mode": "native", "prefix": ["semgrep"], "available": True,
+        "detail": "test", "version": "test",
+    })
+    monkeypatch.setattr(engine_sast, "_resolve_rule_source", lambda *a, **kw: [
+        {"languages": frozenset({"python"}), "has_include": False},
+        {"languages": frozenset({"javascript"}), "has_include": False},
+        {"languages": frozenset({"typescript"}), "has_include": False},
+    ])
     class F:
         def __init__(self, r): self.relpath = r
     files = [F("a.py"), F("b.ts"), F("c.md"), F("d.txt"), F("e.go"), F("LICENSE")]
-    # Go is code, but this release's pinned rules do not cover Go. Eligibility
-    # is derived from the rules, not from a separate broad extension list.
     assert engine_sast.count_code_files(files) == 2
     assert engine_sast.count_code_files([]) == 0
 

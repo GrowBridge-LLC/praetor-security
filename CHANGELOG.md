@@ -10,6 +10,44 @@ Because PRAETOR is a security scanner, entries say what a change means for
 **detection** — a bug here is not a broken feature, it is a scanner reporting
 "nothing found" while something is there.
 
+## 1.2.0 — SAST eligibility and coverage evidence ([release notes](references/RELEASE-NOTES-1.2.0.md))
+
+### Fixed — coverage evidence now matches the installed Semgrep
+
+Versions 1.1.0 and 1.1.1 shipped rule-derived SAST eligibility and the named
+`SAST: NO COVERAGE (<language>)` gap, but omitted the binding requirement from
+the repository, described the Rust contract differently, did not verify the
+language-alias table against the installed Semgrep, and did not retain the
+installed Semgrep version as structured report evidence. Mixed-language scans
+also compressed “covered and scanned” plus “uncovered” into one engine status.
+
+The binding Python/Rust predicate is now byte-identical in both requirements,
+the alias guard queries the installed Semgrep's own language list, and reports
+name every covered and uncovered language independently while recording the
+installed Semgrep version. A covered Python file cannot be hidden by adding an
+uncovered shell file; findings remain enforceable while the shell gap remains
+visible.
+
+### Clarified — shell-only repositories intentionally changed in 1.1.0
+
+The release behavior is **CASE 1**, not restoration of the old eligibility
+block. Before 1.1.0, PRAETOR treated shell as SAST-eligible despite having no
+pinned shell rules, invoked Semgrep, then exited 3 because Semgrep opened zero
+files. Versions 1.1.0 and 1.1.1 instead report `SAST: NO COVERAGE (shell)`.
+When another selected engine actually examines the shell file, that named gap
+is nonblocking and the run may exit 0. Users who relied on the former exit 3 for
+shell-only repositories must gate explicitly on coverage evidence. When no
+selected engine examines any file, `NOTHING WAS MEASURED` still fails closed.
+This is the intended 3A behavior and is not being changed back.
+
+### Changed — Python 3.10 floor and reproducible Semgrep
+
+The supported Python floor is now 3.10. Every tracked Semgrep installation
+surface pins `semgrep==1.177.0`; CI exercises Python 3.10 and the newest
+supported Python. The tracked supported-language reference and conformance
+guard prove that the installed version equals the pin and that its own language
+list still contains every alias PRAETOR uses.
+
 ## 1.1.1 — correct PyPI installation documentation
 
 ### Fixed — the published package said it was not published

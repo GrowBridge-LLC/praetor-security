@@ -150,6 +150,9 @@ def _is_documentation_path(file_low: str) -> bool:
 
 def _fp_assessment(f: Finding) -> tuple:
     file_low = (f.file or "").lower()
+    if (f.rule_id == "dangerous-permission-flag" and
+            file_low.endswith((".md", ".mdc", ".markdown", ".mdx"))):
+        return False, ""  # Reviewed exact-line allowlist is the only silence path.
 
     # 1. DELETED 2026-08-12 -- suppression on PATH ALONE, which this project's own
     #    rules forbid, and which could not have been doing any useful work.

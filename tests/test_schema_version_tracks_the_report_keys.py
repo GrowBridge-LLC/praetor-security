@@ -79,33 +79,20 @@ _CONTRACT = {
             "rule_id", "severity", "snippet", "specificity", "title",
         },
     },
-    # 5.0 changes the set of possible engine status words (`no-coverage`). The
-    # JSON shape is unchanged, but exhaustive status consumers must update.
-    "5.0": {
-        "top": {
-            "capability_profile", "chains", "filtered", "findings", "limits",
-            "meta", "schema_version", "summary", "tool",
-        },
-        "meta": {
-            "duration_seconds", "engines", "file_count", "min_severity",
-            "model_file_count", "nul_text_file_count", "provenance", "scope",
-            "secret_file_count", "target", "timestamp", "version",
-        },
-        "scope": {
-            "binary_examples", "binary_files", "default_skips_disabled",
-            "kept_code_files", "max_file_size", "oversize_examples",
-            "oversize_files", "skipped_code_files", "skipped_dirs",
-            "unreadable_binary_files", "unreadable_files", "unreadable_sample",
-            "unstattable_examples", "unstattable_files", "walked_nothing",
-        },
-        "engine": {"detail", "status"},
-        "finding": {
-            "category", "confidence", "corroborated_by", "cwe", "dedup_key",
-            "description", "end_line", "engine", "file", "filter_reason",
-            "filtered", "fingerprint", "fix", "line", "owasp", "references",
-            "rule_id", "severity", "snippet", "specificity", "title",
-        },
-    },
+}
+
+# 5.0 adds a status word, not a key. The structural contract is unchanged, but
+# exhaustive status consumers must still move to a new MAJOR schema version.
+_CONTRACT["5.0"] = {
+    name: set(values) if isinstance(values, set) else values
+    for name, values in _CONTRACT["4.3"].items()
+}
+
+# 5.1 adds structured evidence of the Semgrep runtime used by SAST.
+_CONTRACT["5.1"] = {
+    name: (set(values) | ({"semgrep_version"} if name == "meta" else set()))
+    if isinstance(values, set) else values
+    for name, values in _CONTRACT["5.0"].items()
 }
 
 _BUMP = (

@@ -22,31 +22,42 @@ passing scan.** Raising it buys coverage; lowering it buys a faster failure.
 Neither can manufacture a clean result.
 
 WHAT IS ASSERTED:
-  * the flag reaches the engine
-  * WITHOUT the flag, no timeout is passed at all -- so the engine default, and
-    therefore PRAETOR_SEMGREP_TIMEOUT, still applies. Passing a value eagerly
-    would freeze the default at import time and defeat the env var.
-  * the environment override is honoured
+  * one effective timeout reaches both eligibility resolution and the scan
+  * the explicit CLI value, environment value, and shipped default each flow
+    through production wiring without a shared fallback in the test double
   * the shipped default is unchanged at 900
 """
 
 import importlib
-import os
-
 import engine_sast
 import praetor
 
 
 def _spy_on_sast(monkeypatch):
-    """Record the kwargs praetor hands the SAST engine, without running it."""
-    seen = {}
+    """Record explicit production timeout arguments without running Semgrep."""
+    seen = []
 
-    def spy(*args, **kwargs):
-        seen.clear()
-        seen.update(kwargs)
+    def coverage(*args, timeout, **kwargs):
+        seen.append(("coverage", timeout))
+        return {
+            "detected": frozenset({"python"}),
+            "covered": frozenset({"python"}),
+            "uncovered": frozenset(),
+            "eligible_files": 1,
+            "pinned": frozenset({"python"}),
+            "sources": {"python": [{"source": "pinned rules", "count": 1}]},
+            "unresolved": (),
+            "ignored_target_configs": (),
+            "resolved_optional": (),
+            "rules_loaded": True,
+        }
+
+    def scan(*args, timeout, **kwargs):
+        seen.append(("scan", timeout))
         return {"findings": [], "status": "ok", "detail": "spy", "runtime": "test"}
 
-    monkeypatch.setattr(engine_sast, "run", spy)
+    monkeypatch.setattr(engine_sast, "language_coverage", coverage)
+    monkeypatch.setattr(engine_sast, "run", scan)
     return seen
 
 
@@ -55,59 +66,38 @@ def _target(tmp_path):
     return str(tmp_path)
 
 
-def test_the_flag_reaches_the_engine(tmp_path, monkeypatch):
-    """The operator's lever must actually move something."""
+def test_cli_timeout_reaches_coverage_and_scan(tmp_path, monkeypatch):
     seen = _spy_on_sast(monkeypatch)
 
     praetor.main([_target(tmp_path), "--engines", "sast", "--quiet",
                   "--semgrep-timeout", "2700"])
 
-    assert seen.get("timeout") == 2700, (
-        "the engine must receive the operator's budget; without this the flag is "
-        "decoration and a large tree still cannot be scanned"
-    )
+    assert seen == [("coverage", 2700), ("scan", 2700)]
 
 
-def test_without_the_flag_no_timeout_is_passed_at_all(tmp_path, monkeypatch):
-    """🔴 THE SUBTLE HALF, and the reason this test exists.
-
-    Passing `args.semgrep_timeout` unconditionally would send the argparse
-    default on every run, freezing the value at import time and silently
-    defeating `PRAETOR_SEMGREP_TIMEOUT`. The env var would then appear to work
-    (the module reads it) while having no effect on any real scan.
-    """
+def test_default_timeout_reaches_coverage_and_scan(tmp_path, monkeypatch):
+    monkeypatch.delenv("PRAETOR_SEMGREP_TIMEOUT", raising=False)
+    reloaded = importlib.reload(engine_sast)
+    assert reloaded._SEMGREP_TIMEOUT_DEFAULT == 900
+    assert reloaded._SEMGREP_TIMEOUT == 900
     seen = _spy_on_sast(monkeypatch)
 
     praetor.main([_target(tmp_path), "--engines", "sast", "--quiet"])
 
-    assert "timeout" not in seen, (
-        "with no flag given, praetor must not pass a timeout -- the engine's own "
-        "default and the environment override have to remain in charge"
-    )
+    assert seen == [("coverage", 900), ("scan", 900)]
 
 
-def test_the_environment_override_is_honoured(monkeypatch):
-    """A CI caller sets an env var; it must reach the effective value."""
+def test_environment_timeout_reaches_coverage_and_scan(tmp_path, monkeypatch):
     monkeypatch.setenv("PRAETOR_SEMGREP_TIMEOUT", "3600")
     reloaded = importlib.reload(engine_sast)
     try:
-        assert reloaded._SEMGREP_TIMEOUT == 3600, (
-            "PRAETOR_SEMGREP_TIMEOUT must set the engine budget"
-        )
+        assert reloaded._SEMGREP_TIMEOUT == 3600
+        seen = _spy_on_sast(monkeypatch)
+        praetor.main([_target(tmp_path), "--engines", "sast", "--quiet"])
+        assert seen == [("coverage", 3600), ("scan", 3600)]
     finally:
         monkeypatch.delenv("PRAETOR_SEMGREP_TIMEOUT", raising=False)
         importlib.reload(engine_sast)
-
-
-def test_the_shipped_default_is_unchanged(monkeypatch):
-    """A knob must not quietly move the setting everyone already relies on."""
-    monkeypatch.delenv("PRAETOR_SEMGREP_TIMEOUT", raising=False)
-    reloaded = importlib.reload(engine_sast)
-    assert reloaded._SEMGREP_TIMEOUT_DEFAULT == 900
-    assert reloaded._SEMGREP_TIMEOUT == 900, (
-        "with no override the behaviour must be exactly what it was before this "
-        "flag existed"
-    )
 
 
 def test_a_timeout_cannot_produce_a_passing_scan(tmp_path, monkeypatch):
@@ -120,6 +110,7 @@ def test_a_timeout_cannot_produce_a_passing_scan(tmp_path, monkeypatch):
         return {"findings": [], "status": "error",
                 "detail": "semgrep timed out", "runtime": "test"}
 
+    _spy_on_sast(monkeypatch)
     monkeypatch.setattr(engine_sast, "run", timed_out)
 
     rc = praetor.main([_target(tmp_path), "--engines", "sast", "--quiet",

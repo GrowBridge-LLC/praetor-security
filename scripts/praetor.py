@@ -243,7 +243,7 @@ def _atomic_write_text(path: str, content: str) -> None:
             pass
         raise
 
-VERSION = "1.1.1"
+VERSION = "1.2.0"
 def _find_bundled_rules():
     """
     Locate the bundled offline Semgrep rules, which live in different places
@@ -438,6 +438,12 @@ def _finding_source_path(target: str, finding_file: str) -> str:
 _BINARY_STREAM_ENGINES = ("model",)
 
 
+def _is_markdown_permission_flag(finding):
+    return (getattr(finding, "rule_id", "") == "dangerous-permission-flag"
+            and (getattr(finding, "file", "") or "").lower().endswith(
+                (".md", ".mdc", ".markdown", ".mdx")))
+
+
 def _apply_inline_ignores(findings, target, read_text):
     """
     Mark findings filtered when their flagged source line carries an inline ignore
@@ -446,6 +452,8 @@ def _apply_inline_ignores(findings, target, read_text):
     """
     cache: dict = {}
     for f in findings:
+        if _is_markdown_permission_flag(f):
+            continue  # Only the reviewed exact-line allowlist may silence this rule.
         if getattr(f, "category", "") == "COVERAGE":
             continue
         if f.engine in _BINARY_STREAM_ENGINES:
@@ -772,6 +780,8 @@ def _apply_prohibition(findings, target, read_text):
     label_cache: dict = {}
     by_id = {rid: rx for rid, _t, rx, *_rest in engine_aisec.INJECTION}
     for f in findings:
+        if _is_markdown_permission_flag(f):
+            continue
         if getattr(f, "filtered", False) or f.engine not in _LEXCTX_ENGINES:
             continue
         if getattr(f, "category", "") != "SAFETY_BYPASS":
@@ -1170,6 +1180,7 @@ def main(argv=None):
 
     all_findings = []
     engine_meta = {}
+    semgrep_version = None
 
     # -- secrets --------------------------------------------------------------
     if "secrets" in engines:
@@ -1191,7 +1202,17 @@ def main(argv=None):
         _log(args.quiet, "  [aisec] scanning...")
         try:
             _unread_before = len(unreadable)
-            fs = engine_aisec.scan(aisec_files, read_text)
+            trusted_allowlist_root = os.path.dirname(os.path.abspath(RULES_DIR))
+            flag_allowlist_path = (
+                os.path.join(RULES_DIR, "aisec-flag-allowlist.json")
+                if os.path.realpath(target) == os.path.realpath(trusted_allowlist_root)
+                else None
+            )
+            fs = engine_aisec.scan(
+                aisec_files, read_text,
+                flag_allowlist_path=flag_allowlist_path,
+                flag_allowlist_root=trusted_allowlist_root,
+            )
             all_findings.extend(fs)
             engine_meta["aisec"] = _status_after_reading(
                 "aisec", _unread_before,
@@ -1203,23 +1224,42 @@ def main(argv=None):
 
     # -- sast (semgrep) -------------------------------------------------------
     if "sast" in engines:
+        sast_timeout = (
+            args.semgrep_timeout
+            if args.semgrep_timeout > 0
+            else engine_sast._SEMGREP_TIMEOUT
+        )
         try:
-            coverage = engine_sast.language_coverage(scan_files, BUNDLED_SEMGREP)
-        except Exception as e:  # noqa
+            coverage = engine_sast.language_coverage(
+                scan_files, BUNDLED_SEMGREP,
+                target=target,
+                extra_configs=args.semgrep_config,
+                use_registry=not args.no_registry,
+                prefer=args.semgrep_runtime,
+                wsl_distro=args.wsl_distro,
+                timeout=sast_timeout,
+            )
+        except engine_sast.RulesetRuntimeUnavailable as e:
+            coverage = None
+            engine_meta["sast"] = {
+                "status": core.ENGINE_UNAVAILABLE,
+                "detail": str(e),
+            }
+        except engine_sast.RulesetEligibilityError as e:
             coverage = None
             engine_meta["sast"] = {"status": "error", "detail": str(e)}
-        gaps = (engine_sast.no_coverage_detail(coverage["uncovered"])
-                if coverage else "")
+        except Exception as e:  # noqa
+            coverage = None
+            engine_meta["sast"] = {
+                "status": "error",
+                "detail": f"could not derive SAST eligibility: {e}",
+            }
+        coverage_evidence = engine_sast.coverage_detail(coverage) if coverage else ""
         only_uncovered = bool(
             coverage and coverage["detected"] and not coverage["covered"]
         )
-        optional_requested = not args.no_registry or bool(args.semgrep_config)
-        if only_uncovered and not optional_requested:
-            engine_meta["sast"] = {
-                "status": core.ENGINE_NO_COVERAGE,
-                "detail": gaps,
-            }
-        elif coverage:
+        if coverage:
+            semgrep_version = coverage.get("runtime_version")
             _log(args.quiet, "  [sast] running semgrep (this may download rule packs on first run)...")
             try:
                 res = engine_sast.run(
@@ -1228,40 +1268,39 @@ def main(argv=None):
                     extra_configs=args.semgrep_config,
                     prefer=args.semgrep_runtime, wsl_distro=args.wsl_distro,
                     excludes=args.exclude,
-                    # Only bundled pinned rules establish eligibility. Registry
-                    # and operator-supplied rules may add findings, but cannot
-                    # turn their languages into a silent coverage claim.
                     enumerated_code_files=coverage["eligible_files"],
+                    shebang_targets=coverage.get("shebang_targets", ()),
+                    shebang_languages=coverage.get("shebang_languages", {}),
+                    additional_languages=coverage.get("additional_languages", {}),
+                    eligible_paths=coverage.get("eligible_paths", ()),
                     # The SAME skip set the walker used. Passing it rather than
                     # letting the engine re-read the constant is what keeps the two
                     # components agreeing about scope under --no-default-skips.
                     skip_dirs=scan_skip_dirs,
-                    # 0 means "not given"; the engine's own default (or the env var)
-                    # then applies. Passing it explicitly would freeze the default at
-                    # import time and defeat PRAETOR_SEMGREP_TIMEOUT.
-                    **({"timeout": args.semgrep_timeout}
-                       if args.semgrep_timeout > 0 else {}),
+                    # Coverage resolution and the scan share this one effective
+                    # operator budget (CLI override, environment, or default).
+                    timeout=sast_timeout,
                 )
                 all_findings.extend(res["findings"])
-                detail = (
-                    f"{res['detail']} ({len(res['findings'])} finding(s)) "
-                    f"via {res['runtime']}"
-                )
-                if gaps:
-                    detail = f"{detail}; {gaps}"
+                semgrep_version = res.get("version") or semgrep_version
+                detail = f"{res['detail']} ({len(res['findings'])} finding(s)) via {res['runtime']}"
+                if coverage_evidence:
+                    detail = f"{detail}; {coverage_evidence}"
                 if only_uncovered and res["status"] == core.ENGINE_OK:
+                    # Generic or path-filtered optional rules may add findings,
+                    # but cannot establish language coverage. Keep the named gap.
                     engine_meta["sast"] = {
                         "status": core.ENGINE_NO_COVERAGE,
-                        "detail": gaps,
+                        "detail": coverage_evidence,
                     }
                 else:
-                    engine_meta["sast"] = {
-                        "status": res["status"], "detail": detail,
-                    }
+                    engine_meta["sast"] = {"status": res["status"], "detail": detail}
+                if coverage["eligible_files"] and "scanned_file_count" in res:
+                    engine_meta["sast"]["scanned_file_count"] = res["scanned_file_count"]
             except Exception as e:  # noqa
                 detail = f"{e}"
-                if gaps:
-                    detail = f"{detail}; {gaps}"
+                if coverage_evidence:
+                    detail = f"{detail}; {coverage_evidence}"
                 engine_meta["sast"] = {"status": "error", "detail": detail}
     else:
         engine_meta["sast"] = {"status": "disabled", "detail": "not selected"}
@@ -1520,6 +1559,9 @@ def main(argv=None):
         "model_file_count": (len(model_files) if "model" in engines else None),
         "nul_text_file_count": len(nul_text_files),
         "engines": engine_meta,
+        # Structured evidence of the Semgrep binary/image that established SAST
+        # findings and coverage. None means SAST did not identify a runtime.
+        "semgrep_version": semgrep_version,
         "min_severity": args.min_severity,
     }
 

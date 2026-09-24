@@ -298,6 +298,8 @@ def render_sarif(result: dict, meta: dict) -> str:
     } for f in all_findings if f.get("category") == "COVERAGE"]
 
     for name, info in sorted((meta.get("engines") or {}).items()):
+        if name != "sast":
+            continue
         for gap in core.sast_no_coverage_details((info or {}).get("detail", "")):
             notifications.append({
                 "level": "warning",

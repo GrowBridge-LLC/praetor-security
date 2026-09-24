@@ -57,10 +57,10 @@ inputs:
     default: main
   praetor-version:
     description: >-
-      Version constraint for the praetor-security PyPI package (e.g. "==1.1.1"
-      or ">=1.1.0"). Empty installs from praetor-ref instead.
+      Version constraint for the praetor-security PyPI package (e.g. "==1.2.0"
+      or ">=1.2.0"). Empty installs from praetor-ref instead.
     required: false
-    default: "==1.1.1"
+    default: "==1.2.0"
   python-version:
     description: Python version to run PRAETOR under.
     required: false

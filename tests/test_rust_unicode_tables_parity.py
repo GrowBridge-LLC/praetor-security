@@ -36,9 +36,14 @@ import unicodedata
 import gen_unicode_tables as gen
 
 
-def test_generated_rust_table_matches_the_python_unicode_database():
-    """The committed .rs file is exactly what the generator produces today."""
+def test_generated_rust_table_matches_or_is_newer_than_the_python_unicode_database():
+    """Exact on the generating runtime; older supported Python must not downgrade it."""
     committed = gen.OUT_PATH.read_text(encoding="utf-8")
+    if gen.interpreter_is_behind(committed):
+        assert gen._version_tuple(gen.recorded_version(committed)) > gen._version_tuple(
+            gen.unicodedata.unidata_version
+        )
+        return
     current = gen.render()
 
     assert committed == current, (
@@ -226,17 +231,17 @@ def test_the_write_path_refuses_to_downgrade_the_committed_table(tmp_path):
     assert "--allow-downgrade" in r.stderr, "the refusal must name its own override"
 
 
-def test_the_check_mode_says_wrong_interpreter_not_stale(tmp_path):
-    """The message is the fix: 'stale' sends the reader to destroy the table."""
+def test_the_check_mode_accepts_a_proven_newer_table_without_calling_it_stale(tmp_path):
+    """Supported older Python verifies the direction without authorising a write."""
     script, _ = _mirror_generator(tmp_path, "99.0.0")
 
     r = subprocess.run([sys.executable, str(script), "--check"],
                        capture_output=True, text=True,
                        encoding="utf-8", errors="replace")
 
-    assert r.returncode == 2, f"expected exit 2, got {r.returncode}: {r.stderr}"
-    assert "WRONG INTERPRETER" in r.stderr
-    assert "STALE" not in r.stderr, (
+    assert r.returncode == 0, f"expected exit 0, got {r.returncode}: {r.stderr}"
+    assert "OK (NEWER TABLE)" in r.stdout
+    assert "STALE" not in r.stdout + r.stderr, (
         "reporting this as STALE is what sent a CI operator to regenerate and "
         "silently drop code points"
     )

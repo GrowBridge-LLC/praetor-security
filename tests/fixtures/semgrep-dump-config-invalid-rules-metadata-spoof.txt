@@ -1,0 +1,18 @@
+{ Rule_fetching.rules =
+  [{ Rule.id = ("audit-valid-bash", _);
+     mode = `Search ({ Rule.f = (Rule.P fixture); conditions = [] });
+     message = "valid bash fixture"; severity = `Warning;
+     target_selector = (Some [Bash]);
+     target_analyzer = (Analyzer.AnalyzerType.L (Bash, [])); options = None;
+     fix = None; fix_regexp = None; paths = None; product = `SAST;
+     dependency_formula = None; validators = None;
+     metadata =
+     (Some (JSON.Object [("note", (JSON.String "invalid_rules = [];"))]));
+     min_version = None; max_version = None }
+    ];
+  invalid_rules =
+  [((Rule_error.InvalidOther
+       "Expected one of the pattern keys to be present."),
+    "audit-invalid-bash", _)];
+  origin =
+  (Rule_fetching.Local_file /tmp/praetor-audit-invalid-rules-spoof.yaml) }

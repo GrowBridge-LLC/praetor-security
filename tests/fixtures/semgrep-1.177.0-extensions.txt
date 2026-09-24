@@ -1,0 +1,64 @@
+Language to supported file extension mappings:
+ swift->.swift
+ts->.ts, .tsx
+py->.py, .pyi
+openfga->.fga
+csharp->.cs
+python2->.py, .pyi
+html->.htm, .html
+cpp->.cc, .cpp, .cxx, .c++, .pcc, .tpp, .C, .h, .hh, .hpp, .hxx, .inl, .ipp
+python->.py, .pyi
+kotlin->.kt, .kts, .ktm
+clojure->.clj, .cljs, .cljc, .edn
+apex->.cls
+yaml->.yml, .yaml
+ruby->.rb
+promql->.promql
+kt->.kt, .kts, .ktm
+gosu->.gs
+dockerfile->.dockerfile, .Dockerfile, Dockerfile, dockerfile
+php->.php, .tpl, .phtml
+go->.go
+protobuf->.proto
+elixir->.ex, .exs
+c#->.cs
+xml->.xml, .plist
+hcl->.tf, .tofu, .hcl, .tfvars
+ocaml->.ml, .mli
+julia->.jl
+cairo->.cairo
+proto->.proto
+bash->.bash, .sh
+typescript->.ts, .tsx
+scheme->.scm, .ss
+powershell->.ps1
+solidity->.sol
+docker->.dockerfile, .Dockerfile, Dockerfile, dockerfile
+c++->.cc, .cpp, .cxx, .c++, .pcc, .tpp, .C, .h, .hh, .hpp, .hxx, .inl, .ipp
+terraform->.tf, .tofu, .hcl, .tfvars
+js->.cjs, .js, .jsx, .mjs
+sh->.bash, .sh
+sol->.sol
+scala->.scala
+golang->.go
+python3->.py, .pyi
+json->.json, .ipynb
+proto3->.proto
+move_on_sui->.move
+tf->.tf, .tofu, .hcl, .tfvars
+lua->.lua
+ql->.ql, .qll
+javascript->.cjs, .js, .jsx, .mjs
+vue->.vue
+rust->.rs
+r->.r, .R
+jsonnet->.jsonnet, .libsonnet
+hack->.hack, .hck, .hh
+ex->.ex, .exs
+dart->.dart
+move_on_aptos->.move
+fga->.fga
+circom->.circom
+java->.java
+c->.c, .h
+lisp->.lisp, .cl, .el

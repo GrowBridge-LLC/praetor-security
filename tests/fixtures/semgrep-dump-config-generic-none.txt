@@ -1,0 +1,17 @@
+{ Rule_fetching.rules =
+  [{ Rule.id = ("audit-generic", _);
+     mode =
+     `Search ({ Rule.f =
+                (Rule.P
+                   { Xpattern.pat = (Xpattern.Regexp "audit-generic-token");
+                     pstr = ("audit-generic-token", _); pid = 0 });
+                conditions = []; focus = []; fix = None; as_ = None });
+     message = "generic fixture"; severity = `Warning;
+     target_selector = None;
+     target_analyzer = Analyzer.AnalyzerType.LSpacegrep; options = None;
+     fix = None; fix_regexp = None; paths = None; product = `SAST;
+     dependency_formula = None; validators = None; metadata = None;
+     min_version = None; max_version = None }
+    ];
+  invalid_rules = [];
+  origin = (Rule_fetching.Local_file /tmp/praetor-audit-generic.yaml) }

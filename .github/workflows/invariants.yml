@@ -30,13 +30,17 @@ jobs:
   # first sign of a rename would have been users' scans quietly changing behaviour.
   semgrep-live:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.14']
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5
         with:
-          python-version: '3.14'
+          python-version: ${{ matrix.python-version }}
       - name: Install semgrep
-        run: python -m pip install --upgrade pip semgrep
+        run: python -m pip install --upgrade pip 'semgrep==1.177.0'
       - name: Live scope-guarantee check against a real semgrep
         # BOTH the exit code AND the output marker, as defence in depth.
         # ⚠️ THE ORIGINAL JUSTIFICATION HERE WAS FALSE. It claimed the author's box
@@ -61,12 +65,16 @@ jobs:
 
   invariants:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.14']
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5
         with:
-          # 🔴 MUST MATCH tests/precommit.sh, WHICH PINS py -3.14.
+          # The supported floor and newest supported interpreter are both gates.
           #
           # rust/praetor-core/src/unicode_tables.rs is GENERATED from Python's
           # unicodedata, so its content is a function of the interpreter. This
@@ -81,7 +89,7 @@ jobs:
           # between "regenerate" and "regenerating loses 4,302 code points".
           # Re-derive by rendering under Unicode 16.0.0 and 15.1.0 and differencing
           # covered code-point sets (142,179 -> 137,877); the value changes with tables.
-          python-version: '3.14'
+          python-version: ${{ matrix.python-version }}
 
       # Deliberately no requirements install: the invariant tests must not need
       # the tools they guard. They capture argv without executing anything, which
@@ -94,8 +102,8 @@ jobs:
       # TESTS than either developer machine ("collected 188 items / 1 skipped"),
       # so nothing verified the offline ruleset that IS the SAST engine's
       # coverage under --no-registry.
-      - name: Install test dependencies
-        run: python -m pip install --upgrade pip pytest pyyaml
+      - name: Install test dependencies and pinned Semgrep
+        run: python -m pip install --upgrade pip pytest pyyaml 'semgrep==1.177.0'
 
       - name: Run invariant tests
         # 🔴 A SKIPPED TEST IS INDISTINGUISHABLE FROM A PASSING ONE.
