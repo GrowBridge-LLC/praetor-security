@@ -228,12 +228,37 @@ _EXEC_CASES = chr(10).join([
     _EX + "room.body)",                                      # 146 non-LLM .chat: no
     "g = generator.generate(seed=1)",
     _EX + "g.text)",                                         # 148 non-LLM .generate: no
+    # Taint review r3 (Grok, Opus), each measured on semgrep 1.175.0.
+    "def run_selected(question):",
+    "    selected = question.choices[0]",
+    "    " + _SP + "run(selected, shell=True)",              # 151 non-LLM .choices[i]: no
+    "def handle_guard(msg):",
+    "    for block in msg.content:",
+    '        if block.type != "tool_use":',
+    "            continue",
+    "        " + _SYS + 'block.input["cmd"])',               # 156 guard-and-continue
+    "def handle_and(msg):",
+    "    for block in msg.content:",
+    '        if block.type == "tool_use" and block.name == "bash":',
+    "            " + _SYS + 'block.input["command"])',       # 160 == ... and ...
+    "def handle_listcomp_if(msg):",
+    '    code = "".join([b.text for b in msg.content if b.type == "text"])',
+    "    " + _EX + "code)",                                  # 163 list-comp join, if
+    "def handle_listcomp(msg):",
+    '    code = "".join([b.text for b in msg.content])',
+    "    " + _EX + "code)",                                  # 166 list-comp join
+    "def handle_json(resp):",
+    '    message = resp["choices"][0]["message"]',
+    "    " + _SYS + 'message["content"])',                   # 169 raw-JSON message prefix
+    "def on_sse(chunk):",
+    "    " + _SYS + 'chunk["choices"][0]["delta"]["content"])',  # 171 raw-JSON SSE delta
 ]) + chr(10)
 _EXEC_MUST_FIRE = [11, 13, 14, 15, 18, 19, 20, 21, 22, 23, 25, 27, 29, 30, 32,
                    34, 37, 38, 40,
                    44, 46, 48, 53, 54, 57, 64, 66, 67, 75, 78, 81, 84, 87,
                    91, 93, 94, 95, 96, 97, 98, 101,
-                   103, 104, 109, 113, 115, 120, 121, 123, 126, 130, 131, 132, 144]
+                   103, 104, 109, 113, 115, 120, 121, 123, 126, 130, 131, 132, 144,
+                   156, 160, 163, 166, 169, 171]
 # Must NOT fire on the LLM rule (asserted by the line-exact equality above):
 # 5, 6 constant/literal; 7, 9, 42 input/parameter; 36 requests .text;
 # 60 generate_content result rebound to requests; 61, 62 chat-platform payloads;
@@ -241,7 +266,9 @@ _EXEC_MUST_FIRE = [11, 13, 14, 15, 18, 19, 20, 21, 22, 23, 25, 27, 29, 30, 32,
 # another is outside semgrep OSS taint (no cross-method field flow); 89 an
 # assembled constant; 116, 117 echoed response metadata (.model / .id);
 # 133 model text only on stdin of a fixed command; 135, 137, 140 non-Anthropic
-# `.content` iteration; 146, 148 non-LLM .chat / .generate calls.
+# `.content` iteration; 146, 148 non-LLM .chat / .generate calls; 151 a
+# non-LLM `.choices[i]` (no bare .choices[i] source; line 46 still fires
+# through the call source).
 # praetor-py-eval-exec must still fire on exec of input() and of a variable
 # holding input() (7, 42), on a parameter (9), and on an assembled constant (89,
 # measured); never on the folded constant or the literal.

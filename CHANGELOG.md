@@ -36,12 +36,23 @@ tainted. Taint follows variables, held intermediates, concatenation,
 f-strings, local functions, `or` defaults and list/stream accumulation. Sinks are
 `exec`/`eval`/`compile`, `os.system`/`os.popen`/`os.exec*`/`os.spawn*`,
 `pty.spawn`, `runpy`, `asyncio` subprocess creation (any argument) and the
-command argument of `subprocess`. Model
-output stored on `self` and run from another method is not tracked. `exec` of a
+command argument of `subprocess`. `exec` of a
 constant, a literal, `input()` or a bare parameter no longer fires on this rule;
 `praetor-py-eval-exec` still reports `exec`/`eval` of non-literal data.
 Measured with semgrep 1.175.0; pinned line by line in
 `tests/semgrep_live_check.py`.
+
+Known limits:
+- Content-block loop spellings other than `if b.type == ...[ and ...]:`,
+  `if b.type != ...: continue` and an inline join are not sources (for
+  example `not in (...)` guards, a comprehension named before the join, or a
+  handler given the message or `tool_calls` list without the `.choices[i]`
+  prefix).
+- Flow across methods (model output stored on `self`) or across files is not
+  tracked.
+- Only the SDKs listed above are sources.
+- Over-matches: a `.text` join over any `.content`, and `.create` / `.chat` /
+  `.generate` names shared with non-LLM APIs, are treated as model output.
 
 ### Fixed — a single-file scan silently skipped every suppression pass
 

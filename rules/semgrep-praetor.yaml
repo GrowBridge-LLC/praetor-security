@@ -209,14 +209,17 @@ rules:
     #               measured NOT to match)
     #   Gemini      X.generate_content / X.generate_content_async
     # (2) For a response that arrives as a bare PARAMETER: the OpenAI prefixes a
-    #   handler binds (.choices[i], .message, .message.tool_calls[, [j]],
-    #   .delta) and the leaf paths (.message.content, .delta.content, .text,
+    #   handler binds (.choices[i].message, .message.tool_calls[, [j]],
+    #   .choices[i].delta; never bare .choices[i], which is any poll/argparse
+    #   choice) and the leaf paths (.message.content, .delta.content, .text,
     #   .output_text, tool_calls[j].function.arguments), the same paths through
-    #   raw JSON (["choices"][i]["message"]["content"] and tool-call arguments),
-    #   Anthropic .content[i].text / .content[i].input, LangChain
-    #   .generations[i][j].text, and an Anthropic content-block loop variable:
-    #   `for b in X.content:` + `if b.type == "text" | "tool_use":` -> b.text /
-    #   b.input, or `"".join(b.text for b in X.content)`. Bare `.content` is never
+    #   raw JSON (["choices"][i]["message"][, ["content"]], ["delta"]["content"],
+    #   tool-call arguments), Anthropic .content[i].text / .content[i].input,
+    #   LangChain .generations[i][j].text, and an Anthropic content-block loop
+    #   variable: `for b in X.content:` + `if b.type == "text" | "tool_use"[ and
+    #   ...]:` or `if b.type != ...: continue` -> b.text / b.input, or
+    #   `"".join(b.text for b in X.content)` (generator or list comprehension,
+    #   with or without `if`). Bare `.content` is never
     #   a source (requests/httpx bodies); measured: iterating
     #   requests.get(u).content, or `for x in obj.content:` without an Anthropic
     #   block-type check, does not fire.
@@ -227,9 +230,16 @@ rules:
     # be reported, which is itself worth reading. The call source taints echoed
     # metadata too, so .model / .id / .system_fingerprint / .usage / .created are
     # sanitizers.
-    # RESIDUAL: model output stored on `self` in one method and executed in
-    # another is outside semgrep OSS taint (no cross-method field flow), as is
-    # any flow across files.
+    # KNOWN LIMITS (not detected, or over-matched):
+    #  - other content-block loop spellings (`not in (...)` guards, isinstance
+    #    checks, a comprehension bound to a name before the join, a handler
+    #    given the message or tool_calls list without the .choices[i] prefix);
+    #  - cross-method flow (model output stored on `self` in one method and
+    #    executed in another; semgrep OSS has no field flow) and any flow
+    #    across files;
+    #  - only the SDKs listed above are sources;
+    #  - the over-matches documented above (join over any `.content`, and
+    #    .create/.chat/.generate names shared with non-LLM APIs).
     # Propagators: list.append / list.extend / file-like .write by side effect,
     # so accumulated stream chunks stay tainted. Booleans are not assumed safe
     # (set explicitly; `content or ""` was measured to propagate without it).
@@ -266,20 +276,29 @@ rules:
       - pattern: $R.content[$I].text
       - pattern: $R.content[$I].input
       - pattern: $R.generations[$I][$J].text
-      - pattern: $R.choices[$I]
       - pattern: $R.choices[$I].message
       - pattern: $R.choices[$I].message.tool_calls
       - pattern: $R.choices[$I].message.tool_calls[$J]
       - pattern: $R.choices[$I].delta
+      - pattern: $R["choices"][$I]["message"]
       - pattern: $R["choices"][$I]["message"]["content"]
+      - pattern: $R["choices"][$I]["delta"]["content"]
       - pattern: $R["choices"][$I]["message"]["tool_calls"][$J]["function"]["arguments"]
       - patterns:
           - pattern-inside: |
               for $B in $M.content:
                 ...
-          - pattern-inside: |
-              if $B.type == "$T":
-                ...
+          - pattern-either:
+              - pattern-inside: |
+                  if $B.type == "$T":
+                    ...
+              - pattern-inside: |
+                  if $B.type == "$T" and $X:
+                    ...
+              - pattern-inside: |
+                  if $B.type != "$T":
+                    continue
+                  ...
           - metavariable-regex:
               metavariable: $T
               regex: ^(text|tool_use)$
