@@ -120,12 +120,81 @@ _EXEC_CASES = chr(10).join([
     "    " + _SYS + "resp.choices[0].message.content)",      # 40 corpus shape
     "v = input()",
     _EX + "v)",                                              # 42 input via var: eval-exec only
+    # Taint review r1 (Grok G1-G8, Opus O1-O7), each measured on semgrep 1.175.0.
+    "msg = resp.choices[0].message",
+    _EX + "msg.content)",                                    # 44 G1 split chain
+    "choice = resp.choices[0]",
+    _EX + "choice.message.content)",                         # 46 G1 split chain
+    'code2 = resp.choices[0].message.content or ""',
+    _EX + "code2)",                                          # 48 G2 `or ""`
+    "parts = []",
+    "for chunk in stream:",
+    "    if chunk.choices[0].delta.content:",
+    "        parts.append(chunk.choices[0].delta.content)",
+    _EX + '"".join(parts))',                                 # 53 G3 append
+    _EX + "model.generate_content(prompt).text)",            # 54 G5 one-liner
+    "async def a1():",
+    "    r = await model.generate_content(prompt)",
+    "    " + _EX + "r.text)",                                # 57 G5 await
+    'gm2 = model.generate_content("x")',
+    'gm2 = requests.get("u")',
+    _EX + "gm2.text)",                                       # 60 G5 rebind: no
+    _EX + "interaction.message.content)",                    # 61 G6: no
+    _EX + 'packet["message"]["content"])',                   # 62 G6: no
+    "from " + _SP[:-1] + " import check_call",
+    "check_call(resp.choices[0].message.content, shell=True)",  # 64 G7 import alias
+    "from os import " + _SYS[3:-1],
+    _SYS[3:] + "resp.choices[0].message.content)",           # 66 G7 import alias
+    "asyncio.create_" + "subprocess_shell(resp.choices[0].message.content)",  # 67 G7
+    "class Agent:",
+    "    def take(self, resp):",
+    "        self.cmd = resp.choices[0].message.content",
+    "    def go(self):",
+    "        " + _EX + "self.cmd)",                          # 72 G8: RESIDUAL, no
+    "call = resp.choices[0].message.tool_calls[0]",
+    "args = json.loads(call.function.arguments)",
+    _SP + 'run(args["cmd"], shell=True)',                    # 75 O1 tool call
+    "message = resp.choices[0].message",
+    "if message.content:",
+    "    " + _SYS + "message.content)",                      # 78 O2 held message
+    'amsg = aclient.messages.create(model="m", max_tokens=1, messages=[])',
+    'acode = "".join(b.text for b in amsg.content)',
+    _EX + "acode)",                                          # 81 O2 Anthropic blocks
+    "async def a2():",
+    '    r2 = await client.chat.completions.create(model="m", messages=[])',
+    "    await asyncio.create_" + "subprocess_shell(r2.choices[0].message.content)",  # 84 O3
+    "async def a3():",
+    "    r3 = await model.generate_content_async(prompt)",
+    "    " + _EX + "r3.text)",                               # 87 O4 Gemini async
+    "NG2 = textwrap.dedent(_BODY)",
+    _EX + "NG2)",                                            # 89 O7: eval-exec only
+    "def bare_tool(resp):",
+    "    " + _SP + "run(resp.choices[0].message.tool_calls[0].function.arguments, shell=True)",  # 91
+    "def bare_anthropic_tool(msg):",
+    "    " + _SYS + 'msg.content[0].input["cmd"])',          # 93 Anthropic tool_use
+    "asyncio.create_" + "subprocess_exec(code)",             # 94
+    _SP + "Popen(args=code)",                                # 95
+    "os.exec" + "vp(code, [code])",                          # 96
+    "pty.spawn(code)",                                       # 97
+    "runpy.run_path(code)",                                  # 98
+    "buf = io.StringIO()",
+    "buf.write(code)",
+    _EX + "buf.getvalue())",                                 # 101 write propagator
 ]) + chr(10)
 _EXEC_MUST_FIRE = [11, 13, 14, 15, 18, 19, 20, 21, 22, 23, 25, 27, 29, 30, 32,
-                   34, 37, 38, 40]
+                   34, 37, 38, 40,
+                   44, 46, 48, 53, 54, 57, 64, 66, 67, 75, 78, 81, 84, 87,
+                   91, 93, 94, 95, 96, 97, 98, 101]
+# Must NOT fire on the LLM rule (asserted by the line-exact equality above):
+# 5, 6 constant/literal; 7, 9, 42 input/parameter; 36 requests .text;
+# 60 generate_content result rebound to requests; 61, 62 chat-platform payloads;
+# 72 RESIDUAL -- model output stored on self in one method and executed in
+# another is outside semgrep OSS taint (no cross-method field flow); 89 an
+# assembled constant.
 # praetor-py-eval-exec must still fire on exec of input() and of a variable
-# holding input() (7, 42), and on a parameter (9); never on the constant or literal.
-_EVAL_EXEC_MUST_INCLUDE = [7, 9, 42]
+# holding input() (7, 42), on a parameter (9), and on an assembled constant (89,
+# measured); never on the folded constant or the literal.
+_EVAL_EXEC_MUST_INCLUDE = [7, 9, 42, 89]
 _EVAL_EXEC_MUST_EXCLUDE = [5, 6]
 
 

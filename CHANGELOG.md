@@ -25,11 +25,14 @@ The rule fired on every `exec(X)`, so `exec` of a module string constant was
 reported as model output reaching a shell. Exempting constants afterwards could
 not be made sound: each attempt (pattern exclusions, then a one-file rebind
 proof) was bypassed by a new reflective rebind. The rule now runs in semgrep
-taint mode and fires only when a model-client response field (OpenAI chat,
-streaming, legacy and Responses shapes, Anthropic `content[i].text`, Ollama,
-LangChain `generations`, Gemini `generate_content(...).text`) reaches
-`exec`/`eval`/`compile`, `os.system`/`os.popen`, or `subprocess` — directly or
-through variables, concatenation, f-strings and local functions. `exec` of a
+taint mode and fires only when model output reaches a sink. Sources are the
+model-client call result (OpenAI, Anthropic, Ollama, Gemini, sync and `await`)
+plus response field paths for a response passed in as a parameter, including
+tool-call arguments. Taint follows variables, held intermediates, concatenation,
+f-strings, local functions, `or` defaults and list/stream accumulation. Sinks are
+`exec`/`eval`/`compile`, `os.system`/`os.popen`/`os.exec*`/`os.spawn*`,
+`pty.spawn`, `runpy`, `asyncio` subprocess creation and `subprocess`. Model
+output stored on `self` and run from another method is not tracked. `exec` of a
 constant, a literal, `input()` or a bare parameter no longer fires on this rule;
 `praetor-py-eval-exec` still reports `exec`/`eval` of non-literal data.
 Measured with semgrep 1.175.0; pinned line by line in
