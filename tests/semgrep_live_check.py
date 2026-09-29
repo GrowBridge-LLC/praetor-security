@@ -65,6 +65,53 @@ def check(name, ok, detail=""):
         failures.append(name)
 
 
+# praetor-ai-llm-output-to-shell must NOT fire on exec of a constant (a module
+# string assigned once, or a literal) and MUST fire on model output, input(), a
+# reassigned name and a function parameter. Measured 2026-09-29: it fired on all
+# six. `exec` is spelled in fragments for the same self-scan reason as _VULN.
+_EX = "ex" + "ec("
+_EXEC_CASES = chr(10).join([
+    "NET_GUARD = r'''",
+    "import socket",
+    "'''",
+    _EX + "NET_GUARD)",                              # 4  constant, assigned once
+    _EX + '"print(1)")',                             # 5  literal
+    "resp = client.chat(p)",
+    _EX + "resp.choices[0].message.content)",        # 7  model output
+    "code = input()",
+    _EX + "code)",                                   # 9  input()
+    'G = "x"',
+    "G = input()",
+    _EX + "G)",                                      # 12 reassigned
+    "def f(s):",
+    "    " + _EX + "s)",                             # 14 parameter
+]) + chr(10)
+_EXEC_MUST_FIRE = [7, 9, 12, 14]
+
+
+def check_exec_constant_rule():
+    rule = "praetor-ai-llm-output-to-shell"
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "exec_cases.py")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_EXEC_CASES)
+        p = subprocess.run(["semgrep", "scan", "--config", RULES, "--json",
+                            "--metrics=off", "--quiet", path],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace")
+        try:
+            data = json.loads(p.stdout)
+        except ValueError:
+            check(rule + ": semgrep produced JSON", False, "rc=%d" % p.returncode)
+            return
+        errs = data.get("errors") or []
+        lines = sorted(r["start"]["line"] for r in data.get("results", [])
+                       if r.get("check_id", "").endswith(rule))
+        check(rule + ": fires on 7,9,12,14 only (not exec of a constant)",
+              not errs and lines == _EXEC_MUST_FIRE,
+              "got lines %s, %d semgrep error(s)" % (lines, len(errs)))
+
+
 def main():
     print("== live semgrep check ==")
     ver = subprocess.run(["semgrep", "--version"], capture_output=True, text=True,
@@ -155,6 +202,8 @@ def main():
             check("this semgrep accepts --disable-nosem (no fallback)",
                   "rejected --disable-nosem" not in detail,
                   ("detail said: ..." + detail[-110:]) if "rejected" in detail else "")
+
+    check_exec_constant_rule()
 
     print("== %s ==" % ("ALL LIVE CHECKS PASSED" if not failures
                         else "LIVE CHECK FAILURES: " + ", ".join(failures)))
