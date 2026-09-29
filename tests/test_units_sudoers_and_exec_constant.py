@@ -260,7 +260,6 @@ def test_real_guard_shape_variants_stay_active(case):
 NARROWED_FILTERED = {
     "globals() read then call": ('N = "x"\nglobals()["f_" + k]()\nEXEC(N)', 3),
     "__dict__ read": ('N = "x"\nv = m.__dict__["k"]\nEXEC(N)', 3),
-    "setattr on another object, no self-reach": ('N = "x"\nsetattr(obj, "k", 1)\nEXEC(N)', 3),
     "__name__ in a comparison": ('N = "x"\nif __name__ == "__main__":\n    pass\nEXEC(N)', 4),
 }
 
@@ -286,3 +285,151 @@ def test_end_to_end_real_guard_shape_through_interpret(tmp_path):
     res = interpret.interpret(
         [f], read_source=lambda fd: (tmp_path / fd.file).read_text(encoding="utf-8"))
     assert [x.filter_reason for x in res["filtered"]] == [interpret.EXEC_CONSTANT_REASON]
+
+
+# --------------------------------------------------------------------------- #
+# Commit 6: AST-proof review round 1 (every reviewer snippet is a case here)
+# --------------------------------------------------------------------------- #
+
+R6_ACTIVE = {
+    # FLIPPED from commit 5 (was filtered): setattr now needs a POSITIVE proof
+    # that its target is a fresh module_from_spec() module.
+    "setattr on another object": ('N = "x"\nsetattr(obj, "k", 1)\nEXEC(N)', 3),
+    # 1) the sink itself rebound (Grok 1) -- literal and name paths
+    "grok1: def exec, literal":
+        ('import os\ndef EXEC(code):\n    os.system(input())\nEXEC("print(1)")', 4),
+    "builtins.exec store, literal": ('import builtins\nbuiltins.exec = f\nEXEC("print(1)")', 3),
+    "builtins attr store without import": ('x.exec = f\nEXEC("print(1)")', 2),
+    "exec assigned": ('exec = print\nEXEC("print(1)")', 2),
+    "exec parameter": ('def f(exec):\n    EXEC("print(1)")', 2),
+    "exec import alias": ('from os import system as exec\nEXEC("print(1)")', 2),
+    "exec for target": ('for exec in fs:\n    pass\nEXEC("print(1)")', 3),
+    "exec walrus": ('(exec := f)\nEXEC("print(1)")', 2),
+    "exec comprehension target": ('[0 for exec in fs]\nEXEC("print(1)")', 2),
+    "exec with target": ('with f() as exec:\n    pass\nEXEC("print(1)")', 3),
+    "exec except target": ('try:\n    pass\nexcept E as exec:\n    pass\nEXEC("print(1)")', 5),
+    "exec match target": ('match v:\n    case exec:\n        pass\nEXEC("print(1)")', 4),
+    "exec global": ('def f():\n    global exec\nEXEC("print(1)")', 3),
+    "exec del": ('del exec\nEXEC("print(1)")', 2),
+    "class exec": ('class exec:\n    pass\nEXEC("print(1)")', 3),
+    "eval shadowed": ('def eval(s):\n    return s\nN = "x"\neval(N)', 4),
+    "from builtins import": ('from builtins import print\nEXEC("print(1)")', 2),
+    "__builtins__ use, literal": ('__builtins__.x = 1\nEXEC("print(1)")', 2),
+    # 2) namespace reads (Grok 2)
+    "grok2: vars(sys) split spelling":
+        ('N = "safe"\nimport sys\nme = vars(sys)["mod" + "ules"][globals()["__name__"]]\n'
+         'setattr(me, "N", input())\nEXEC(N)', 5),
+    "vars(obj) read": ('N = "x"\nv = vars(obj)["k"]\nEXEC(N)', 3),
+    "globals with a keyword": ('N = "x"\nv = globals(x=1)["k"]\nEXEC(N)', 3),
+    "__dict__ computed key": ('N = "x"\nv = m.__dict__["mod" + "ules"]\nEXEC(N)', 3),
+    "__dict__ spelled key": ('N = "x"\nv = m.__dict__["modules"]\nEXEC(N)', 3),
+    "__getattribute__ dynamic": ('N = "x"\nv = o.__getattribute__(k)\nEXEC(N)', 3),
+    "attrgetter dynamic": ('import operator\nN = "x"\nv = operator.attrgetter(k)(o)\nEXEC(N)', 4),
+    "attrgetter dotted spelled":
+        ('from operator import attrgetter\nN = "x"\nv = attrgetter("a.modules")(o)\nEXEC(N)', 4),
+    "methodcaller dynamic": ('import operator\nN = "x"\nv = operator.methodcaller(k)(o)\nEXEC(N)', 4),
+    "attrgetter renamed on import":
+        ('from operator import attrgetter as ag\nN = "x"\nv = ag(k)(o)\nEXEC(N)', 4),
+    "getattr passed around": ('N = "x"\nf(getattr)\nEXEC(N)', 3),
+    "getattr passed after safe args": ('N = "x"\nf(o, "name", getattr)\nEXEC(N)', 3),
+    "builtins name reference": ('x = builtins\nEXEC("print(1)")', 2),
+    # 3) setattr needs a fresh module target (Sol 3, Grok 3)
+    "grok3/sol3: import pkg in __init__":
+        ('N = "safe"\nimport pkg\nsetattr(pkg, "N", input())\nEXEC(N)', 4),
+    "module_from_spec bound twice":
+        ('import importlib.util\nN = "x"\ndef f(s):\n    m = importlib.util.module_from_spec(s)\n'
+         '    m = g()\n    setattr(m, "k", 1)\nEXEC(N)', 7),
+    "module_from_spec in another scope":
+        ('import importlib.util\nN = "x"\nm = importlib.util.module_from_spec(s)\n'
+         'def f():\n    setattr(m, "k", 1)\nEXEC(N)', 6),
+    "target from something else":
+        ('N = "x"\ndef f():\n    m = make()\n    setattr(m, "k", 1)\nEXEC(N)', 5),
+    "object.__setattr__":
+        ('import importlib.util\nN = "x"\ndef f(s):\n    m = importlib.util.module_from_spec(s)\n'
+         '    object.__setattr__(m, "k", 1)\nEXEC(N)', 6),
+    "setattr aliased by assignment": ('N = "x"\ns = setattr\nEXEC(N)', 3),
+    "importlib rebound":
+        ('import importlib.util\nimportlib = fake\nN = "x"\ndef f(s):\n'
+         '    m = importlib.util.module_from_spec(s)\n    setattr(m, "k", 1)\nEXEC(N)', 7),
+    # 4) class bodies (Sol 2)
+    "sol2: metaclass __prepare__":
+        ('class Namespace(dict):\n    def __missing__(self, key):\n        if key == "PAYLOAD":\n'
+         '            return input()\n        raise KeyError(key)\n\nclass Meta(type):\n'
+         '    @classmethod\n    def __prepare__(cls, name, bases):\n        return Namespace()\n\n'
+         'PAYLOAD = "print(\'safe\')"\n\nclass Victim(metaclass=Meta):\n    EXEC(PAYLOAD)', 15),
+    "literal in a class body": ('class C:\n    EXEC("print(1)")', 2),
+    # Conservative: a method uses LOAD_GLOBAL and would be safe, but ANY ClassDef
+    # ancestor is rejected.
+    "sink in a method": ('N = "x"\nclass C:\n    def f(self):\n        EXEC(N)', 4),
+    # 6) parse robustness (Sol 4)
+    "sol4: lone surrogate in another exec": ('N = "x"\nEXEC("\\ud800")\nEXEC(N)', 3),
+    "deeply nested expression": ('N = "x"\nEXEC(N)\nx = ' + "1+" * 300000 + "1", 2),
+    "nested parse too complex": ('N = "x"\nEXEC(N)\nx = ' + "-" * 200000 + "1", 2),
+}
+
+R6_FILTERED = {
+    "fresh module via importlib.util":
+        ('import importlib.util\nN = "x"\ndef f(s):\n    m = importlib.util.module_from_spec(s)\n'
+         '    for k, v in d.items():\n        setattr(m, k, v)\nEXEC(N)', 7),
+    "fresh module via from-import alias":
+        ('from importlib.util import module_from_spec as mfs\nN = "x"\ndef f(s):\n'
+         '    m = mfs(s)\n    delattr(m, "k")\nEXEC(N)', 6),
+    "locals() read": ('N = "x"\nv = locals()["k"]\nEXEC(N)', 3),
+    "getattr constant safe name": ('N = "x"\nv = getattr(o, "name")\nEXEC(N)', 3),
+    "attrgetter constant": ('from operator import attrgetter\nN = "x"\nv = attrgetter("a.b")(o)\nEXEC(N)', 4),
+}
+
+
+@pytest.mark.parametrize("case", sorted(R6_ACTIVE))
+def test_r6_reviewer_cases_stay_active(case):
+    src, line = R6_ACTIVE[case]
+    assert not _proven(src, line, "app"), case
+
+
+@pytest.mark.parametrize("case", sorted(R6_FILTERED))
+def test_r6_positive_cases_still_prove(case):
+    src, line = R6_FILTERED[case]
+    assert _proven(src, line, "app"), case
+
+
+def test_r6_init_py_gets_no_stem(tmp_path):
+    """Grok 3 / Sol 3 through the real entry: pkg/__init__.py fails closed."""
+    src = 'import pkg\nN = "safe"\nsetattr(pkg, "N", input())\nEXEC(N)\n'
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__init__.py").write_text(src.replace("EXEC(", _SINK), encoding="utf-8")
+    f = Finding(engine="sast", rule_id=interpret.EXEC_CONSTANT_RULE, title="t",
+                severity=Severity.HIGH, file="pkg/__init__.py", line=4)
+    res = interpret.interpret(
+        [f], read_source=lambda fd: (tmp_path / fd.file).read_text(encoding="utf-8"))
+    assert len(res["active"]) == 1 and not res["filtered"]
+
+
+def test_r6_init_py_fails_closed_even_on_a_fresh_module(tmp_path):
+    """In __init__.py the stem is unknown, so ANY setter keeps the finding --
+    even one the positive proof would accept elsewhere."""
+    src = ('import importlib.util\nN = "x"\ndef f(s):\n'
+           '    m = importlib.util.module_from_spec(s)\n    setattr(m, "k", 1)\nEXEC(N)\n')
+    assert _proven(src, 6, "app")                      # control: provable as app.py
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__init__.py").write_text(src.replace("EXEC(", _SINK), encoding="utf-8")
+    f = Finding(engine="sast", rule_id=interpret.EXEC_CONSTANT_RULE, title="t",
+                severity=Severity.HIGH, file="pkg/__init__.py", line=6)
+    res = interpret.interpret(
+        [f], read_source=lambda fd: (tmp_path / fd.file).read_text(encoding="utf-8"))
+    assert len(res["active"]) == 1 and not res["filtered"]
+
+
+def test_r6_runs_without_match_nodes(monkeypatch):
+    """Sol 1: ast.Match* do not exist before 3.10. Re-import interpret on an ast
+    module without them; the proof must still run (no AttributeError)."""
+    import ast
+    import importlib
+    for n in ("MatchAs", "MatchStar", "MatchMapping"):
+        monkeypatch.delattr(ast, n, raising=False)
+    try:
+        mod = importlib.reload(interpret)
+        assert mod._MATCH_NAMED == () and mod._MATCH_MAPPING == ()
+        assert mod.exec_constant_proven('N = "x"\n' + _SINK + "N)", 2, "app")
+    finally:
+        monkeypatch.undo()
+        importlib.reload(interpret)

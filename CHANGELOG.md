@@ -28,13 +28,15 @@ and `global` writes are invisible to its constant propagation). Instead, a
 Python AST proof in the false-positive stage moves the finding to FILTERED, with
 its reason, only when the argument is a str literal or a name assigned exactly
 once at module top level to a str, bound nowhere else, never `global`/`nonlocal`,
-with no star import, no frame or function-globals access, and no namespace
-write: `globals()`/`locals()`/`vars()`/`__dict__` only as a read subscript, and
-`setattr`/`delattr` only when nothing in the file can reach its own module
-object (`sys.modules`, `__import__`, `import_module`, `reload`, `__spec__`,
-a self-import, `__name__` outside a comparison). `importlib.util` is fine: a
-module from `module_from_spec` has its own namespace. Anything unproven stays
-active, including a parse error or an alias.
+with `exec`/`eval`/`builtins` never rebound, the sink not in a class body, no
+star import, no frame or function-globals access, and no namespace write:
+argument-less `globals()`/`locals()`/`vars()` only as a read subscript,
+`__dict__` only with a constant key, `getattr`-style lookups only with a
+constant name, and `setattr`/`delattr` only on a name bound once, in the same
+scope, to `importlib.util.module_from_spec(...)` (a new module with its own
+namespace). A package `__init__.py` gets no module name, so any setter there
+keeps the finding. Anything unproven stays active, including a parse error or
+an alias.
 
 Residual, on purpose: the constant's own text is not inspected, so
 `exec("exec(input())")` is filtered (`praetor-py-eval-exec` exempts literals the

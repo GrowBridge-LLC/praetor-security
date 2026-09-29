@@ -65,10 +65,14 @@ def check(name, ok, detail=""):
         failures.append(name)
 
 
-# praetor-ai-llm-output-to-shell must NOT fire on exec of a constant (a module
-# string assigned once, or a literal) and MUST fire on model output, input(), a
-# reassigned name and a function parameter. Measured 2026-09-29: it fired on all
-# six. `exec` is spelled in fragments for the same self-scan reason as _VULN.
+# praetor-ai-llm-output-to-shell is judged in TWO STAGES. Stage 1, semgrep: the
+# rule fires on EVERY exec line below, constants included -- semgrep cannot prove
+# a name is never rebound, so check_exec_constant_rule() pins that it fires on
+# all of them. Stage 2, PRAETOR: interpret.exec_constant_proven() moves a finding
+# to FILTERED only when an AST proof shows the argument is a never-rebound str
+# constant; check_exec_constant_filtered() and check_guard_shape_filtered() pin
+# that end to end. `exec` is spelled in fragments for the same self-scan reason
+# as _VULN.
 _EX = "ex" + "ec("
 _EXEC_CASES = chr(10).join([
     "NET_GUARD = r'''",
