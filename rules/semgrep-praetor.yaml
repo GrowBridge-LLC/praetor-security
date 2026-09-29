@@ -195,6 +195,14 @@ rules:
           - pattern: subprocess.$F($RESP.choices[0].message.content, ...)
           - pattern: eval($RESP.$FIELD)
           - pattern: exec($COMPLETION)
+      # MEASURED 2026-09-29 with semgrep 1.175.0 on six cases: exec of a module
+      # string constant assigned once, exec of a literal, exec of model output,
+      # of input(), of a reassigned name, of a function parameter. Before this
+      # line the rule fired on all six. After it, only the last four -- constant
+      # propagation makes "..." also match a name bound once to a string, so a
+      # reassigned or otherwise non-constant argument still fires.
+      # tests/semgrep_live_check.py pins the exact lines.
+      - pattern-not: exec("...")
 
   - id: praetor-ai-hardcoded-system-prompt-secret
     languages: [python, javascript, typescript]

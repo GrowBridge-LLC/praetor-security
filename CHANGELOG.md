@@ -12,6 +12,20 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Fixed — systemd units and sudoers drop-ins were never read
+
+`*.service` and `*.sudoers` were not in the text allowlist, so a scan skipped
+them without a word: not scanned and clean, never opened. A unit names what runs
+and with which credentials; a sudoers drop-in grants privilege. Both are now read
+by the text engines. They do not count as code for the scope floor.
+
+### Fixed — `praetor-ai-llm-output-to-shell` fired on `exec` of a constant
+
+The rule flagged `exec("...")` and `exec(NAME)` where `NAME` is a module string
+assigned once — neither is model output. It now skips a constant argument.
+Model output, `input()`, a reassigned name and a function parameter still fire
+(measured with semgrep 1.175.0; pinned in `tests/semgrep_live_check.py`).
+
 ### Fixed — a single-file scan silently skipped every suppression pass
 
 All four suppression passes resolved a finding's source by joining its path onto
