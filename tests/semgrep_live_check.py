@@ -85,8 +85,35 @@ _EXEC_CASES = chr(10).join([
     _EX + "G)",                                      # 12 reassigned
     "def f(s):",
     "    " + _EX + "s)",                             # 14 parameter
+    # Review round 1: shapes that must still fire, and one pinned residual.
+    _EX + '"x" + input())',                          # 15 concat
+    'p = "x"',
+    _EX + "p + input())",                            # 17 constant + input
+    _EX + 'f"x{input()}")',                          # 18 f-string
+    _EX + '"x%s" % input())',                        # 19 % format
+    "a = input()",
+    "b = a",
+    _EX + "b)",                                      # 22 alias
+    'CMD = "print(1)"',
+    'globals()["CMD"] = input()',
+    _EX + "CMD)",                                    # 25 globals() rebind
+    'S1 = "print(1)"',
+    'setattr(mod, "S1", resp.choices[0].message.content)',
+    _EX + "S1)",                                     # 28 setattr rebind
+    'D1 = "print(1)"',
+    'mod.__dict__["D1"] = input()',
+    _EX + "D1)",                                     # 31 __dict__ rebind
+    'GL = "print(1)"',
+    "def g(payload):",
+    "    global GL",
+    "    GL = payload",
+    _EX + "GL)",                                     # 36 global rebind
+    _EX + '"' + _EX + 'input())")',                  # 37 residual: must NOT fire
+    'OTHER = "print(1)"',
+    'globals()["UNRELATED"] = input()',
+    _EX + "OTHER)",                                  # 40 unrelated store: must NOT fire
 ]) + chr(10)
-_EXEC_MUST_FIRE = [7, 9, 12, 14]
+_EXEC_MUST_FIRE = [7, 9, 12, 14] + [15, 17, 18, 19, 22, 25, 28, 31, 36]
 
 
 def check_exec_constant_rule():
@@ -107,7 +134,7 @@ def check_exec_constant_rule():
         errs = data.get("errors") or []
         lines = sorted(r["start"]["line"] for r in data.get("results", [])
                        if r.get("check_id", "").endswith(rule))
-        check(rule + ": fires on 7,9,12,14 only (not exec of a constant)",
+        check(rule + ": fires on %s only (not exec of a constant)" % _EXEC_MUST_FIRE,
               not errs and lines == _EXEC_MUST_FIRE,
               "got lines %s, %d semgrep error(s)" % (lines, len(errs)))
 

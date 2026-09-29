@@ -35,6 +35,18 @@ def test_walker_reports_unit_and_sudoers_as_examined(tmp_path):
     assert sorted(f.relpath for f in files) == ["x.service", "y.sudoers"]
 
 
+def test_units_and_sudoers_do_not_count_as_code_for_the_scope_floor(tmp_path):
+    """Read as config, never as evidence that code was examined."""
+    for name in ("factory-cred-readback.service", "factory-cred.sudoers"):
+        assert not core.is_code(name), "%s must not satisfy the scope floor" % name
+    (tmp_path / "x.service").write_text("[Service]\n", encoding="utf-8")
+    (tmp_path / "y.sudoers").write_text("# none\n", encoding="utf-8")
+    stats = {}
+    files = core.walk_files(str(tmp_path), stats=stats)
+    assert len(files) == 2
+    assert stats["kept_code_files"] == 0
+
+
 def test_widening_did_not_admit_binaries_or_drop_source():
     assert not core.scannable("a.png"), "a binary-ish name must stay unscanned"
     assert core.scannable("a.py"), "source must stay scannable"

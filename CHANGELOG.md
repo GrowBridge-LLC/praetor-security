@@ -23,8 +23,17 @@ by the text engines. They do not count as code for the scope floor.
 
 The rule flagged `exec("...")` and `exec(NAME)` where `NAME` is a module string
 assigned once — neither is model output. It now skips a constant argument.
-Model output, `input()`, a reassigned name and a function parameter still fire
-(measured with semgrep 1.175.0; pinned in `tests/semgrep_live_check.py`).
+Still flagged: model output, `input()`, a function parameter, a second
+assignment of the same name, and concatenation, f-string or `%` with outside
+data. A rebind through `globals()["N"]`, `setattr(m, "N", v)`, `m.__dict__["N"]`
+or a `global N` write is invisible to constant propagation, so new rule arms
+match those explicitly (measured with semgrep 1.175.0; pinned in
+`tests/semgrep_live_check.py`).
+
+Residual, on purpose: a constant whose own text reads outside input, such as
+`exec("exec(input())")`, is flagged neither by this rule nor by
+`praetor-py-eval-exec`. This rule covers model output reaching a sink, and a
+constant is never model output.
 
 ### Fixed — a single-file scan silently skipped every suppression pass
 

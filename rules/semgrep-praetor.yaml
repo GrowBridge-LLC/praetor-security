@@ -189,20 +189,43 @@ rules:
       cwe: "CWE-78"
       owasp: "LLM02: Insecure Output Handling"
       references: ["https://owasp.org/www-project-top-10-for-large-language-model-applications/"]
-    patterns:
-      - pattern-either:
-          - pattern: os.system($RESP.$FIELD)
-          - pattern: subprocess.$F($RESP.choices[0].message.content, ...)
-          - pattern: eval($RESP.$FIELD)
-          - pattern: exec($COMPLETION)
-      # MEASURED 2026-09-29 with semgrep 1.175.0 on six cases: exec of a module
-      # string constant assigned once, exec of a literal, exec of model output,
-      # of input(), of a reassigned name, of a function parameter. Before this
-      # line the rule fired on all six. After it, only the last four -- constant
-      # propagation makes "..." also match a name bound once to a string, so a
-      # reassigned or otherwise non-constant argument still fires.
-      # tests/semgrep_live_check.py pins the exact lines.
-      - pattern-not: exec("...")
+    # MEASURED 2026-09-29 with semgrep 1.175.0; tests/semgrep_live_check.py pins
+    # the exact lines. The pattern-not skips exec of a literal and of a name bound
+    # once to a string (constant propagation makes "..." match that name too), the
+    # same exemption praetor-py-eval-exec already has (lines 53-54 above).
+    # Still fires: model output, input(), a parameter, concatenation, f-string or
+    # % with outside data, an alias of outside data, and a second plain assignment
+    # of the same name. Constant propagation does NOT see a rebind through
+    # globals()["N"], setattr(m, "N", v) or m.__dict__["N"], nor a `global N`
+    # write in a function followed by a module-level exec(N): the two arms below
+    # match those. The regex arm ties the stored key to the exec'd name by
+    # backreference; a metavariable-comparison cannot, because it compares the
+    # propagated VALUE of the name, not its text (measured).
+    # RESIDUAL, on purpose: a constant whose own text reads outside input, e.g.
+    # exec("exec(input())"), is flagged neither here nor by praetor-py-eval-exec.
+    # This rule's scope is model output reaching a sink, and a constant is never
+    # model output.
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: os.system($RESP.$FIELD)
+              - pattern: subprocess.$F($RESP.choices[0].message.content, ...)
+              - pattern: eval($RESP.$FIELD)
+              - pattern: exec($COMPLETION)
+          - pattern-not: exec("...")
+      - patterns:
+          - pattern-regex: (?:\bglobals\(\)\s*\[\s*|\.__dict__\s*\[\s*|\bsetattr\([^,()]+,\s*)["'](?P<STORED>[A-Za-z_]\w*)["'][\s\S]*?(?P<SINK>\bexec\(\s*(?P=STORED)\s*\))
+          - focus-metavariable: $SINK
+      - patterns:
+          - pattern-inside: |
+              def $F(...):
+                  ...
+                  global $NAME
+                  ...
+                  $NAME = $V
+                  ...
+              ...
+          - pattern: exec($NAME)
 
   - id: praetor-ai-hardcoded-system-prompt-secret
     languages: [python, javascript, typescript]
