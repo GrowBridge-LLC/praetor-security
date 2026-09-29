@@ -14,6 +14,7 @@ Responsibilities:
 from __future__ import annotations
 
 import ast
+import os
 
 from core import Finding, Severity, Confidence
 
@@ -218,33 +219,88 @@ EXEC_CONSTANT_REASON = (
     "exec/eval of a module string constant proven never rebound (AST): not model output"
 )
 _SINKS = ("exec", "eval")
-# Any reference to these, as a name or an attribute, makes a rebind possible
-# without a visible `N = ...`. `modules` covers sys.modules; `__dict__` covers
-# both module and instance dicts. Conservative on purpose: a hit KEEPS the finding.
-_REBIND_CAPABLE = frozenset({
-    "globals", "vars", "locals", "setattr", "delattr", "__dict__",
-    "__builtins__", "importlib", "modules",
-})
+# What can rebind a module global without a visible `N = ...`, and when.
+#
+# * globals()/locals()/vars(...) and `.__dict__` hand out a namespace dict. They
+#   are allowed ONLY as the direct value of a Load subscript -- `globals()["k"]`
+#   read, or read then called. Bound to a name, passed on, stored/deleted
+#   through, or given `.update`/`.setdefault`/`.pop` -> unproven.
+# * setattr/delattr (and __setattr__/__delattr__) rebind N only when their
+#   object IS this module. That needs a way to reach the module object: sys
+#   `modules`, `__import__`, `import_module`, `reload`, `__spec__`/`__loader__`,
+#   importing the file's own stem or `__main__`, or `__name__` used anywhere but
+#   a comparison. If none exists, setattr is on some OTHER object. In particular
+#   importlib.util.module_from_spec returns a NEW module with its own namespace;
+#   mutating it cannot rebind this file's globals.
+# * Frames and function globals reach the namespace directly: f_globals,
+#   f_locals, __globals__, _getframe, currentframe, tb/gi/cr/ag_frame, f_back;
+#   so do `__builtins__` and the inspect/gc/ctypes modules -> always unproven.
+# * getattr with a non-constant name can reach any of the above, and a string
+#   constant spelling one of them can be fed to getattr -> unproven.
+# * import_module / reload / __import__ -> always unproven. `import
+#   importlib.util` and importlib.util.* are fine.
+_NS_CALLS = frozenset({"globals", "locals", "vars"})
+_SETTERS = frozenset({"setattr", "delattr", "__setattr__", "__delattr__"})
+_SELF_REACH = frozenset({"modules", "__import__", "import_module", "reload",
+                         "__spec__", "__loader__", "__main__"})
+_ALWAYS = frozenset({"f_globals", "f_locals", "__globals__", "_getframe",
+                     "currentframe", "tb_frame", "gi_frame", "cr_frame",
+                     "ag_frame", "f_back", "__builtins__",
+                     "__import__", "import_module", "reload"})
+_ALWAYS_MODULES = frozenset({"inspect", "gc", "ctypes"})
+# "__main__" is left out: as a string it only matters through modules /
+# __import__ / import_module, which are caught by name.
+_SPELLED = (_NS_CALLS | _SETTERS | _SELF_REACH | _ALWAYS | {"__dict__"}) - {"__main__"}
 
 
 def _is_str(node) -> bool:
     return isinstance(node, ast.Constant) and isinstance(node.value, str)
 
 
-def _bindings_and_hazards(tree, name: str, depth: int = 0):
+def _is_load_subscript_value(node, parent) -> bool:
+    p = parent.get(node)
+    return (isinstance(p, ast.Subscript) and p.value is node
+            and isinstance(p.ctx, ast.Load))
+
+
+def _bindings_and_hazards(tree, name: str, stem=None, depth: int = 0):
     """(stores of `name` as AST nodes, hazard found?) over the whole tree."""
-    stores, hazard = [], False
+    parent = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
+    stores, hazard, setters, self_reach = [], False, False, False
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name):
-            if node.id == name and not isinstance(node.ctx, ast.Load):
-                stores.append(node)                    # Store or Del, any scope
-            if node.id in _REBIND_CAPABLE:
+        if isinstance(node, (ast.Name, ast.Attribute)):
+            is_name = isinstance(node, ast.Name)
+            ident = node.id if is_name else node.attr
+            if ident == name and not isinstance(node.ctx, ast.Load):
+                if is_name:
+                    stores.append(node)                # Store or Del, any scope
+                else:
+                    hazard = True                      # obj.N = ... / del obj.N
+            if ident in _ALWAYS:
                 hazard = True
-        elif isinstance(node, ast.Attribute):
-            if node.attr in _REBIND_CAPABLE:
+            if ident in _SETTERS:
+                setters = True
+            if ident in _SELF_REACH:
+                self_reach = True
+            if ident == "__name__" and is_name \
+                    and not isinstance(parent.get(node), ast.Compare):
+                self_reach = True
+            if ident in _NS_CALLS:
+                call = parent.get(node)
+                if not (is_name and isinstance(call, ast.Call) and call.func is node
+                        and _is_load_subscript_value(call, parent)):
+                    hazard = True
+            if ident == "__dict__" and not (
+                    not is_name and _is_load_subscript_value(node, parent)):
                 hazard = True
-            if node.attr == name and not isinstance(node.ctx, ast.Load):
-                hazard = True                          # mod.N = ... / del mod.N
+            if ident == "getattr":
+                call = parent.get(node)
+                if not (isinstance(call, ast.Call) and call.func is node
+                        and len(call.args) >= 2 and _is_str(call.args[1])):
+                    hazard = True                      # dynamic attribute name
+        elif _is_str(node):
+            if node.value in _SPELLED:
+                hazard = True                          # getattr(x, "f_globals")
         elif isinstance(node, (ast.Global, ast.Nonlocal)):
             if name in node.names:
                 hazard = True
@@ -255,12 +311,25 @@ def _bindings_and_hazards(tree, name: str, depth: int = 0):
             if node.name == name:
                 stores.append(node)
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "importlib":
-                hazard = True
+            dotted = [a.name for a in node.names]
+            if isinstance(node, ast.ImportFrom) and node.module:
+                dotted.append(node.module)
+            for d in dotted:
+                parts = d.split(".")
+                if parts[0] in _ALWAYS_MODULES:
+                    hazard = True
+                # `import __main__`, `import pkg.<stem>`, `from . import <stem>`
+                if "__main__" in parts or (stem is not None and stem in parts):
+                    self_reach = True
             for a in node.names:
                 bound = a.asname or a.name.split(".")[0]
-                if a.name == "*" or bound == name or bound in _REBIND_CAPABLE:
+                if a.name == "*" or bound == name or a.name in _ALWAYS \
+                        or a.name in _NS_CALLS:        # `from builtins import globals as g`
                     hazard = True
+                if a.name in _SETTERS:                 # an alias still calls setattr
+                    setters = True
+                if a.name in _SELF_REACH:
+                    self_reach = True
         elif isinstance(node, ast.ExceptHandler):
             if node.name == name:
                 stores.append(node)
@@ -273,32 +342,37 @@ def _bindings_and_hazards(tree, name: str, depth: int = 0):
         elif type(node).__name__ in ("TypeVar", "ParamSpec", "TypeVarTuple"):
             if getattr(node, "name", None) == name:
                 stores.append(node)
-        elif isinstance(node, ast.Call):
+        if isinstance(node, ast.Call):
             # Another exec/eval could rebind `name` from a string. A constant
             # argument is parsed and held to the same proof; anything else is a
-            # hazard (it is flagged on its own line anyway).
+            # hazard (it is flagged on its own line anyway). `compile` only as the
+            # builtin name, so re.compile("...") is not parsed as Python.
             fn = node.func
-            fname = fn.id if isinstance(fn, ast.Name) else (
-                fn.attr if isinstance(fn, ast.Attribute) else None)
-            if fname in _SINKS + ("compile",):
-                arg = node.args[0] if node.args else None
-                if isinstance(arg, ast.Name) and arg.id == name:
-                    continue
-                if not _is_str(arg) or depth >= 3:
-                    hazard = True
-                    continue
-                try:
-                    inner = ast.parse(arg.value)
-                except (SyntaxError, ValueError):
-                    hazard = True
-                    continue
-                s2, h2 = _bindings_and_hazards(inner, name, depth + 1)
-                if s2 or h2:
-                    hazard = True
+            is_sink = ((isinstance(fn, ast.Name) and fn.id in _SINKS + ("compile",))
+                       or (isinstance(fn, ast.Attribute) and fn.attr in _SINKS))
+            if not is_sink:
+                continue
+            arg = node.args[0] if node.args else None
+            if isinstance(arg, ast.Name) and arg.id == name:
+                continue
+            if not _is_str(arg) or depth >= 3:
+                hazard = True
+                continue
+            try:
+                inner = ast.parse(arg.value)
+            except (SyntaxError, ValueError):
+                hazard = True
+                continue
+            s2, h2 = _bindings_and_hazards(inner, name, stem, depth + 1)
+            if s2 or h2:
+                hazard = True
+    # Unknown stem: a self-import cannot be ruled out, so setattr is unproven.
+    if setters and (self_reach or stem is None):
+        hazard = True
     return stores, hazard
 
 
-def exec_constant_proven(source: str, line: int) -> bool:
+def exec_constant_proven(source: str, line: int, module_stem=None) -> bool:
     """True only when the exec/eval on `line` provably runs a string constant.
 
     Proven when the line holds exactly one `exec(ARG)` / `eval(ARG)` (one
@@ -307,9 +381,11 @@ def exec_constant_proven(source: str, line: int) -> bool:
     (a plain single-target Assign); bound nowhere else in any scope (no
     AugAssign, AnnAssign, walrus, for/with/except/import/def/class/del/match
     target, no parameter); never declared `global`/`nonlocal`; in a module that
-    never references globals/vars/locals/setattr/delattr/__dict__/__builtins__/
-    importlib/sys.modules, has no star import, and never stores `.N` on any
-    object. Everything else -- including a parse error -- is NOT proven.
+    passes the namespace, setter and frame limits in the comment block above,
+    has no star import, and never stores `.N` on any object. `module_stem` is
+    the file's own module name (for the self-import check); None -> any
+    setattr/delattr is unproven. Everything else, including a parse error, is
+    NOT proven.
     """
     try:
         tree = ast.parse(source)
@@ -329,7 +405,7 @@ def exec_constant_proven(source: str, line: int) -> bool:
     if not isinstance(arg, ast.Name):
         return False
     name = arg.id
-    stores, hazard = _bindings_and_hazards(tree, name)
+    stores, hazard = _bindings_and_hazards(tree, name, module_stem)
     if hazard or len(stores) != 1:
         return False
     only = stores[0]
@@ -352,7 +428,8 @@ def apply_exec_constant_proof(findings: list, read_source) -> list:
         if f.file not in cache:
             cache[f.file] = read_source(f)
         src = cache[f.file]
-        if src and exec_constant_proven(src, f.line):
+        stem = os.path.splitext(os.path.basename(f.file.replace("\\", "/")))[0]
+        if src and exec_constant_proven(src, f.line, stem or None):
             f.filtered = True
             f.filter_reason = EXEC_CONSTANT_REASON
     return findings

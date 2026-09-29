@@ -151,6 +151,30 @@ def check_exec_constant_filtered():
               len(act2) == 1, "active=%d rc=%d" % (len(act2), rc2))
 
 
+def check_guard_shape_filtered():
+    """The reduced real-target shape (tests/exec_constant_guard_fixture.txt),
+    scanned as test_factory_cred.py: its exec of the constant ends up FILTERED."""
+    rule = "praetor-ai-llm-output-to-shell"
+    with open(os.path.join(HERE, "exec_constant_guard_fixture.txt"), encoding="utf-8") as fh:
+        text = fh.read()
+    line = text.split(chr(10)).index("EXEC(NET_GUARD)") + 1
+    src = text.replace("EXEC(", _EX)
+    with tempfile.TemporaryDirectory() as td:
+        d = os.path.join(td, "guard")
+        os.makedirs(d)
+        with open(os.path.join(d, "test_factory_cred.py"), "w", encoding="utf-8") as fh:
+            fh.write(src)
+        out = os.path.join(td, "guard-out")
+        p = run_praetor(d, "--out", out)
+        with open(os.path.join(out, "praetor-report.json"), encoding="utf-8") as fh:
+            data = json.load(fh)
+    act = [f.get("line") for f in data.get("findings", []) if f.get("rule_id") == rule]
+    fil = [f.get("line") for f in data.get("filtered", []) if f.get("rule_id") == rule]
+    check(rule + ": real guard shape, line %d FILTERED" % line,
+          line in fil and line not in act,
+          "active=%s filtered=%s rc=%d" % (act, fil, p.returncode))
+
+
 def check_exec_constant_rule():
     rule = "praetor-ai-llm-output-to-shell"
     with tempfile.TemporaryDirectory() as td:
@@ -267,6 +291,7 @@ def main():
 
     check_exec_constant_rule()
     check_exec_constant_filtered()
+    check_guard_shape_filtered()
 
     print("== %s ==" % ("ALL LIVE CHECKS PASSED" if not failures
                         else "LIVE CHECK FAILURES: " + ", ".join(failures)))
