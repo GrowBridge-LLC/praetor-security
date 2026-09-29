@@ -203,31 +203,44 @@ rules:
     #   OpenAI      X.chat.completions.create / X.completions.create /
     #               X.beta.chat.completions.parse / X.responses.create
     #   Anthropic   X.messages.create / X.messages.stream
-    #   Ollama      ollama.chat / ollama.generate
+    #   Ollama      ollama.chat / ollama.generate, and Client/AsyncClient as
+    #               X.chat(model=, messages=, ...) / X.generate(model=, prompt=, ...)
+    #               (keyword-anchored; bot.chat(message=) and gen.generate(seed=)
+    #               measured NOT to match)
     #   Gemini      X.generate_content / X.generate_content_async
-    # (2) Field paths, for a response that arrives as a bare parameter:
-    #   OpenAI chat / streaming / legacy / Responses:  .choices[i].message.content,
-    #     .choices[i].delta.content, .choices[i].text, .output_text
-    #   OpenAI tool call:     .choices[i].message.tool_calls[j].function.arguments
-    #   Anthropic text / tool_use:  .content[i].text, .content[i].input
-    #   LangChain LLMResult:  .generations[i][j].text
-    # Dropped on measurement: bare `.message.content` / `["message"]["content"]`
-    # (matched chat-platform payloads; Ollama is covered by the call) and a bare
-    # `.text` / `.content` (requests / httpx bodies).
-    # X.messages.create also names non-LLM SDKs (e.g. SMS); a false positive
-    # there needs that result to reach exec, which is itself worth reading.
+    # (2) For a response that arrives as a bare PARAMETER: the OpenAI prefixes a
+    #   handler binds (.choices[i], .message, .message.tool_calls[, [j]],
+    #   .delta) and the leaf paths (.message.content, .delta.content, .text,
+    #   .output_text, tool_calls[j].function.arguments), the same paths through
+    #   raw JSON (["choices"][i]["message"]["content"] and tool-call arguments),
+    #   Anthropic .content[i].text / .content[i].input, LangChain
+    #   .generations[i][j].text, and an Anthropic content-block loop variable:
+    #   `for b in X.content:` + `if b.type == "text" | "tool_use":` -> b.text /
+    #   b.input, or `"".join(b.text for b in X.content)`. Bare `.content` is never
+    #   a source (requests/httpx bodies); measured: iterating
+    #   requests.get(u).content, or `for x in obj.content:` without an Anthropic
+    #   block-type check, does not fire.
+    # OVER-MATCH, documented: the join form matches any `.text` join over any
+    # `.content`; X.messages.create / X.responses.create / X.completions.create
+    # also name non-LLM APIs (SMS SDKs, Django related managers such as
+    # survey.responses.create). Either needs that value to reach an exec sink to
+    # be reported, which is itself worth reading. The call source taints echoed
+    # metadata too, so .model / .id / .system_fingerprint / .usage / .created are
+    # sanitizers.
     # RESIDUAL: model output stored on `self` in one method and executed in
     # another is outside semgrep OSS taint (no cross-method field flow), as is
     # any flow across files.
     # Propagators: list.append / list.extend / file-like .write by side effect,
-    # so accumulated stream chunks stay tainted. Booleans are not assumed safe,
-    # so `content or ""` stays tainted.
+    # so accumulated stream chunks stay tainted. Booleans are not assumed safe
+    # (set explicitly; `content or ""` was measured to propagate without it).
     # Sinks: exec/eval/compile; os.system/os.popen, os.exec*/os.spawn*/
     # os.posix_spawn*, pty.spawn, runpy.run_path/run_module;
-    # asyncio.create_subprocess_shell (any argument) and create_subprocess_exec
-    # (program); subprocess with shell=True (any argument), otherwise the first
-    # positional or `args=` argument. `from X import f` aliases are resolved by
-    # semgrep (measured). No sanitizers: nothing makes model output safe to run.
+    # asyncio.create_subprocess_shell / create_subprocess_exec (ANY argument: exec
+    # spreads argv, so `("bash", "-c", model)` is the common shape); subprocess
+    # first positional or `args=` argument only, so model text passed as
+    # `input=` / `cwd=` / `env=` to a fixed command does not fire. `from X import
+    # f` aliases are resolved by semgrep (measured). No sanitizers for content:
+    # nothing makes model output safe to run.
     # MEASURED with semgrep 1.175.0; tests/semgrep_live_check.py pins the lines.
     mode: taint
     options:
@@ -241,6 +254,8 @@ rules:
       - pattern: $C.messages.stream(...)
       - pattern: ollama.chat(...)
       - pattern: ollama.generate(...)
+      - pattern: $C.chat(model=$MD, messages=$MS, ...)
+      - pattern: $C.generate(model=$MD, prompt=$P, ...)
       - pattern: $C.generate_content(...)
       - pattern: $C.generate_content_async(...)
       - pattern: $R.choices[$I].message.content
@@ -251,6 +266,28 @@ rules:
       - pattern: $R.content[$I].text
       - pattern: $R.content[$I].input
       - pattern: $R.generations[$I][$J].text
+      - pattern: $R.choices[$I]
+      - pattern: $R.choices[$I].message
+      - pattern: $R.choices[$I].message.tool_calls
+      - pattern: $R.choices[$I].message.tool_calls[$J]
+      - pattern: $R.choices[$I].delta
+      - pattern: $R["choices"][$I]["message"]["content"]
+      - pattern: $R["choices"][$I]["message"]["tool_calls"][$J]["function"]["arguments"]
+      - patterns:
+          - pattern-inside: |
+              for $B in $M.content:
+                ...
+          - pattern-inside: |
+              if $B.type == "$T":
+                ...
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(text|tool_use)$
+          - pattern-either:
+              - pattern: $B.text
+              - pattern: $B.input
+      - pattern: $S.join($B.text for $B in $M.content)
+      - pattern: $S.join($B.text for $B in $M.content if $COND)
     pattern-propagators:
       - pattern: $L.append($X)
         from: $X
@@ -264,6 +301,12 @@ rules:
         from: $X
         to: $B
         by-side-effect: true
+    pattern-sanitizers:
+      - pattern: $R.model
+      - pattern: $R.id
+      - pattern: $R.system_fingerprint
+      - pattern: $R.usage
+      - pattern: $R.created
     pattern-sinks:
       - pattern: exec(...)
       - pattern: eval(...)
@@ -279,10 +322,7 @@ rules:
       - pattern: runpy.run_path(...)
       - pattern: runpy.run_module(...)
       - pattern: asyncio.create_subprocess_shell(...)
-      - patterns:
-          - pattern: asyncio.create_subprocess_exec($X, ...)
-          - focus-metavariable: $X
-      - pattern: subprocess.$F(..., shell=True, ...)
+      - pattern: asyncio.create_subprocess_exec(...)
       - patterns:
           - pattern: subprocess.$F($X, ...)
           - focus-metavariable: $X

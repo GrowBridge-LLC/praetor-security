@@ -845,6 +845,22 @@ def main(argv=None):
                 "--allow-degraded to gate on findings alone.\n"
             )
             return 3
+        # Config read with no detector for its semantics. Admitting `.service` /
+        # `.sudoers` to the walker turned a target made only of them from
+        # "NOTHING WAS EXAMINED, exit 3" into a clean exit 0 -- measured with
+        # --fail-on HIGH on one unit plus one NOPASSWD drop-in. Nothing here reads
+        # ExecStart= or sudo grants yet, so such a target is still not measured.
+        if (scan_files and not args.allow_degraded
+                and all(os.path.splitext(f.relpath.lower())[1] in core.CONFIG_ONLY_EXTS
+                        for f in scan_files)):
+            sys.stderr.write(
+                "praetor: NOTHING WAS MEASURED -- every file read is config "
+                "(systemd unit / sudoers drop-in) that no detector interprets, so "
+                "--fail-on has no basis to pass.\n"
+                f"  target: {target}\n"
+                "  Pass --allow-degraded to gate on findings alone.\n"
+            )
+            return 3
         # 🔴 THE SCOPE FLOOR. The floor above catches a tree emptied ENTIRELY and
         # nothing else -- "one file defeats it" is stated in its own comment, and
         # that is precisely how this defect survived. Measured on a real npm

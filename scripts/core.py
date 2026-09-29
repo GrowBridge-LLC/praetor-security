@@ -654,6 +654,12 @@ CODE_EXTS = {
 }
 
 
+#: Read as configuration, with no detector that understands their semantics
+#: (ExecStart=, sudo grants). A target made ONLY of these has not been measured;
+#: praetor.py's --fail-on floor exits 3 for it.
+CONFIG_ONLY_EXTS = {".service", ".sudoers"}
+
+
 def is_code(name: str) -> bool:
     """Whether `name` is executable-language source, for the scope floor only.
 

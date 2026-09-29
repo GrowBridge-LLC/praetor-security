@@ -180,17 +180,68 @@ _EXEC_CASES = chr(10).join([
     "buf = io.StringIO()",
     "buf.write(code)",
     _EX + "buf.getvalue())",                                 # 101 write propagator
+    # Taint review r2 (Grok, Opus), each measured on semgrep 1.175.0.
+    "async def a4():",
+    "    await asyncio.create_" + "subprocess_exec(\"bash\", \"-c\", resp.choices[0].message.content)",  # 103
+    "    await asyncio.create_" + "subprocess_exec(sys.executable, \"-c\", resp.choices[0].message.content)",  # 104
+    "def dispatch(resp):",
+    "    message = resp.choices[0].message",
+    "    for call in message.tool_calls:",
+    "        args = json.loads(call.function.arguments)",
+    "        " + _SP + 'run(args["cmd"], shell=True)',       # 109 handler, OpenAI tools
+    "def handle(msg):",
+    "    for block in msg.content:",
+    '        if block.type == "tool_use":',
+    "            " + _SYS + 'block.input["cmd"])',           # 113 handler, Anthropic tool_use
+    '    code = "".join(b.text for b in msg.content)',
+    "    " + _EX + "code)",                                  # 115 handler, Anthropic text
+    _SYS + "resp.model)",                                    # 116 metadata: no
+    _SP + 'run(["echo", resp.id])',                          # 117 metadata: no
+    'oc = ollama.Client(host="http://gpu-box:11434")',
+    'r = oc.chat(model="llama3", messages=msgs)',
+    _EX + "r.message.content)",                              # 120 Ollama Client
+    _SP + 'run(["bash", "-lc", code])',                      # 121 list argv, no shell
+    "def run_model_command2(resp):",
+    "    " + _SYS + 'resp["choices"][0]["message"]["content"])',  # 123 raw JSON param
+    'with aclient.messages.stream(model="m", max_tokens=1, messages=msgs) as stream:',
+    "    for text in stream.text_stream:",
+    "        " + _EX + "text)",                              # 126 Anthropic stream
+    'out = ""',
+    "for chunk in stream2:",
+    '    out += chunk.choices[0].delta.content or ""',
+    _EX + "out)",                                            # 130 += accumulation
+    _SYS + '"cmd {}".format(code))',                         # 131 .format
+    _SYS + '"cmd %s" % code)',                               # 132 % format
+    _SP + 'run("grep -f - hosts", shell=True, input=code)',  # 133 stdin only: no
+    'for part in requests.get("u").content:',
+    "    " + _EX + "part)",                                  # 135 requests body: no
+    "for item in obj.content:",
+    "    " + _EX + "item.text)",                             # 137 no block-type check: no
+    "for item in page.content:",
+    '    if item.type == "paragraph":',
+    "        " + _EX + "item.text)",                         # 140 non-Anthropic type: no
+    "ac = ollama.AsyncClient()",
+    "async def b():",
+    '    r2b = await ac.generate(model="llama3", prompt="x")',
+    "    " + _EX + "r2b.response)",                          # 144 Ollama AsyncClient
+    'room = matrix.chat(room_id="r", message="hi")',
+    _EX + "room.body)",                                      # 146 non-LLM .chat: no
+    "g = generator.generate(seed=1)",
+    _EX + "g.text)",                                         # 148 non-LLM .generate: no
 ]) + chr(10)
 _EXEC_MUST_FIRE = [11, 13, 14, 15, 18, 19, 20, 21, 22, 23, 25, 27, 29, 30, 32,
                    34, 37, 38, 40,
                    44, 46, 48, 53, 54, 57, 64, 66, 67, 75, 78, 81, 84, 87,
-                   91, 93, 94, 95, 96, 97, 98, 101]
+                   91, 93, 94, 95, 96, 97, 98, 101,
+                   103, 104, 109, 113, 115, 120, 121, 123, 126, 130, 131, 132, 144]
 # Must NOT fire on the LLM rule (asserted by the line-exact equality above):
 # 5, 6 constant/literal; 7, 9, 42 input/parameter; 36 requests .text;
 # 60 generate_content result rebound to requests; 61, 62 chat-platform payloads;
 # 72 RESIDUAL -- model output stored on self in one method and executed in
 # another is outside semgrep OSS taint (no cross-method field flow); 89 an
-# assembled constant.
+# assembled constant; 116, 117 echoed response metadata (.model / .id);
+# 133 model text only on stdin of a fixed command; 135, 137, 140 non-Anthropic
+# `.content` iteration; 146, 148 non-LLM .chat / .generate calls.
 # praetor-py-eval-exec must still fire on exec of input() and of a variable
 # holding input() (7, 42), on a parameter (9), and on an assembled constant (89,
 # measured); never on the folded constant or the literal.

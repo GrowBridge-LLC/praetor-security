@@ -50,3 +50,16 @@ def test_units_and_sudoers_do_not_count_as_code_for_the_scope_floor(tmp_path):
 def test_widening_did_not_admit_binaries_or_drop_source():
     assert not core.scannable("a.png"), "a binary-ish name must stay unscanned"
     assert core.scannable("a.py"), "source must stay scannable"
+
+
+def test_a_target_of_only_units_and_sudoers_is_not_measured(tmp_path):
+    """Reading these files must not turn "nothing examined" (exit 3) into a clean
+    exit 0: nothing interprets ExecStart= or sudo grants yet."""
+    import praetor
+    (tmp_path / "x.service").write_text("[Service]\nExecStart=/bin/true\n", encoding="utf-8")
+    (tmp_path / "y.sudoers").write_text("deploy ALL=(root) NOPASSWD: ALL\n", encoding="utf-8")
+    engines = ["--engines", "secrets,aisec", "--quiet"]
+    assert praetor.main([str(tmp_path), "--fail-on", "HIGH"] + engines) == 3
+    assert praetor.main([str(tmp_path / "y.sudoers"), "--fail-on", "HIGH"] + engines) == 3
+    (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+    assert praetor.main([str(tmp_path), "--fail-on", "HIGH"] + engines) == 0

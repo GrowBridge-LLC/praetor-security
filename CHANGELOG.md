@@ -17,7 +17,9 @@ Because PRAETOR is a security scanner, entries say what a change means for
 `*.service` and `*.sudoers` were not in the text allowlist, so a scan skipped
 them without a word: not scanned and clean, never opened. A unit names what runs
 and with which credentials; a sudoers drop-in grants privilege. Both are now read
-by the text engines. They do not count as code for the scope floor.
+by the text engines. They do not count as code for the scope floor, and nothing
+interprets `ExecStart=` or sudo grants yet, so a target made only of them still
+exits 3 under `--fail-on` ("nothing was measured"), as it did before.
 
 ### Changed — `praetor-ai-llm-output-to-shell` is now a taint rule
 
@@ -26,12 +28,15 @@ reported as model output reaching a shell. Exempting constants afterwards could
 not be made sound: each attempt (pattern exclusions, then a one-file rebind
 proof) was bypassed by a new reflective rebind. The rule now runs in semgrep
 taint mode and fires only when model output reaches a sink. Sources are the
-model-client call result (OpenAI, Anthropic, Ollama, Gemini, sync and `await`)
-plus response field paths for a response passed in as a parameter, including
-tool-call arguments. Taint follows variables, held intermediates, concatenation,
+model-client call result (OpenAI, Anthropic, Ollama module and `Client`, Gemini,
+sync and `await`) plus, for a response passed in as a parameter, the OpenAI
+prefixes a handler binds, leaf and raw-JSON field paths, tool-call arguments and
+Anthropic content-block loops. Echoed metadata (`.model`, `.id`, ...) is not
+tainted. Taint follows variables, held intermediates, concatenation,
 f-strings, local functions, `or` defaults and list/stream accumulation. Sinks are
 `exec`/`eval`/`compile`, `os.system`/`os.popen`/`os.exec*`/`os.spawn*`,
-`pty.spawn`, `runpy`, `asyncio` subprocess creation and `subprocess`. Model
+`pty.spawn`, `runpy`, `asyncio` subprocess creation (any argument) and the
+command argument of `subprocess`. Model
 output stored on `self` and run from another method is not tracked. `exec` of a
 constant, a literal, `input()` or a bare parameter no longer fires on this rule;
 `praetor-py-eval-exec` still reports `exec`/`eval` of non-literal data.
