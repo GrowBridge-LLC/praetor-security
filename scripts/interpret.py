@@ -246,7 +246,17 @@ _SINKS = ("exec", "eval")
 #   stem or `__main__`, `__name__` outside a comparison) are kept on top.
 # * Frames and function globals reach the namespace directly: f_globals,
 #   f_locals, __globals__, _getframe, currentframe, tb/gi/cr/ag_frame, f_back;
-#   so do the inspect/gc/ctypes modules -> always unproven.
+#   so do trace/profile/audit hooks and an interactive breakpoint/help ->
+#   always unproven.
+# * IMPORTS ARE AN ALLOWLIST (_ALLOWED_MODULES below). A blocklist can never be
+#   complete: typing.get_type_hints evals annotation strings in this module's
+#   globals, unittest.mock.patch writes attributes by name, and namedtuple,
+#   dataclasses, pickle, doctest, code, runpy, functools... exec strings or set
+#   attributes too. Every import, in any scope, must name an allowed module
+#   exactly; relative imports and anything else -> unproven.
+# * A non-constant globals()/locals()/vars() key is allowed only as an
+#   immediate call in an expression statement (`globals()["case_" + x]()`):
+#   bound or passed on, a computed key can spell "__builtins__".
 # * A sink inside a CLASS BODY is unproven: class bodies look names up with
 #   LOAD_NAME, through the metaclass __prepare__ namespace, before globals. A
 #   function nested in a class uses LOAD_GLOBAL / LOAD_DEREF and skips the class
@@ -261,8 +271,39 @@ _SELF_REACH = frozenset({"modules", "__import__", "import_module", "reload",
 _ALWAYS = frozenset({"f_globals", "f_locals", "__globals__", "_getframe",
                      "currentframe", "tb_frame", "gi_frame", "cr_frame",
                      "ag_frame", "f_back", "__builtins__", "builtins",
-                     "__import__", "import_module", "reload"})
-_ALWAYS_MODULES = frozenset({"inspect", "gc", "ctypes", "builtins"})
+                     "__import__", "import_module", "reload",
+                     "settrace", "setprofile", "addaudithook",
+                     "settrace_all_threads", "setprofile_all_threads"})
+# Builtins that hand the running interpreter to input (pdb / pydoc prompts).
+# Name references only: `args.help` is an attribute, not the builtin.
+_INTERACTIVE_BUILTINS = frozenset({"breakpoint", "help"})
+# Every entry: why importing it cannot write this module's globals or builtins.
+# Reaching the module or a frame through it (os.sys.modules, sys._getframe,
+# threading.settrace) still trips the name rules above.
+_ALLOWED_MODULES = frozenset({
+    "ast",            # parses/unparses; literal_eval evaluates literals only
+    "base64",         # pure byte encoders
+    "datetime",       # value types, no code evaluation or attribute writes
+    "http.client",    # HTTP client; talks to sockets, not to caller globals
+    "http.server",    # HTTP server; CGI handlers run SUBPROCESSES, not this interpreter
+    "json",           # parse/serialise; hooks are caller-supplied callables (checked here)
+    "os",             # OS calls; os.system/exec* start OTHER processes
+    "re",             # regex engine, no code evaluation
+    "secrets",        # random tokens
+    "shutil",         # file operations
+    "socket",         # sockets
+    "ssl",            # TLS wrappers
+    "subprocess",     # child processes, separate interpreters
+    "sys",            # modules/_getframe/settrace/setprofile/addaudithook stay name hazards
+    "tempfile",       # temp files/dirs
+    "threading",      # threads run caller code; settrace/setprofile stay name hazards
+    "time",           # clocks
+    "pathlib",        # path objects, file I/O
+    "importlib.util", # spec_from_file_location / module_from_spec build a NEW module
+})
+# `from X import name` limits. importlib.util: only the two names the proof uses.
+_FROM_ALLOWED_NAMES = {"importlib.util": frozenset({"module_from_spec",
+                                                    "spec_from_file_location"})}
 # "__main__" is left out: as a string it only matters through modules /
 # __import__ / import_module, which are caught by name.
 _SPELLED = (_NS_CALLS | _SETTERS | _GETTERS | _SELF_REACH | _ALWAYS
@@ -410,7 +451,7 @@ def _bindings_and_hazards(tree, name, stem=None, depth: int = 0, skip=None):
             ident = node.id if is_name else node.attr
             call = parent.get(node)
             called = isinstance(call, ast.Call) and call.func is node
-            if ident in _ALWAYS:
+            if ident in _ALWAYS or (is_name and ident in _INTERACTIVE_BUILTINS):
                 hazard = True
             if ident in _SELF_REACH:
                 self_reach = True
@@ -426,6 +467,13 @@ def _bindings_and_hazards(tree, name, stem=None, depth: int = 0, skip=None):
                 if not (is_name and called and not call.args and not call.keywords
                         and _is_load_subscript_value(call, parent)):
                     hazard = True
+                elif not _is_str(_subscript_key(parent.get(call))):
+                    # Computed key: only `globals()[k]()` as a statement.
+                    sub = parent.get(call)
+                    use = parent.get(sub)
+                    if not (isinstance(use, ast.Call) and use.func is sub
+                            and isinstance(parent.get(use), ast.Expr)):
+                        hazard = True
             if ident == "__dict__":
                 sub = parent.get(node)
                 if not (not is_name and _is_load_subscript_value(node, parent)
@@ -446,13 +494,23 @@ def _bindings_and_hazards(tree, name, stem=None, depth: int = 0, skip=None):
             if node.value in _SPELLED:
                 hazard = True                          # getattr(x, "f_globals")
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            # ALLOWLIST: every imported module must be named exactly.
+            if isinstance(node, ast.ImportFrom):
+                if node.level or node.module not in _ALLOWED_MODULES:
+                    hazard = True
+                only = _FROM_ALLOWED_NAMES.get(node.module)
+                for a in node.names:
+                    if a.name in _SPELLED or (only is not None and a.name not in only):
+                        hazard = True
+            else:
+                for a in node.names:
+                    if a.name not in _ALLOWED_MODULES:
+                        hazard = True
             dotted = [a.name for a in node.names]
             if isinstance(node, ast.ImportFrom) and node.module:
                 dotted.append(node.module)
             for d in dotted:
                 parts = d.split(".")
-                if parts[0] in _ALWAYS_MODULES:
-                    hazard = True
                 # `import __main__`, `import pkg.<stem>`, `from . import <stem>`
                 if "__main__" in parts or (stem is not None and stem in parts):
                     self_reach = True

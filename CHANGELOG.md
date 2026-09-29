@@ -35,8 +35,10 @@ argument-less `globals()`/`locals()`/`vars()` only as a read subscript,
 constant name, and `setattr`/`delattr` only on a name bound once, in the same
 scope, to `importlib.util.module_from_spec(...)` (a new module with its own
 namespace). A package `__init__.py` gets no module name, so any setter there
-keeps the finding. Anything unproven stays active, including a parse error or
-an alias.
+keeps the finding. Imports are an allowlist of standard modules that cannot
+write the caller's globals or builtins; anything else (`typing`, `unittest`,
+`pickle`, `dataclasses`, ...) keeps the finding. Anything unproven stays
+active, including a parse error or an alias.
 
 Residual, on purpose: the constant's own text is not inspected, so
 `exec("exec(input())")` is filtered (`praetor-py-eval-exec` exempts literals the

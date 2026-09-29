@@ -82,10 +82,10 @@ FILTERED = {
     "other literal exec, no N": ('N = "x"\nEXEC("print(2)")\nEXEC(N)', 3),
     # RESIDUAL by design: the constant's own text is not inspected.
     "residual: constant reads input": ('EXEC("EXEC(input())")', 1),
-    # Commit 5 FLIPS (were NOT_FILTERED in commit 4): a Load-subscript read of
-    # globals() cannot store, and a bare `import importlib` rebinds nothing.
+    # Commit 5 FLIP (was NOT_FILTERED in commit 4): a constant-key Load read of
+    # globals() cannot store. (Commit 5 also flipped a bare `import importlib`
+    # here; commit 7's import allowlist flips it back -- see R7_ACTIVE.)
     "read of globals()": ('N = "x"\nx = globals()["N"]\nEXEC(N)', 3),
-    "importlib": ('import importlib\nN = "x"\nEXEC(N)', 3),
 }
 
 NOT_FILTERED = {
@@ -376,7 +376,6 @@ R6_FILTERED = {
          '    m = mfs(s)\n    delattr(m, "k")\nEXEC(N)', 6),
     "locals() read": ('N = "x"\nv = locals()["k"]\nEXEC(N)', 3),
     "getattr constant safe name": ('N = "x"\nv = getattr(o, "name")\nEXEC(N)', 3),
-    "attrgetter constant": ('from operator import attrgetter\nN = "x"\nv = attrgetter("a.b")(o)\nEXEC(N)', 4),
 }
 
 
@@ -433,3 +432,67 @@ def test_r6_runs_without_match_nodes(monkeypatch):
     finally:
         monkeypatch.undo()
         importlib.reload(interpret)
+
+
+# --------------------------------------------------------------------------- #
+# Commit 7: AST-proof review round 2 -- imports are an ALLOWLIST
+# --------------------------------------------------------------------------- #
+
+R7_ACTIVE = {
+    # Grok r2 snippets (each returned True on 57e3f9d, measured)
+    "grok r2: typing.get_type_hints evals an annotation":
+        ('import typing\nN = "safe"\ndef f(x: \'globals().update(N="pwned") or int\'):\n'
+         '    pass\ntyping.get_type_hints(f)\nEXEC(N)', 6),
+    "grok r2: mock.patch.object on this module":
+        ('import sys\nfrom unittest.mock import patch\nN = "safe"\n'
+         'patch.object(sys.modules[__name__], "N", "pwned").start()\nEXEC(N)', 5),
+    "grok r2: mock.patch.object on builtins via computed globals key":
+        ('from unittest.mock import patch\npatch.object(globals()["__" + "built" + "ins" + "__"], '
+         '"exec", lambda code: input()).start()\nEXEC("print(1)")', 3),
+    # FLIPPED back from commit 5 (was filtered): importlib is not allowlisted,
+    # only importlib.util.
+    "bare import importlib": ('import importlib\nN = "x"\nEXEC(N)', 3),
+    # FLIPPED from commit 6 (was filtered): operator is not allowlisted.
+    "attrgetter constant": ('from operator import attrgetter\nN = "x"\nv = attrgetter("a.b")(o)\nEXEC(N)', 4),
+    "relative import": ('from . import helpers\nN = "x"\nEXEC(N)', 3),
+    "relative import of an allowlisted name": ('from .os import path\nN = "x"\nEXEC(N)', 3),
+    "from sys import modules": ('from sys import modules\nN = "x"\nEXEC(N)', 3),
+    "importlib.util other name": ('from importlib.util import find_spec\nN = "x"\nEXEC(N)', 3),
+    "allowed module, spelled name": ('from sys import settrace\nN = "x"\nEXEC(N)', 3),
+    "sys.settrace": ('import sys\nN = "x"\nsys.settrace(t)\nEXEC(N)', 4),
+    "threading.setprofile": ('import threading\nN = "x"\nthreading.setprofile(t)\nEXEC(N)', 4),
+    "sys.addaudithook": ('import sys\nN = "x"\nsys.addaudithook(h)\nEXEC(N)', 4),
+    "breakpoint()": ('N = "x"\nbreakpoint()\nEXEC(N)', 3),
+    "import inside a function": ('N = "x"\ndef f():\n    import pickle\nEXEC(N)', 4),
+    # computed globals() key used any way but an immediate call statement
+    "computed key bound": ('N = "x"\nb = globals()["__" + "builtins__"]\nEXEC(N)', 3),
+    "computed key passed": ('N = "x"\nf(globals()["a" + "b"])\nEXEC(N)', 3),
+    "computed key call result used": ('N = "x"\nr = globals()["case_" + k]()\nEXEC(N)', 3),
+}
+
+for _mod in ("typing", "unittest", "collections", "dataclasses", "pickle",
+             "functools", "code", "runpy", "doctest"):
+    R7_ACTIVE["import " + _mod] = ('import %s\nN = "x"\nEXEC(N)' % _mod, 3)
+
+
+@pytest.mark.parametrize("case", sorted(R7_ACTIVE))
+def test_r7_cases_stay_active(case):
+    src, line = R7_ACTIVE[case]
+    assert not _proven(src, line, "app"), case
+
+
+R7_FILTERED = {
+    "every allowlisted import":
+        ("import ast, base64, datetime, http.client, http.server, json, os, re\n"
+         "import secrets, shutil, socket, ssl, subprocess, sys, tempfile, threading, time\n"
+         "import importlib.util\nfrom pathlib import Path\n"
+         "from importlib.util import module_from_spec, spec_from_file_location\n"
+         'N = "x"\nEXEC(N)', 7),
+    "computed key immediate call statement": ('N = "x"\nglobals()["case_" + k]()\nEXEC(N)', 3),
+}
+
+
+@pytest.mark.parametrize("case", sorted(R7_FILTERED))
+def test_r7_allowlisted_shapes_still_prove(case):
+    src, line = R7_FILTERED[case]
+    assert _proven(src, line, "app"), case
