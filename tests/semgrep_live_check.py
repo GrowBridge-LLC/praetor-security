@@ -113,7 +113,42 @@ _EXEC_CASES = chr(10).join([
     'globals()["UNRELATED"] = input()',
     _EX + "OTHER)",                                  # 40 unrelated store: must NOT fire
 ]) + chr(10)
-_EXEC_MUST_FIRE = [7, 9, 12, 14] + [15, 17, 18, 19, 22, 25, 28, 31, 36]
+# Commit 4 redesign: the RULE now fires on every exec line, constants included
+# (4, 5, 37, 40 were must-not-fire before). The constant exemption moved to the
+# AST proof in interpret.py, checked end to end by check_exec_constant_filtered().
+_EXEC_MUST_FIRE = [4, 5, 7, 9, 12, 14, 15, 17, 18, 19, 22, 25, 28, 31, 36, 37, 40]
+
+
+def _scan_one(src, td, tag):
+    d = os.path.join(td, tag)
+    os.makedirs(d)
+    with open(os.path.join(d, "app.py"), "w", encoding="utf-8") as fh:
+        fh.write(src)
+    out = os.path.join(td, tag + "-out")
+    p = run_praetor(d, "--out", out)
+    with open(os.path.join(out, "praetor-report.json"), encoding="utf-8") as fh:
+        return json.load(fh), p.returncode
+
+
+def check_exec_constant_filtered():
+    """End to end through praetor.py: the constant is FILTERED with the AST
+    reason; the same file with a globals() rebind stays ACTIVE."""
+    rule = "praetor-ai-llm-output-to-shell"
+    reason = "exec/eval of a module string constant proven never rebound (AST): not model output"
+    const = "NET_GUARD = r'''" + chr(10) + "import socket" + chr(10) + "'''" + chr(10)
+    sink = _EX + "NET_GUARD)" + chr(10)
+    rebind = 'globals()["NET_GUARD"] = input()' + chr(10)
+    with tempfile.TemporaryDirectory() as td:
+        d1, rc1 = _scan_one(const + sink, td, "const")
+        act1 = [f for f in d1.get("findings", []) if f.get("rule_id") == rule]
+        fil1 = [f for f in d1.get("filtered", []) if f.get("rule_id") == rule]
+        check(rule + ": module constant ends up FILTERED with the AST reason",
+              not act1 and len(fil1) == 1 and fil1[0].get("filter_reason") == reason,
+              "active=%d filtered=%d rc=%d" % (len(act1), len(fil1), rc1))
+        d2, rc2 = _scan_one(const + rebind + sink, td, "rebound")
+        act2 = [f for f in d2.get("findings", []) if f.get("rule_id") == rule]
+        check(rule + ": the same constant after a globals() rebind stays ACTIVE",
+              len(act2) == 1, "active=%d rc=%d" % (len(act2), rc2))
 
 
 def check_exec_constant_rule():
@@ -134,7 +169,7 @@ def check_exec_constant_rule():
         errs = data.get("errors") or []
         lines = sorted(r["start"]["line"] for r in data.get("results", [])
                        if r.get("check_id", "").endswith(rule))
-        check(rule + ": fires on %s only (not exec of a constant)" % _EXEC_MUST_FIRE,
+        check(rule + ": fires on exactly %s" % _EXEC_MUST_FIRE,
               not errs and lines == _EXEC_MUST_FIRE,
               "got lines %s, %d semgrep error(s)" % (lines, len(errs)))
 
@@ -231,6 +266,7 @@ def main():
                   ("detail said: ..." + detail[-110:]) if "rejected" in detail else "")
 
     check_exec_constant_rule()
+    check_exec_constant_filtered()
 
     print("== %s ==" % ("ALL LIVE CHECKS PASSED" if not failures
                         else "LIVE CHECK FAILURES: " + ", ".join(failures)))

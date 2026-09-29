@@ -695,7 +695,10 @@ def main(argv=None):
 
     # -- interpretation -------------------------------------------------------
     _log(args.quiet, "  interpreting (dedup + rank + FP filter)...")
-    result = interpret.interpret(all_findings)
+    result = interpret.interpret(
+        all_findings,
+        read_source=lambda f: read_text(_finding_source_path(target, f.file)) if f.file else None,
+    )
 
     # 🔴 What the GATE judges, captured BEFORE --min-severity edits the list.
     # --min-severity is a DISPLAY filter and --fail-on is a GATE, and they were

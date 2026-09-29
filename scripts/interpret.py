@@ -13,6 +13,8 @@ Responsibilities:
 
 from __future__ import annotations
 
+import ast
+
 from core import Finding, Severity, Confidence
 
 # engine priority when severity+confidence tie (higher = surfaced first)
@@ -195,6 +197,167 @@ def _fp_assessment(f: Finding) -> tuple:
     return False, ""
 
 
+# --------------------------------------------------------------------------- #
+# exec/eval of a module string constant -- an AST PROOF, not a pattern
+# --------------------------------------------------------------------------- #
+# `praetor-ai-llm-output-to-shell` fires on every `exec($X)`. Semgrep cannot prove
+# that a name bound once to a string is never rebound (globals()/setattr/__dict__/
+# `global` writes are invisible to its constant propagation, and two review rounds
+# found gaps in every pattern that tried). So the exemption lives here, as a proof
+# over Python's own AST, and anything not proven is KEPT.
+#
+# RESIDUALS, stated so nobody reads this as complete:
+#   * the constant's own TEXT is not inspected -- exec("exec(input())") is
+#     filtered by design (praetor-py-eval-exec exempts literals the same way);
+#     the rule's scope is model output reaching a sink, and a constant is not;
+#   * a rebind from ANOTHER file (`import this_mod; this_mod.N = x`) is outside a
+#     one-file proof.
+
+EXEC_CONSTANT_RULE = "praetor-ai-llm-output-to-shell"
+EXEC_CONSTANT_REASON = (
+    "exec/eval of a module string constant proven never rebound (AST): not model output"
+)
+_SINKS = ("exec", "eval")
+# Any reference to these, as a name or an attribute, makes a rebind possible
+# without a visible `N = ...`. `modules` covers sys.modules; `__dict__` covers
+# both module and instance dicts. Conservative on purpose: a hit KEEPS the finding.
+_REBIND_CAPABLE = frozenset({
+    "globals", "vars", "locals", "setattr", "delattr", "__dict__",
+    "__builtins__", "importlib", "modules",
+})
+
+
+def _is_str(node) -> bool:
+    return isinstance(node, ast.Constant) and isinstance(node.value, str)
+
+
+def _bindings_and_hazards(tree, name: str, depth: int = 0):
+    """(stores of `name` as AST nodes, hazard found?) over the whole tree."""
+    stores, hazard = [], False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            if node.id == name and not isinstance(node.ctx, ast.Load):
+                stores.append(node)                    # Store or Del, any scope
+            if node.id in _REBIND_CAPABLE:
+                hazard = True
+        elif isinstance(node, ast.Attribute):
+            if node.attr in _REBIND_CAPABLE:
+                hazard = True
+            if node.attr == name and not isinstance(node.ctx, ast.Load):
+                hazard = True                          # mod.N = ... / del mod.N
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            if name in node.names:
+                hazard = True
+        elif isinstance(node, ast.arg):
+            if node.arg == name:
+                stores.append(node)                    # a parameter shadows it
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name == name:
+                stores.append(node)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "importlib":
+                hazard = True
+            for a in node.names:
+                bound = a.asname or a.name.split(".")[0]
+                if a.name == "*" or bound == name or bound in _REBIND_CAPABLE:
+                    hazard = True
+        elif isinstance(node, ast.ExceptHandler):
+            if node.name == name:
+                stores.append(node)
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)):
+            if node.name == name:
+                stores.append(node)
+        elif isinstance(node, ast.MatchMapping):
+            if node.rest == name:
+                stores.append(node)
+        elif type(node).__name__ in ("TypeVar", "ParamSpec", "TypeVarTuple"):
+            if getattr(node, "name", None) == name:
+                stores.append(node)
+        elif isinstance(node, ast.Call):
+            # Another exec/eval could rebind `name` from a string. A constant
+            # argument is parsed and held to the same proof; anything else is a
+            # hazard (it is flagged on its own line anyway).
+            fn = node.func
+            fname = fn.id if isinstance(fn, ast.Name) else (
+                fn.attr if isinstance(fn, ast.Attribute) else None)
+            if fname in _SINKS + ("compile",):
+                arg = node.args[0] if node.args else None
+                if isinstance(arg, ast.Name) and arg.id == name:
+                    continue
+                if not _is_str(arg) or depth >= 3:
+                    hazard = True
+                    continue
+                try:
+                    inner = ast.parse(arg.value)
+                except (SyntaxError, ValueError):
+                    hazard = True
+                    continue
+                s2, h2 = _bindings_and_hazards(inner, name, depth + 1)
+                if s2 or h2:
+                    hazard = True
+    return stores, hazard
+
+
+def exec_constant_proven(source: str, line: int) -> bool:
+    """True only when the exec/eval on `line` provably runs a string constant.
+
+    Proven when the line holds exactly one `exec(ARG)` / `eval(ARG)` (one
+    positional argument, no keywords) and ARG is a str literal, or a bare name
+    N that is: assigned exactly once, at module top level, by `N = "<str>"`
+    (a plain single-target Assign); bound nowhere else in any scope (no
+    AugAssign, AnnAssign, walrus, for/with/except/import/def/class/del/match
+    target, no parameter); never declared `global`/`nonlocal`; in a module that
+    never references globals/vars/locals/setattr/delattr/__dict__/__builtins__/
+    importlib/sys.modules, has no star import, and never stores `.N` on any
+    object. Everything else -- including a parse error -- is NOT proven.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return False
+    calls = [n for n in ast.walk(tree)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+             and n.func.id in _SINKS and n.lineno == line]
+    if len(calls) != 1:
+        return False
+    call = calls[0]
+    if len(call.args) != 1 or call.keywords:
+        return False
+    arg = call.args[0]
+    if _is_str(arg):
+        return True
+    if not isinstance(arg, ast.Name):
+        return False
+    name = arg.id
+    stores, hazard = _bindings_and_hazards(tree, name)
+    if hazard or len(stores) != 1:
+        return False
+    only = stores[0]
+    for stmt in tree.body:                             # module top level only
+        if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+                and stmt.targets[0] is only and _is_str(stmt.value)):
+            return True
+    return False
+
+
+def apply_exec_constant_proof(findings: list, read_source) -> list:
+    """Filter `EXEC_CONSTANT_RULE` findings whose sink is proven constant.
+
+    `read_source(finding)` returns the file text or None. Unreadable -> KEPT.
+    """
+    cache: dict = {}
+    for f in findings:
+        if f.filtered or f.rule_id != EXEC_CONSTANT_RULE or f.line <= 0:
+            continue
+        if f.file not in cache:
+            cache[f.file] = read_source(f)
+        src = cache[f.file]
+        if src and exec_constant_proven(src, f.line):
+            f.filtered = True
+            f.filter_reason = EXEC_CONSTANT_REASON
+    return findings
+
+
 def apply_fp_filter(findings: list) -> list:
     for f in findings:
         is_fp, reason = _fp_assessment(f)
@@ -204,11 +367,13 @@ def apply_fp_filter(findings: list) -> list:
     return findings
 
 
-def interpret(findings: list) -> dict:
+def interpret(findings: list, read_source=None) -> dict:
     """
     Full pipeline. Returns:
       {active: [...], filtered: [...], summary: {...}}
     """
+    if read_source is not None:
+        apply_exec_constant_proof(findings, read_source)
     merged = dedup(findings)
     merged = apply_fp_filter(merged)
 

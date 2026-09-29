@@ -22,18 +22,19 @@ by the text engines. They do not count as code for the scope floor.
 ### Fixed — `praetor-ai-llm-output-to-shell` fired on `exec` of a constant
 
 The rule flagged `exec("...")` and `exec(NAME)` where `NAME` is a module string
-assigned once — neither is model output. It now skips a constant argument.
-Still flagged: model output, `input()`, a function parameter, a second
-assignment of the same name, and concatenation, f-string or `%` with outside
-data. A rebind through `globals()["N"]`, `setattr(m, "N", v)`, `m.__dict__["N"]`
-or a `global N` write is invisible to constant propagation, so new rule arms
-match those explicitly (measured with semgrep 1.175.0; pinned in
-`tests/semgrep_live_check.py`).
+assigned once — neither is model output. The rule still fires on every `exec`:
+semgrep cannot prove a name is never rebound (`globals()`, `setattr`, `__dict__`
+and `global` writes are invisible to its constant propagation). Instead, a
+Python AST proof in the false-positive stage moves the finding to FILTERED, with
+its reason, only when the argument is a str literal or a name assigned exactly
+once at module top level to a str, bound nowhere else, never `global`/`nonlocal`,
+in a module that never touches `globals`/`vars`/`locals`/`setattr`/`delattr`/
+`__dict__`/`__builtins__`/`importlib`/`sys.modules` or star-imports. Anything
+unproven stays active, including a parse error or an alias.
 
-Residual, on purpose: a constant whose own text reads outside input, such as
-`exec("exec(input())")`, is flagged neither by this rule nor by
-`praetor-py-eval-exec`. This rule covers model output reaching a sink, and a
-constant is never model output.
+Residual, on purpose: the constant's own text is not inspected, so
+`exec("exec(input())")` is filtered (`praetor-py-eval-exec` exempts literals the
+same way). A rebind from another file is outside a one-file proof.
 
 ### Fixed — a single-file scan silently skipped every suppression pass
 
