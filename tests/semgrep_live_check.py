@@ -65,118 +65,68 @@ def check(name, ok, detail=""):
         failures.append(name)
 
 
-# praetor-ai-llm-output-to-shell is judged in TWO STAGES. Stage 1, semgrep: the
-# rule fires on EVERY exec line below, constants included -- semgrep cannot prove
-# a name is never rebound, so check_exec_constant_rule() pins that it fires on
-# all of them. Stage 2, PRAETOR: interpret.exec_constant_proven() moves a finding
-# to FILTERED only when an AST proof shows the argument is a never-rebound str
-# constant; check_exec_constant_filtered() and check_guard_shape_filtered() pin
-# that end to end. `exec` is spelled in fragments for the same self-scan reason
-# as _VULN.
+# praetor-ai-llm-output-to-shell is a TAINT rule (redesigned 2026-09-29): it
+# fires only where model-client output reaches exec/eval/compile, os.system/
+# os.popen or subprocess, directly or through variables, concatenation,
+# f-strings and local functions. A constant, a literal, input() or a bare
+# parameter must NOT fire on it -- exec of input() or of a parameter is
+# praetor-py-eval-exec's job, and that rule is pinned here too. Sinks are
+# spelled in fragments for the same self-scan reason as _VULN.
 _EX = "ex" + "ec("
+_EV = "ev" + "al("
+_SYS = "os." + "system("
+_POP = "os." + "popen("
+_SP = "sub" + "process."
 _EXEC_CASES = chr(10).join([
+    "import os, " + _SP[:-1],
     "NET_GUARD = r'''",
     "import socket",
     "'''",
-    _EX + "NET_GUARD)",                              # 4  constant, assigned once
-    _EX + '"print(1)")',                             # 5  literal
-    "resp = client.chat(p)",
-    _EX + "resp.choices[0].message.content)",        # 7  model output
-    "code = input()",
-    _EX + "code)",                                   # 9  input()
-    'G = "x"',
-    "G = input()",
-    _EX + "G)",                                      # 12 reassigned
-    "def f(s):",
-    "    " + _EX + "s)",                             # 14 parameter
-    # Review round 1: shapes that must still fire, and one pinned residual.
-    _EX + '"x" + input())',                          # 15 concat
-    'p = "x"',
-    _EX + "p + input())",                            # 17 constant + input
-    _EX + 'f"x{input()}")',                          # 18 f-string
-    _EX + '"x%s" % input())',                        # 19 % format
-    "a = input()",
-    "b = a",
-    _EX + "b)",                                      # 22 alias
-    'CMD = "print(1)"',
-    'globals()["CMD"] = input()',
-    _EX + "CMD)",                                    # 25 globals() rebind
-    'S1 = "print(1)"',
-    'setattr(mod, "S1", resp.choices[0].message.content)',
-    _EX + "S1)",                                     # 28 setattr rebind
-    'D1 = "print(1)"',
-    'mod.__dict__["D1"] = input()',
-    _EX + "D1)",                                     # 31 __dict__ rebind
-    'GL = "print(1)"',
-    "def g(payload):",
-    "    global GL",
-    "    GL = payload",
-    _EX + "GL)",                                     # 36 global rebind
-    _EX + '"' + _EX + 'input())")',                  # 37 residual: must NOT fire
-    'OTHER = "print(1)"',
-    'globals()["UNRELATED"] = input()',
-    _EX + "OTHER)",                                  # 40 unrelated store: must NOT fire
+    _EX + "NET_GUARD)",                                      # 5  constant: no
+    _EX + '"print(1)")',                                     # 6  literal: no
+    _EX + "input())",                                        # 7  input: eval-exec only
+    "def g(s):",
+    "    " + _EX + "s)",                                     # 9  parameter: eval-exec only
+    'resp = client.chat.completions.create(model="m", messages=[])',
+    _EX + "resp.choices[0].message.content)",                # 11 direct
+    "code = resp.choices[0].message.content",
+    _EX + "code)",                                           # 13 via variable
+    _EX + '"x = 1" + code)',                                 # 14 concatenated
+    _EX + 'f"x = {code}")',                                  # 15 f-string
+    "def run(c):",
+    "    return c",
+    _EX + "run(code))",                                      # 18 through a local function
+    _SP + "run(code, shell=True)",                           # 19 shell=True
+    _SP + 'run(["sh", "-c", code], shell=True)',             # 20 shell=True, list
+    _SYS + "code)",                                          # 21 os.system
+    _POP + "code)",                                          # 22 os.popen
+    _EV + "resp.choices[0].text)",                           # 23 legacy completions
+    'msg = anthropic_client.messages.create(model="m", max_tokens=1, messages=[])',
+    _EX + "msg.content[0].text)",                            # 25 Anthropic
+    'r2 = oai.responses.create(model="m", input="x")',
+    _EX + "r2.output_text)",                                 # 27 OpenAI Responses
+    'o = ollama.chat(model="m", messages=[])',
+    _EX + "o.message.content)",                              # 29 Ollama
+    _EX + 'o["message"]["content"])',                        # 30 Ollama dict
+    'lc = llm.generate(["x"])',
+    _EX + "lc.generations[0][0].text)",                      # 32 LangChain
+    'gm = model.generate_content("x")',
+    _EX + "gm.text)",                                        # 34 Gemini
+    'page = requests.get("u")',
+    _EX + "page.text)",                                      # 36 requests .text: no
+    _SP + "check_output(code)",                              # 37 subprocess first arg
+    "comp" + 'ile(code, "f", "exec")',                       # 38 compile
+    "def run_model_command(resp):",
+    "    " + _SYS + "resp.choices[0].message.content)",      # 40 corpus shape
+    "v = input()",
+    _EX + "v)",                                              # 42 input via var: eval-exec only
 ]) + chr(10)
-# Commit 4 redesign: the RULE now fires on every exec line, constants included
-# (4, 5, 37, 40 were must-not-fire before). The constant exemption moved to the
-# AST proof in interpret.py, checked end to end by check_exec_constant_filtered().
-_EXEC_MUST_FIRE = [4, 5, 7, 9, 12, 14, 15, 17, 18, 19, 22, 25, 28, 31, 36, 37, 40]
-
-
-def _scan_one(src, td, tag):
-    d = os.path.join(td, tag)
-    os.makedirs(d)
-    with open(os.path.join(d, "app.py"), "w", encoding="utf-8") as fh:
-        fh.write(src)
-    out = os.path.join(td, tag + "-out")
-    p = run_praetor(d, "--out", out)
-    with open(os.path.join(out, "praetor-report.json"), encoding="utf-8") as fh:
-        return json.load(fh), p.returncode
-
-
-def check_exec_constant_filtered():
-    """End to end through praetor.py: the constant is FILTERED with the AST
-    reason; the same file with a globals() rebind stays ACTIVE."""
-    rule = "praetor-ai-llm-output-to-shell"
-    reason = "exec/eval of a module string constant proven never rebound (AST): not model output"
-    const = "NET_GUARD = r'''" + chr(10) + "import socket" + chr(10) + "'''" + chr(10)
-    sink = _EX + "NET_GUARD)" + chr(10)
-    rebind = 'globals()["NET_GUARD"] = input()' + chr(10)
-    with tempfile.TemporaryDirectory() as td:
-        d1, rc1 = _scan_one(const + sink, td, "const")
-        act1 = [f for f in d1.get("findings", []) if f.get("rule_id") == rule]
-        fil1 = [f for f in d1.get("filtered", []) if f.get("rule_id") == rule]
-        check(rule + ": module constant ends up FILTERED with the AST reason",
-              not act1 and len(fil1) == 1 and fil1[0].get("filter_reason") == reason,
-              "active=%d filtered=%d rc=%d" % (len(act1), len(fil1), rc1))
-        d2, rc2 = _scan_one(const + rebind + sink, td, "rebound")
-        act2 = [f for f in d2.get("findings", []) if f.get("rule_id") == rule]
-        check(rule + ": the same constant after a globals() rebind stays ACTIVE",
-              len(act2) == 1, "active=%d rc=%d" % (len(act2), rc2))
-
-
-def check_guard_shape_filtered():
-    """The reduced real-target shape (tests/exec_constant_guard_fixture.txt),
-    scanned as test_factory_cred.py: its exec of the constant ends up FILTERED."""
-    rule = "praetor-ai-llm-output-to-shell"
-    with open(os.path.join(HERE, "exec_constant_guard_fixture.txt"), encoding="utf-8") as fh:
-        text = fh.read()
-    line = text.split(chr(10)).index("EXEC(NET_GUARD)") + 1
-    src = text.replace("EXEC(", _EX)
-    with tempfile.TemporaryDirectory() as td:
-        d = os.path.join(td, "guard")
-        os.makedirs(d)
-        with open(os.path.join(d, "test_factory_cred.py"), "w", encoding="utf-8") as fh:
-            fh.write(src)
-        out = os.path.join(td, "guard-out")
-        p = run_praetor(d, "--out", out)
-        with open(os.path.join(out, "praetor-report.json"), encoding="utf-8") as fh:
-            data = json.load(fh)
-    act = [f.get("line") for f in data.get("findings", []) if f.get("rule_id") == rule]
-    fil = [f.get("line") for f in data.get("filtered", []) if f.get("rule_id") == rule]
-    check(rule + ": real guard shape, line %d FILTERED" % line,
-          line in fil and line not in act,
-          "active=%s filtered=%s rc=%d" % (act, fil, p.returncode))
+_EXEC_MUST_FIRE = [11, 13, 14, 15, 18, 19, 20, 21, 22, 23, 25, 27, 29, 30, 32,
+                   34, 37, 38, 40]
+# praetor-py-eval-exec must still fire on exec of input() and of a variable
+# holding input() (7, 42), and on a parameter (9); never on the constant or literal.
+_EVAL_EXEC_MUST_INCLUDE = [7, 9, 42]
+_EVAL_EXEC_MUST_EXCLUDE = [5, 6]
 
 
 def check_exec_constant_rule():
@@ -195,11 +145,21 @@ def check_exec_constant_rule():
             check(rule + ": semgrep produced JSON", False, "rc=%d" % p.returncode)
             return
         errs = data.get("errors") or []
-        lines = sorted(r["start"]["line"] for r in data.get("results", [])
-                       if r.get("check_id", "").endswith(rule))
-        check(rule + ": fires on exactly %s" % _EXEC_MUST_FIRE,
-              not errs and lines == _EXEC_MUST_FIRE,
-              "got lines %s, %d semgrep error(s)" % (lines, len(errs)))
+
+        def lines_of(rid):
+            return sorted({r["start"]["line"] for r in data.get("results", [])
+                           if r.get("check_id", "").endswith(rid)})
+
+        got = lines_of(rule)
+        check(rule + ": taint fires on exactly %s" % _EXEC_MUST_FIRE,
+              not errs and got == _EXEC_MUST_FIRE,
+              "got lines %s, %d semgrep error(s)" % (got, len(errs)))
+        ee = lines_of("praetor-py-eval-exec")
+        check("praetor-py-eval-exec: fires on exec of input()/a parameter %s, not on %s"
+              % (_EVAL_EXEC_MUST_INCLUDE, _EVAL_EXEC_MUST_EXCLUDE),
+              all(n in ee for n in _EVAL_EXEC_MUST_INCLUDE)
+              and not any(n in ee for n in _EVAL_EXEC_MUST_EXCLUDE),
+              "got lines %s" % ee)
 
 
 def main():
@@ -294,8 +254,6 @@ def main():
                   ("detail said: ..." + detail[-110:]) if "rejected" in detail else "")
 
     check_exec_constant_rule()
-    check_exec_constant_filtered()
-    check_guard_shape_filtered()
 
     print("== %s ==" % ("ALL LIVE CHECKS PASSED" if not failures
                         else "LIVE CHECK FAILURES: " + ", ".join(failures)))

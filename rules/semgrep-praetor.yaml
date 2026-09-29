@@ -189,19 +189,54 @@ rules:
       cwe: "CWE-78"
       owasp: "LLM02: Insecure Output Handling"
       references: ["https://owasp.org/www-project-top-10-for-large-language-model-applications/"]
-    # Fires on EVERY exec($COMPLETION), constants included, on purpose. Semgrep
-    # cannot prove a name bound once to a string is never rebound (constant
-    # propagation does not see globals()/setattr/__dict__/`global` writes; two
-    # review rounds found gaps in every pattern that tried). The exemption for a
-    # proven module string constant is an AST proof in PRAETOR's FP stage:
-    # scripts/interpret.py exec_constant_proven(), filtered with a reason, never
-    # dropped. tests/semgrep_live_check.py pins the lines this rule fires on.
-    patterns:
-      - pattern-either:
-          - pattern: os.system($RESP.$FIELD)
-          - pattern: subprocess.$F($RESP.choices[0].message.content, ...)
-          - pattern: eval($RESP.$FIELD)
-          - pattern: exec($COMPLETION)
+    # TAINT MODE (2026-09-29). The old pattern rule fired on every exec($X),
+    # constants included; every attempt to exempt a constant (pattern-not,
+    # regex arms, then a one-file AST rebind proof) was bypassed by a new
+    # reflective rebind each review round. The rule now fires only when model
+    # output reaches a sink, which is what its message says. exec of input(), a
+    # parameter or a constant is praetor-py-eval-exec's job, not this rule's.
+    #
+    # Sources, by SDK response shape:
+    #   OpenAI chat completions    resp.choices[i].message.content
+    #   OpenAI streaming chunk     chunk.choices[i].delta.content
+    #   OpenAI legacy completions  resp.choices[i].text
+    #   OpenAI Responses API       resp.output_text
+    #   Anthropic Messages         msg.content[i].text
+    #   Ollama chat                resp.message.content / resp["message"]["content"]
+    #   LangChain LLMResult        result.generations[i][j].text
+    #   Google Gemini              resp.text, ONLY when resp = X.generate_content(...):
+    #     a bare $R.text would also match requests' response.text.
+    # Omitted on purpose: a bare `.content` (LangChain AIMessage, but also
+    # requests/httpx bodies) -- too broad to call model output.
+    # Sinks: exec/eval/compile, os.system/os.popen, subprocess with shell=True
+    # (any argument), and the first argument of any subprocess call. No
+    # sanitizers: nothing makes model output safe to execute.
+    # MEASURED with semgrep 1.175.0; tests/semgrep_live_check.py pins the lines.
+    mode: taint
+    pattern-sources:
+      - pattern: $R.choices[$I].message.content
+      - pattern: $R.choices[$I].delta.content
+      - pattern: $R.choices[$I].text
+      - pattern: $R.output_text
+      - pattern: $R.content[$I].text
+      - pattern: $R.message.content
+      - pattern: $R["message"]["content"]
+      - pattern: $R.generations[$I][$J].text
+      - patterns:
+          - pattern-inside: |
+              $R = $C.generate_content(...)
+              ...
+          - pattern: $R.text
+    pattern-sinks:
+      - pattern: exec(...)
+      - pattern: eval(...)
+      - pattern: compile(...)
+      - pattern: os.system(...)
+      - pattern: os.popen(...)
+      - pattern: subprocess.$F(..., shell=True, ...)
+      - patterns:
+          - pattern: subprocess.$F($X, ...)
+          - focus-metavariable: $X
 
   - id: praetor-ai-hardcoded-system-prompt-secret
     languages: [python, javascript, typescript]
