@@ -228,8 +228,12 @@ rules:
     # also name non-LLM APIs (SMS SDKs, Django related managers such as
     # survey.responses.create). Either needs that value to reach an exec sink to
     # be reported, which is itself worth reading. The call source taints echoed
-    # metadata too, so .model / .id / .system_fingerprint / .usage / .created are
-    # sanitizers.
+    # metadata too. Attribute names cannot prove safety: model output can be
+    # stored under .model / .id / .usage on an arbitrary object. Reads of those
+    # fields still carry taint when they come from a known model-client call.
+    # A bare handler parameter's arbitrary attribute has no model provenance
+    # here; the generic os.system rule separately reports nonliteral shell
+    # arguments such as box.output.
     # KNOWN LIMITS (not detected, or over-matched):
     #  - other content-block loop spellings (`not in (...)` guards, isinstance
     #    checks, a comprehension bound to a name before the join, a handler
@@ -238,6 +242,8 @@ rules:
     #    executed in another; semgrep OSS has no field flow) and any flow
     #    across files;
     #  - only the SDKs listed above are sources;
+    #  - model output carried only in an arbitrary field of a bare handler
+    #    parameter has no LLM provenance (generic shell rules may still fire);
     #  - the over-matches documented above (join over any `.content`, and
     #    .create/.chat/.generate names shared with non-LLM APIs).
     # Propagators: list.append / list.extend / file-like .write by side effect,
@@ -247,8 +253,8 @@ rules:
     # os.posix_spawn*, pty.spawn, runpy.run_path/run_module;
     # asyncio.create_subprocess_shell / create_subprocess_exec (ANY argument: exec
     # spreads argv, so `("bash", "-c", model)` is the common shape); subprocess
-    # first positional or `args=` argument only, so model text passed as
-    # `input=` / `cwd=` / `env=` to a fixed command does not fire. `from X import
+    # first positional, `args=`, or `executable=` argument only, so model text
+    # passed as `input=` / `cwd=` / `env=` to a fixed command does not fire. `from X import
     # f` aliases are resolved by semgrep (measured). No sanitizers for content:
     # nothing makes model output safe to run.
     # MEASURED with semgrep 1.175.0; tests/semgrep_live_check.py pins the lines.
@@ -320,12 +326,6 @@ rules:
         from: $X
         to: $B
         by-side-effect: true
-    pattern-sanitizers:
-      - pattern: $R.model
-      - pattern: $R.id
-      - pattern: $R.system_fingerprint
-      - pattern: $R.usage
-      - pattern: $R.created
     pattern-sinks:
       - pattern: exec(...)
       - pattern: eval(...)
@@ -347,6 +347,9 @@ rules:
           - focus-metavariable: $X
       - patterns:
           - pattern: subprocess.$F(..., args=$X, ...)
+          - focus-metavariable: $X
+      - patterns:
+          - pattern: subprocess.$F(..., executable=$X, ...)
           - focus-metavariable: $X
 
   - id: praetor-ai-hardcoded-system-prompt-secret

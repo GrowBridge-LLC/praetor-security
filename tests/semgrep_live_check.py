@@ -195,8 +195,8 @@ _EXEC_CASES = chr(10).join([
     "            " + _SYS + 'block.input["cmd"])',           # 113 handler, Anthropic tool_use
     '    code = "".join(b.text for b in msg.content)',
     "    " + _EX + "code)",                                  # 115 handler, Anthropic text
-    _SYS + "resp.model)",                                    # 116 metadata: no
-    _SP + 'run(["echo", resp.id])',                          # 117 metadata: no
+    _SYS + "resp.model)",                                    # 116 metadata: fail safe
+    _SP + 'run(["echo", resp.id])',                          # 117 metadata: fail safe
     'oc = ollama.Client(host="http://gpu-box:11434")',
     'r = oc.chat(model="llama3", messages=msgs)',
     _EX + "r.message.content)",                              # 120 Ollama Client
@@ -257,14 +257,15 @@ _EXEC_MUST_FIRE = [11, 13, 14, 15, 18, 19, 20, 21, 22, 23, 25, 27, 29, 30, 32,
                    34, 37, 38, 40,
                    44, 46, 48, 53, 54, 57, 64, 66, 67, 75, 78, 81, 84, 87,
                    91, 93, 94, 95, 96, 97, 98, 101,
-                   103, 104, 109, 113, 115, 120, 121, 123, 126, 130, 131, 132, 144,
+                   103, 104, 109, 113, 115, 116, 117, 120, 121, 123, 126, 130, 131, 132, 144,
                    156, 160, 163, 166, 169, 171]
 # Must NOT fire on the LLM rule (asserted by the line-exact equality above):
 # 5, 6 constant/literal; 7, 9, 42 input/parameter; 36 requests .text;
 # 60 generate_content result rebound to requests; 61, 62 chat-platform payloads;
 # 72 RESIDUAL -- model output stored on self in one method and executed in
 # another is outside semgrep OSS taint (no cross-method field flow); 89 an
-# assembled constant; 116, 117 echoed response metadata (.model / .id);
+# assembled constant; 116, 117 still fire through `resp`'s earlier model-client
+# assignment in this combined fixture, not through metadata-named sources;
 # 133 model text only on stdin of a fixed command; 135, 137, 140 non-Anthropic
 # `.content` iteration; 146, 148 non-LLM .chat / .generate calls; 151 a
 # non-LLM `.choices[i]` (no bare .choices[i] source; line 46 still fires
@@ -307,6 +308,100 @@ def check_exec_constant_rule():
               all(n in ee for n in _EVAL_EXEC_MUST_INCLUDE)
               and not any(n in ee for n in _EVAL_EXEC_MUST_EXCLUDE),
               "got lines %s" % ee)
+
+
+def check_model_data_in_metadata_named_field():
+    """An arbitrary object's attribute name cannot sanitize model output."""
+    source = "\n".join([
+        "import asyncio",
+        "from types import SimpleNamespace",
+        "client = make_client()",
+        'r = client.chat.completions.create(model="x", messages=[])',
+        "box = SimpleNamespace(model=r.choices[0].message.content)",
+        'asyncio.create_' + 'subprocess_exec("bash", "-c", box.model)',
+        "",
+    ])
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "model_data.py")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(source)
+        p = subprocess.run(["semgrep", "scan", "--config", RULES, "--json",
+                            "--metrics=off", "--quiet", path],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace")
+        try:
+            data = json.loads(p.stdout)
+            hits = [r for r in data.get("results", [])
+                    if r.get("check_id", "").endswith("praetor-ai-llm-output-to-shell")]
+            check("model data in an arbitrary .model field reaches a subprocess sink",
+                  not data.get("errors") and [r["start"]["line"] for r in hits] == [6],
+                  "lines=%s errors=%d rc=%d" %
+                  ([r["start"]["line"] for r in hits], len(data.get("errors", [])),
+                   p.returncode))
+        except ValueError:
+            check("model data in an arbitrary .model field reaches a subprocess sink",
+                  False, "semgrep produced no JSON; rc=%d" % p.returncode)
+
+
+def check_model_data_in_handler_metadata_field():
+    """An unknown handler attribute still reaches the generic shell rule."""
+    source = "\n".join([
+        "import os",
+        "def handler(box):",
+        "    " + "os." + "system(box.output)",
+        "",
+    ])
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "handler_model.py")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(source)
+        p = subprocess.run(["semgrep", "scan", "--config", RULES, "--json",
+                            "--metrics=off", "--quiet", path],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace")
+        try:
+            data = json.loads(p.stdout)
+            generic = [r["start"]["line"] for r in data.get("results", [])
+                       if r.get("check_id", "").endswith("praetor-py-os-system-concat")]
+            llm = [r["start"]["line"] for r in data.get("results", [])
+                   if r.get("check_id", "").endswith("praetor-ai-llm-output-to-shell")]
+            check("unknown handler .output reaches generic shell rule without false LLM provenance",
+                  not data.get("errors") and generic == [3] and llm == [],
+                  "generic=%s llm=%s errors=%d rc=%d" %
+                  (generic, llm, len(data.get("errors", [])), p.returncode))
+        except ValueError:
+            check("unknown handler .output reaches generic shell rule without false LLM provenance",
+                  False, "semgrep produced no JSON; rc=%d" % p.returncode)
+
+
+def check_model_data_in_subprocess_executable():
+    """The executable keyword selects code to run, even with a fixed argv."""
+    source = "\n".join([
+        "import subprocess",
+        'r = client.chat.completions.create(model="m", messages=[])',
+        'subprocess.run(["placeholder"], executable=r.choices[0].message.content)',
+        'subprocess.Popen(["placeholder"], executable=r.choices[0].message.content)',
+        "",
+    ])
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "executable.py")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(source)
+        p = subprocess.run(["semgrep", "scan", "--config", RULES, "--json",
+                            "--metrics=off", "--quiet", path],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace")
+        try:
+            data = json.loads(p.stdout)
+            lines = [r["start"]["line"] for r in data.get("results", [])
+                     if r.get("check_id", "").endswith("praetor-ai-llm-output-to-shell")]
+            check("model output in subprocess executable= is a sink for run and Popen",
+                  not data.get("errors") and lines == [3, 4],
+                  "lines=%s errors=%d rc=%d" %
+                  (lines, len(data.get("errors", [])), p.returncode))
+        except ValueError:
+            check("model output in subprocess executable= is a sink for run and Popen",
+                  False, "semgrep produced no JSON; rc=%d" % p.returncode)
 
 
 def main():
@@ -401,6 +496,9 @@ def main():
                   ("detail said: ..." + detail[-110:]) if "rejected" in detail else "")
 
     check_exec_constant_rule()
+    check_model_data_in_metadata_named_field()
+    check_model_data_in_handler_metadata_field()
+    check_model_data_in_subprocess_executable()
 
     print("== %s ==" % ("ALL LIVE CHECKS PASSED" if not failures
                         else "LIVE CHECK FAILURES: " + ", ".join(failures)))

@@ -62,4 +62,49 @@ def test_a_target_of_only_units_and_sudoers_is_not_measured(tmp_path):
     assert praetor.main([str(tmp_path), "--fail-on", "HIGH"] + engines) == 3
     assert praetor.main([str(tmp_path / "y.sudoers"), "--fail-on", "HIGH"] + engines) == 3
     (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
-    assert praetor.main([str(tmp_path), "--fail-on", "HIGH"] + engines) == 0
+    assert praetor.main([str(tmp_path), "--fail-on", "HIGH"] + engines) == 3
+
+
+def test_unrelated_readme_does_not_make_units_and_sudoers_measured(tmp_path):
+    """Documentation cannot supply the missing unit/sudoers semantic detector."""
+    import praetor
+    (tmp_path / "x.service").write_text("[Service]\nExecStart=/bin/true\n", encoding="utf-8")
+    (tmp_path / "y.sudoers").write_text("deploy ALL=(root) NOPASSWD: ALL\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("ordinary documentation\n", encoding="utf-8")
+    engines = ["--engines", "secrets,aisec", "--quiet"]
+    assert praetor.main([str(tmp_path), "--fail-on", "HIGH"] + engines) == 3
+    (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+    assert praetor.main([str(tmp_path), "--fail-on", "HIGH"] + engines) == 3
+
+
+def test_secret_widened_unit_does_not_disappear_from_config_floor(tmp_path):
+    """The secrets walk can read config under vendor/ that the normal walk skips."""
+    import praetor
+    (tmp_path / "README.md").write_text("ordinary documentation\n", encoding="utf-8")
+    vendor = tmp_path / "vendor"
+    vendor.mkdir()
+    (vendor / "x.service").write_text("[Service]\nExecStart=/bin/true\n", encoding="utf-8")
+    engines = ["--engines", "secrets,aisec", "--quiet"]
+    assert praetor.main([str(tmp_path), "--fail-on", "HIGH"] + engines) == 3
+    (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+    assert praetor.main([str(tmp_path), "--fail-on", "HIGH"] + engines) == 3
+
+
+def test_config_only_waiver_keeps_engine_failure_floor(tmp_path, monkeypatch):
+    """A config waiver must not opt out of unrelated scanner failures."""
+    import engine_sast
+    import praetor
+
+    (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "app.service").write_text("[Service]\nExecStart=/bin/true\n", encoding="utf-8")
+    clean = [str(tmp_path), "--engines", "secrets,aisec", "--quiet",
+             "--fail-on", "HIGH", "--accept-unmeasured-config"]
+    assert praetor.main(clean) == 0
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("simulated semgrep failure")
+
+    monkeypatch.setattr(engine_sast, "run", broken)
+    failed = [str(tmp_path), "--engines", "secrets,sast", "--quiet",
+              "--fail-on", "HIGH", "--accept-unmeasured-config"]
+    assert praetor.main(failed) == 3

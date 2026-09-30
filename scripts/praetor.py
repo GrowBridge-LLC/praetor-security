@@ -175,6 +175,9 @@ def parse_args(argv):
     p.add_argument("--allow-degraded", action="store_true",
                    help="Do NOT exit 3 for a degraded scan, with or without --fail-on. "
                         "Knowingly accepts an unmeasured blind spot.")
+    p.add_argument("--accept-unmeasured-config", action="store_true",
+                   help="Under --fail-on, accept unread systemd/sudoers semantics only. "
+                        "Engine errors and all other degraded-scan floors still fail.")
     p.add_argument("--sca-backend", default="auto",
                    choices=["auto", "osv", "pip-audit", "npm"],
                    help="SCA backend preference (default: auto = osv -> pip-audit -> npm).")
@@ -849,16 +852,20 @@ def main(argv=None):
         # `.sudoers` to the walker turned a target made only of them from
         # "NOTHING WAS EXAMINED, exit 3" into a clean exit 0 -- measured with
         # --fail-on HIGH on one unit plus one NOPASSWD drop-in. Nothing here reads
-        # ExecStart= or sudo grants yet, so such a target is still not measured.
-        if (scan_files and not args.allow_degraded
-                and all(os.path.splitext(f.relpath.lower())[1] in core.CONFIG_ONLY_EXTS
-                        for f in scan_files)):
+        # ExecStart= or sudo grants yet. Documentation next to those files does
+        # not add a semantic detector. Unrelated code does not interpret unit
+        # or sudo grants, so it cannot turn this config into a clean result.
+        # Include the wider secrets walk: a unit under vendor/ is still read
+        # by secrets, even though the normal walker skips it.
+        if ((scan_files or secret_files)
+                and not (args.allow_degraded or args.accept_unmeasured_config)
+                and any(os.path.splitext(f.relpath.lower())[1] in core.CONFIG_ONLY_EXTS
+                        for f in (scan_files + secret_files))):
             sys.stderr.write(
-                "praetor: NOTHING WAS MEASURED -- every file read is config "
-                "(systemd unit / sudoers drop-in) that no detector interprets, so "
-                "--fail-on has no basis to pass.\n"
+                "praetor: CONFIG NOT INTERPRETED -- systemd unit / sudoers "
+                "config was read, but no engine interprets its security semantics.\n"
                 f"  target: {target}\n"
-                "  Pass --allow-degraded to gate on findings alone.\n"
+                "  Pass --accept-unmeasured-config to accept only this blind spot.\n"
             )
             return 3
         # 🔴 THE SCOPE FLOOR. The floor above catches a tree emptied ENTIRELY and
