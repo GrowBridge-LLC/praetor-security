@@ -505,6 +505,10 @@ TEXT_EXTS = {
     # execution point, and a patch is code arriving in a package. Both were
     # invisible, and the patch had to be read by hand.
     ".pp", ".erb", ".hbs", ".handlebars", ".hook", ".patch", ".diff",
+    # systemd units and sudoers drop-ins: a unit names what runs, as whom, with which
+    # credentials; a sudoers file grants privilege. Measured unread 2026-09-29 --
+    # a skipped one is a blind spot that still exits 0.
+    ".service", ".sudoers",
     # credential-bearing text files -- a secret scanner should read these
     ".pem", ".key", ".crt", ".cer", ".pub", ".asc", ".ppk", ".pk8",
 }
@@ -645,8 +649,15 @@ CODE_EXTS = {
     # TEXT_EXTS) but they do not count as "code was examined" for the scope floor --
     # a directory of patches or templates is not evidence that the shipped code was
     # read, and this set only ever widens what counts as measured.
+    # Same for `.service` / `.sudoers`: read as config, not counted as code.
     ".pp", ".erb", ".hook",
 }
+
+
+#: Read as configuration, with no detector that understands their semantics
+#: (ExecStart=, sudo grants). These plus documentation do not measure code;
+#: praetor.py's --fail-on floor exits 3 without examined code.
+CONFIG_ONLY_EXTS = {".service", ".sudoers"}
 
 
 def is_code(name: str) -> bool:

@@ -12,6 +12,53 @@ Because PRAETOR is a security scanner, entries say what a change means for
 
 ## Unreleased
 
+### Fixed — systemd units and sudoers drop-ins were never read
+
+`*.service` and `*.sudoers` were not in the text allowlist, so a scan skipped
+them without a word: not scanned and clean, never opened. A unit names what runs
+and with which credentials; a sudoers drop-in grants privilege. Both are now read
+by the text engines. They do not count as code for the scope floor, and nothing
+interprets `ExecStart=` or sudo grants yet, so a target containing either file
+still exits 3 under `--fail-on` unless `--accept-unmeasured-config` (config
+only) or `--allow-degraded` (all degraded-scan floors) is explicit. Other code
+or documentation does not make those config semantics measured. The narrow
+config waiver preserves the exit-3 gate for an unrelated engine failure.
+
+### Changed — `praetor-ai-llm-output-to-shell` is now a taint rule
+
+The rule fired on every `exec(X)`, so `exec` of a module string constant was
+reported as model output reaching a shell. Exempting constants afterwards could
+not be made sound: each attempt (pattern exclusions, then a one-file rebind
+proof) was bypassed by a new reflective rebind. The rule now runs in semgrep
+taint mode and fires only when model output reaches a sink. Sources are the
+model-client call result (OpenAI, Anthropic, Ollama module and `Client`, Gemini,
+sync and `await`) plus, for a response passed in as a parameter, the OpenAI
+prefixes a handler binds, leaf and raw-JSON field paths, tool-call arguments and
+Anthropic content-block loops. Taint follows variables, held intermediates, concatenation,
+f-strings, local functions, `or` defaults and list/stream accumulation. Sinks are
+`exec`/`eval`/`compile`, `os.system`/`os.popen`/`os.exec*`/`os.spawn*`,
+`pty.spawn`, `runpy`, `asyncio` subprocess creation (any argument) and the
+command and `executable=` arguments of `subprocess`. `exec` of a
+constant, a literal, `input()` or a bare parameter no longer fires on this rule;
+`praetor-py-eval-exec` still reports `exec`/`eval` of non-literal data.
+Measured with semgrep 1.177.0; pinned line by line in
+`tests/semgrep_live_check.py`.
+
+Known limits:
+- Content-block loop spellings other than `if b.type == ...[ and ...]:`,
+  `if b.type != ...: continue` and an inline join are not sources (for
+  example `not in (...)` guards, a comprehension named before the join, or a
+  handler given the message or `tool_calls` list without the `.choices[i]`
+  prefix).
+- Flow across methods (model output stored on `self`) or across files is not
+  tracked.
+- Only the SDKs listed above are sources.
+- An arbitrary field of a bare handler parameter does not prove LLM provenance.
+  The generic `praetor-py-os-system-concat` rule still reports a nonliteral
+  `os.system(box.output)` or `os.system(box.model)` argument.
+- Over-matches: a `.text` join over any `.content`, and `.create` / `.chat` /
+  `.generate` names shared with non-LLM APIs, are treated as model output.
+
 ### Fixed — a single-file scan silently skipped every suppression pass
 
 All four suppression passes resolved a finding's source by joining its path onto

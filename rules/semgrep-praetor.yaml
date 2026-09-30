@@ -189,12 +189,168 @@ rules:
       cwe: "CWE-78"
       owasp: "LLM02: Insecure Output Handling"
       references: ["https://owasp.org/www-project-top-10-for-large-language-model-applications/"]
-    patterns:
-      - pattern-either:
-          - pattern: os.system($RESP.$FIELD)
-          - pattern: subprocess.$F($RESP.choices[0].message.content, ...)
-          - pattern: eval($RESP.$FIELD)
-          - pattern: exec($COMPLETION)
+    # TAINT MODE (2026-09-29). The old pattern rule fired on every exec($X),
+    # constants included; every attempt to exempt a constant (pattern-not,
+    # regex arms, then a one-file AST rebind proof) was bypassed by a new
+    # reflective rebind each review round. The rule now fires only when model
+    # output reaches a sink, which is what its message says. exec of input(), a
+    # parameter or a constant is praetor-py-eval-exec's job, not this rule's.
+    #
+    # Sources. (1) The model-client CALL result, so any attribute chain, held
+    # intermediate (`message = resp.choices[0].message`), loop over content
+    # blocks, json.loads, or `await` of it stays tainted, and a rebind of the
+    # variable drops the taint:
+    #   OpenAI      X.chat.completions.create / X.completions.create /
+    #               X.beta.chat.completions.parse / X.responses.create
+    #   Anthropic   X.messages.create / X.messages.stream
+    #   Ollama      ollama.chat / ollama.generate, and Client/AsyncClient as
+    #               X.chat(model=, messages=, ...) / X.generate(model=, prompt=, ...)
+    #               (keyword-anchored; bot.chat(message=) and gen.generate(seed=)
+    #               measured NOT to match)
+    #   Gemini      X.generate_content / X.generate_content_async
+    # (2) For a response that arrives as a bare PARAMETER: the OpenAI prefixes a
+    #   handler binds (.choices[i].message, .message.tool_calls[, [j]],
+    #   .choices[i].delta; never bare .choices[i], which is any poll/argparse
+    #   choice) and the leaf paths (.message.content, .delta.content, .text,
+    #   .output_text, tool_calls[j].function.arguments), the same paths through
+    #   raw JSON (["choices"][i]["message"][, ["content"]], ["delta"]["content"],
+    #   tool-call arguments), Anthropic .content[i].text / .content[i].input,
+    #   LangChain .generations[i][j].text, and an Anthropic content-block loop
+    #   variable: `for b in X.content:` + `if b.type == "text" | "tool_use"[ and
+    #   ...]:` or `if b.type != ...: continue` -> b.text / b.input, or
+    #   `"".join(b.text for b in X.content)` (generator or list comprehension,
+    #   with or without `if`). Bare `.content` is never
+    #   a source (requests/httpx bodies); measured: iterating
+    #   requests.get(u).content, or `for x in obj.content:` without an Anthropic
+    #   block-type check, does not fire.
+    # OVER-MATCH, documented: the join form matches any `.text` join over any
+    # `.content`; X.messages.create / X.responses.create / X.completions.create
+    # also name non-LLM APIs (SMS SDKs, Django related managers such as
+    # survey.responses.create). Either needs that value to reach an exec sink to
+    # be reported, which is itself worth reading. The call source taints echoed
+    # metadata too. Attribute names cannot prove safety: model output can be
+    # stored under .model / .id / .usage on an arbitrary object. Reads of those
+    # fields still carry taint when they come from a known model-client call.
+    # A bare handler parameter's arbitrary attribute has no model provenance
+    # here; the generic os.system rule separately reports nonliteral shell
+    # arguments such as box.output.
+    # KNOWN LIMITS (not detected, or over-matched):
+    #  - other content-block loop spellings (`not in (...)` guards, isinstance
+    #    checks, a comprehension bound to a name before the join, a handler
+    #    given the message or tool_calls list without the .choices[i] prefix);
+    #  - cross-method flow (model output stored on `self` in one method and
+    #    executed in another; semgrep OSS has no field flow) and any flow
+    #    across files;
+    #  - only the SDKs listed above are sources;
+    #  - model output carried only in an arbitrary field of a bare handler
+    #    parameter has no LLM provenance (generic shell rules may still fire);
+    #  - the over-matches documented above (join over any `.content`, and
+    #    .create/.chat/.generate names shared with non-LLM APIs).
+    # Propagators: list.append / list.extend / file-like .write by side effect,
+    # so accumulated stream chunks stay tainted. Booleans are not assumed safe
+    # (set explicitly; `content or ""` was measured to propagate without it).
+    # Sinks: exec/eval/compile; os.system/os.popen, os.exec*/os.spawn*/
+    # os.posix_spawn*, pty.spawn, runpy.run_path/run_module;
+    # asyncio.create_subprocess_shell / create_subprocess_exec (ANY argument: exec
+    # spreads argv, so `("bash", "-c", model)` is the common shape); subprocess
+    # first positional, `args=`, or `executable=` argument only, so model text
+    # passed as `input=` / `cwd=` / `env=` to a fixed command does not fire. `from X import
+    # f` aliases are resolved by semgrep (measured). No sanitizers for content:
+    # nothing makes model output safe to run.
+    # MEASURED with semgrep 1.175.0; tests/semgrep_live_check.py pins the lines.
+    mode: taint
+    options:
+      taint_assume_safe_booleans: false
+    pattern-sources:
+      - pattern: $C.chat.completions.create(...)
+      - pattern: $C.completions.create(...)
+      - pattern: $C.beta.chat.completions.parse(...)
+      - pattern: $C.responses.create(...)
+      - pattern: $C.messages.create(...)
+      - pattern: $C.messages.stream(...)
+      - pattern: ollama.chat(...)
+      - pattern: ollama.generate(...)
+      - pattern: $C.chat(model=$MD, messages=$MS, ...)
+      - pattern: $C.generate(model=$MD, prompt=$P, ...)
+      - pattern: $C.generate_content(...)
+      - pattern: $C.generate_content_async(...)
+      - pattern: $R.choices[$I].message.content
+      - pattern: $R.choices[$I].message.tool_calls[$J].function.arguments
+      - pattern: $R.choices[$I].delta.content
+      - pattern: $R.choices[$I].text
+      - pattern: $R.output_text
+      - pattern: $R.content[$I].text
+      - pattern: $R.content[$I].input
+      - pattern: $R.generations[$I][$J].text
+      - pattern: $R.choices[$I].message
+      - pattern: $R.choices[$I].message.tool_calls
+      - pattern: $R.choices[$I].message.tool_calls[$J]
+      - pattern: $R.choices[$I].delta
+      - pattern: $R["choices"][$I]["message"]
+      - pattern: $R["choices"][$I]["message"]["content"]
+      - pattern: $R["choices"][$I]["delta"]["content"]
+      - pattern: $R["choices"][$I]["message"]["tool_calls"][$J]["function"]["arguments"]
+      - patterns:
+          - pattern-inside: |
+              for $B in $M.content:
+                ...
+          - pattern-either:
+              - pattern-inside: |
+                  if $B.type == "$T":
+                    ...
+              - pattern-inside: |
+                  if $B.type == "$T" and $X:
+                    ...
+              - pattern-inside: |
+                  if $B.type != "$T":
+                    continue
+                  ...
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(text|tool_use)$
+          - pattern-either:
+              - pattern: $B.text
+              - pattern: $B.input
+      - pattern: $S.join($B.text for $B in $M.content)
+      - pattern: $S.join($B.text for $B in $M.content if $COND)
+    pattern-propagators:
+      - pattern: $L.append($X)
+        from: $X
+        to: $L
+        by-side-effect: true
+      - pattern: $L.extend($X)
+        from: $X
+        to: $L
+        by-side-effect: true
+      - pattern: $B.write($X)
+        from: $X
+        to: $B
+        by-side-effect: true
+    pattern-sinks:
+      - pattern: exec(...)
+      - pattern: eval(...)
+      - pattern: compile(...)
+      - pattern: os.system(...)
+      - pattern: os.popen(...)
+      - patterns:
+          - pattern: os.$E(...)
+          - metavariable-regex:
+              metavariable: $E
+              regex: ^(exec[lv]p?e?|spawn[lv]p?e?|posix_spawnp?)$
+      - pattern: pty.spawn(...)
+      - pattern: runpy.run_path(...)
+      - pattern: runpy.run_module(...)
+      - pattern: asyncio.create_subprocess_shell(...)
+      - pattern: asyncio.create_subprocess_exec(...)
+      - patterns:
+          - pattern: subprocess.$F($X, ...)
+          - focus-metavariable: $X
+      - patterns:
+          - pattern: subprocess.$F(..., args=$X, ...)
+          - focus-metavariable: $X
+      - patterns:
+          - pattern: subprocess.$F(..., executable=$X, ...)
+          - focus-metavariable: $X
 
   - id: praetor-ai-hardcoded-system-prompt-secret
     languages: [python, javascript, typescript]
